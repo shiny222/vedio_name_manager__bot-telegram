@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 
 from .config import Config
@@ -30,6 +31,9 @@ class SorterBridge:
             )
             for part in self.config.sorter_command
         ]
+        return self._resolve_program_paths(command)
+
+    def _resolve_program_paths(self, command: list[str]) -> list[str]:
         # On Windows, CreateProcess may resolve a relative executable against
         # the bot's current directory before subprocess applies cwd. Resolve
         # trusted configured program paths explicitly.
@@ -50,10 +54,38 @@ class SorterBridge:
             command[1] = str(script)
         return command
 
+    def build_undo_command(self, batch_id: str | None = None) -> list[str]:
+        if not self.config.sorter_command:
+            raise ValueError("sorter_command در config.json تنظیم نشده است.")
+        # Telegram command names cannot inject arguments because subprocess is
+        # invoked without a shell; validation also prevents accidental garbage.
+        if batch_id is not None and not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", batch_id):
+            raise ValueError("Batch ID نامعتبر است.")
+        prefix = list(self.config.sorter_command[:2])
+        if len(prefix) < 2:
+            raise ValueError("sorter_command باید Python و organizer.py را مشخص کند.")
+        command = prefix + (
+            ["undo-batch", batch_id, "--library", str(self.config.jellyfin_library_path)]
+            if batch_id is not None
+            else ["undo-last", "--library", str(self.config.jellyfin_library_path)]
+        )
+        return self._resolve_program_paths(command)
+
     async def run(self, folder: Path, dry_run: bool = False) -> tuple[bool, str]:
+        command = self.build_command(folder, dry_run)
+        return await self._execute(folder, command)
+
+    async def undo_batch(self, batch_id: str) -> tuple[bool, str]:
+        command = self.build_undo_command(batch_id)
+        return await self._execute(self.config.jellyfin_library_path, command)
+
+    async def undo_last(self) -> tuple[bool, str]:
+        command = self.build_undo_command()
+        return await self._execute(self.config.jellyfin_library_path, command)
+
+    async def _execute(self, folder: Path, command: list[str]) -> tuple[bool, str]:
         if self.active:
             return False, "یک عملیات مرتب‌سازی در حال اجرا است."
-        command = self.build_command(folder, dry_run)
         self.active = True
         run_id = self.store.create_sorter_run(str(folder), json.dumps(command, ensure_ascii=False))
         try:

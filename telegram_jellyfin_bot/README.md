@@ -166,6 +166,8 @@ D:\Media\Jellyfin\Shows\My Course
 - `/sort_latest` — مرتب‌سازی آخرین فولدر دانلود
 - `/sort_folder NAME` — مرتب‌سازی فولدر مشخص داخل Library
 - `/sort_status` — وضعیت آخرین اجرای مرتب‌ساز
+- `/undo_sort_last` — برگرداندن آخرین Batch مرتب‌سازی
+- `/undo_sort_batch ID` — برگرداندن Batch مشخص با شناسه
 - `/chatid` — نمایش chat ID
 - `/help` — راهنما
 

@@ -120,6 +120,12 @@ class SorterTests(unittest.TestCase):
                 self.assertIn("dry-run", command)
                 self.assertIn(str(folder.resolve()), command)
                 self.assertTrue(Path(command[0]).is_absolute())
+                undo = bridge.build_undo_command("20260628-024900-a1b2c3d4")
+                self.assertIn("undo-batch", undo)
+                self.assertIn("20260628-024900-a1b2c3d4", undo)
+                self.assertIn(str(cfg.jellyfin_library_path), undo)
+                with self.assertRaises(ValueError):
+                    bridge.build_undo_command("bad id & unsafe")
                 ok, output = await bridge.run(folder, dry_run=True)
                 self.assertTrue(ok)
                 self.assertIn("dry sorter", output)

@@ -48,6 +48,8 @@ HELP = """دستورها:
 /sort_latest - مرتب‌سازی آخرین فولدر دانلود
 /sort_folder NAME - مرتب‌سازی یک فولدر
 /sort_status - وضعیت sorter
+/undo_sort_last - برگرداندن آخرین مرتب‌سازی
+/undo_sort_batch ID - برگرداندن Batch مشخص
 /chatid - نمایش شناسه چت
 /help - راهنما"""
 
@@ -68,6 +70,8 @@ BOT_COMMANDS = [
     {"command": "sort_latest", "description": "مرتب‌سازی آخرین دانلود"},
     {"command": "sort_folder", "description": "مرتب‌سازی فولدر مشخص"},
     {"command": "sort_status", "description": "وضعیت مرتب‌ساز"},
+    {"command": "undo_sort_last", "description": "برگرداندن آخرین مرتب‌سازی"},
+    {"command": "undo_sort_batch", "description": "برگرداندن Batch مشخص"},
     {"command": "chatid", "description": "نمایش شناسه چت"},
     {"command": "help", "description": "نمایش راهنما"},
 ]
@@ -89,6 +93,10 @@ CHANNEL_MENU = {
         [
             {"text": "🧹 مرتب‌سازی فعلی", "callback_data": "menu:sort_current"},
             {"text": "🧹 مرتب‌سازی آخرین", "callback_data": "menu:sort_latest"},
+        ],
+        [
+            {"text": "↩️ Undo آخرین Sort", "callback_data": "menu:undo_sort_last"},
+            {"text": "🔢 Undo با Batch ID", "callback_data": "menu:undo_batch_help"},
         ],
         [
             {"text": "✏️ تنظیم/اصلاح فولدر", "callback_data": "menu:folder_help"},
@@ -230,6 +238,7 @@ class BotApp:
             "menu:cancel": self.cmd_cancel,
             "menu:sort_current": self.cmd_sort_current,
             "menu:sort_latest": self.cmd_sort_latest,
+            "menu:undo_sort_last": self.cmd_undo_sort_last,
             "menu:help": self.cmd_help,
         }
         if action == "menu:folder_help":
@@ -237,6 +246,15 @@ class BotApp:
                 int(chat_id),
                 "برای تنظیم نام:\n/setfolder My Anime\n\n"
                 "برای اصلاح نام فعلی:\n/renamefolder Correct Anime Name",
+                CHANNEL_MENU,
+            )
+            return
+        if action == "menu:undo_batch_help":
+            await self.send(
+                int(chat_id),
+                "برای برگرداندن یک Batch مشخص:\n"
+                "/undo_sort_batch BATCH_ID\n\n"
+                "مثال:\n/undo_sort_batch 20260628-024900-a1b2c3d4",
                 CHANNEL_MENU,
             )
             return
@@ -296,6 +314,8 @@ class BotApp:
             "/resolve": self.cmd_resolve, "/sort_current": self.cmd_sort_current,
             "/sort_latest": self.cmd_sort_latest, "/sort_folder": self.cmd_sort_folder,
             "/sort_status": self.cmd_sort_status,
+            "/undo_sort_last": self.cmd_undo_sort_last,
+            "/undo_sort_batch": self.cmd_undo_sort_batch,
         }
         handler = handlers.get(command)
         if not handler:
@@ -562,6 +582,44 @@ class BotApp:
                 f"آخرین اجرا #{run['id']}\nوضعیت: {run['status']}\n"
                 f"فولدر: {run['folder']}\nزمان: {run['started_at']}",
             )
+
+    async def _run_sort_undo(
+        self, chat_id: int, batch_id: str | None = None
+    ) -> None:
+        if self.downloader and self.downloader.running:
+            await self.send(
+                chat_id,
+                "هنگام دانلود نمی‌توان فایل‌ها را به محل قبلی برگرداند.",
+            )
+            return
+        try:
+            label = f"Batch {batch_id}" if batch_id else "آخرین Batch"
+            await self.send(chat_id, f"Undo مرتب‌سازی شروع شد: {label}")
+            if batch_id:
+                ok, output = await self.sorter.undo_batch(batch_id)
+            else:
+                ok, output = await self.sorter.undo_last()
+            await self.send(
+                chat_id,
+                ("Undo موفق بود.\n" if ok else "Undo کامل نشد یا خطا داشت.\n")
+                + output[-3000:],
+            )
+        except Exception as exc:
+            LOG.exception("Sort undo error")
+            await self.send(chat_id, f"خطای Undo مرتب‌سازی: {exc}")
+
+    async def cmd_undo_sort_last(self, chat_id: int, _: str) -> None:
+        asyncio.create_task(self._run_sort_undo(chat_id))
+
+    async def cmd_undo_sort_batch(self, chat_id: int, argument: str) -> None:
+        batch_id = argument.strip()
+        if not batch_id:
+            await self.send(
+                chat_id,
+                "فرمت درست:\n/undo_sort_batch 20260628-024900-a1b2c3d4",
+            )
+            return
+        asyncio.create_task(self._run_sort_undo(chat_id, batch_id))
 
 
 async def async_main() -> None:
