@@ -105,11 +105,12 @@ Successful entries are marked `undone` and retain their audit history.
 
 ## Episode detection
 
-Explicit forms such as `S01E02`, `s1e2`, `1x02`, `Episode 02`, `Ep 02`, `E02`,
-`قسمت 2`, and Arabic `حلقة 2` are supported. `guessit` is then used when
-available. Finally, a single isolated number can be accepted (for example
-`video_001`), while common resolutions, codecs, years, or ambiguous multiple
-numbers are rejected.
+Explicit forms such as `S01E02`, `s1e2`, `1x02`, `Season 1 Episode 2`,
+`S1 EP2`, `S1 - 2`, `Episode 02`, `Ep 02`, `E02`, `EP02v2`, Persian
+`فصل ۱ قسمت ۲`, Arabic `الموسم 1 الحلقة 2`, Japanese `第2話`, and Korean `2화`
+are supported. `guessit` is then used when available. Finally, a single isolated
+number can be accepted (for example `video_001`), while common resolutions,
+codecs, years, or ambiguous multiple numbers are rejected.
 
 ## Safety notes
 

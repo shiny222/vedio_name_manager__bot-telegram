@@ -30,6 +30,24 @@ class SorterBridge:
             )
             for part in self.config.sorter_command
         ]
+        # On Windows, CreateProcess may resolve a relative executable against
+        # the bot's current directory before subprocess applies cwd. Resolve
+        # trusted configured program paths explicitly.
+        project_root = Path(__file__).resolve().parent.parent
+        executable = Path(command[0])
+        if not executable.is_absolute():
+            executable = (project_root / executable).resolve()
+        if not executable.is_file():
+            raise FileNotFoundError(f"Sorter Python executable not found: {executable}")
+        command[0] = str(executable)
+
+        if len(command) > 1 and command[1].lower().endswith(".py"):
+            script = Path(command[1])
+            if not script.is_absolute():
+                script = (project_root / script).resolve()
+            if not script.is_file():
+                raise FileNotFoundError(f"Sorter script not found: {script}")
+            command[1] = str(script)
         return command
 
     async def run(self, folder: Path, dry_run: bool = False) -> tuple[bool, str]:

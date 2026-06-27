@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import mimetypes
 import sys
@@ -30,7 +31,9 @@ else:
 
 LOG = logging.getLogger(__name__)
 HELP = """دستورها:
+/menu - نمایش منوی دکمه‌ای
 /setfolder NAME - تنظیم فولدر مقصد
+/renamefolder NAME - اصلاح نام فولدر فعلی
 /folder - نمایش فولدر فعلی
 /unsetfolder - پاک کردن فولدر فعلی
 /queue - نمایش صف
@@ -47,6 +50,52 @@ HELP = """دستورها:
 /sort_status - وضعیت sorter
 /chatid - نمایش شناسه چت
 /help - راهنما"""
+
+BOT_COMMANDS = [
+    {"command": "menu", "description": "نمایش منوی دکمه‌ای"},
+    {"command": "setfolder", "description": "تنظیم فولدر مقصد"},
+    {"command": "renamefolder", "description": "اصلاح نام فولدر فعلی"},
+    {"command": "folder", "description": "نمایش فولدر فعلی"},
+    {"command": "unsetfolder", "description": "پاک کردن فولدر فعلی"},
+    {"command": "queue", "description": "نمایش صف دانلود"},
+    {"command": "remove", "description": "حذف یک فایل از صف"},
+    {"command": "clearqueue", "description": "پاک کردن صف"},
+    {"command": "download", "description": "آماده‌سازی دانلود"},
+    {"command": "confirm_download", "description": "تأیید و شروع دانلود"},
+    {"command": "status", "description": "نمایش وضعیت"},
+    {"command": "cancel", "description": "لغو عملیات فعلی"},
+    {"command": "sort_current", "description": "مرتب‌سازی فولدر فعلی"},
+    {"command": "sort_latest", "description": "مرتب‌سازی آخرین دانلود"},
+    {"command": "sort_folder", "description": "مرتب‌سازی فولدر مشخص"},
+    {"command": "sort_status", "description": "وضعیت مرتب‌ساز"},
+    {"command": "chatid", "description": "نمایش شناسه چت"},
+    {"command": "help", "description": "نمایش راهنما"},
+]
+
+CHANNEL_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "📁 فولدر فعلی", "callback_data": "menu:folder"},
+            {"text": "📋 صف", "callback_data": "menu:queue"},
+        ],
+        [
+            {"text": "⬇️ دانلود", "callback_data": "menu:download"},
+            {"text": "✅ تأیید دانلود", "callback_data": "menu:confirm"},
+        ],
+        [
+            {"text": "📊 وضعیت", "callback_data": "menu:status"},
+            {"text": "⛔ لغو", "callback_data": "menu:cancel"},
+        ],
+        [
+            {"text": "🧹 مرتب‌سازی فعلی", "callback_data": "menu:sort_current"},
+            {"text": "🧹 مرتب‌سازی آخرین", "callback_data": "menu:sort_latest"},
+        ],
+        [
+            {"text": "✏️ تنظیم/اصلاح فولدر", "callback_data": "menu:folder_help"},
+            {"text": "❓ راهنما", "callback_data": "menu:help"},
+        ],
+    ]
+}
 
 
 class TelegramAPI:
@@ -66,8 +115,13 @@ class TelegramAPI:
             raise RuntimeError(payload.get("description", f"Bot API error: {method}"))
         return payload.get("result")
 
-    async def send(self, chat_id: int, text: str) -> None:
-        await self.call("sendMessage", chat_id=str(chat_id), text=text[:4000])
+    async def send(
+        self, chat_id: int, text: str, reply_markup: dict | None = None
+    ) -> None:
+        params: dict[str, str] = {"chat_id": str(chat_id), "text": text[:4000]}
+        if reply_markup is not None:
+            params["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+        await self.call("sendMessage", **params)
 
 
 class BotApp:
@@ -92,6 +146,15 @@ class BotApp:
             )
             me = await self.api.call("getMe")
             LOG.info("Bot connected as @%s", me.get("username", "unknown"))
+            try:
+                await self.api.call(
+                    "setMyCommands",
+                    commands=json.dumps(BOT_COMMANDS, ensure_ascii=False),
+                )
+                LOG.info("Telegram command menu registered.")
+            except Exception:
+                # A menu failure must not stop queueing and downloads.
+                LOG.exception("Could not register Telegram command menu")
             if not self.config.allowed_chat_ids:
                 LOG.warning("allowed_chat_ids is empty; every chat can use the bot.")
             await self.poll()
@@ -105,7 +168,7 @@ class BotApp:
                     "getUpdates",
                     offset=str(offset),
                     timeout="30",
-                    allowed_updates='["message","channel_post"]',
+                    allowed_updates='["message","channel_post","callback_query"]',
                 )
                 for update in updates:
                     await self.handle_update(update)
@@ -121,6 +184,9 @@ class BotApp:
         return not self.config.allowed_chat_ids or chat_id in self.config.allowed_chat_ids
 
     async def handle_update(self, update: dict) -> None:
+        if update.get("callback_query"):
+            await self.handle_callback(update["callback_query"])
+            return
         message = update.get("message") or update.get("channel_post")
         if not message:
             return
@@ -134,12 +200,49 @@ class BotApp:
         else:
             await self.handle_media(chat_id, message)
 
-    async def send(self, chat_id: int, text: str) -> None:
+    async def send(
+        self, chat_id: int, text: str, reply_markup: dict | None = None
+    ) -> None:
         assert self.api
         try:
-            await self.api.send(chat_id, text)
+            await self.api.send(chat_id, text, reply_markup)
         except Exception:
             LOG.exception("Could not send Telegram message")
+
+    async def handle_callback(self, query: dict) -> None:
+        assert self.api
+        message = query.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        try:
+            await self.api.call("answerCallbackQuery", callback_query_id=query["id"])
+        except Exception:
+            LOG.exception("Could not answer callback query")
+        if chat_id is None or not self.allowed(int(chat_id)):
+            return
+        action = str(query.get("data", ""))
+        handlers = {
+            "menu:folder": self.cmd_folder,
+            "menu:queue": self.cmd_queue,
+            "menu:download": self.cmd_download,
+            "menu:confirm": self.cmd_confirm,
+            "menu:status": self.cmd_status,
+            "menu:cancel": self.cmd_cancel,
+            "menu:sort_current": self.cmd_sort_current,
+            "menu:sort_latest": self.cmd_sort_latest,
+            "menu:help": self.cmd_help,
+        }
+        if action == "menu:folder_help":
+            await self.send(
+                int(chat_id),
+                "برای تنظیم نام:\n/setfolder My Anime\n\n"
+                "برای اصلاح نام فعلی:\n/renamefolder Correct Anime Name",
+                CHANNEL_MENU,
+            )
+            return
+        handler = handlers.get(action)
+        if handler:
+            await handler(int(chat_id), "")
 
     async def handle_media(self, chat_id: int, message: dict) -> None:
         media = message.get("video") or message.get("document")
@@ -182,8 +285,10 @@ class BotApp:
         command = command.split("@", 1)[0].lower()
         argument = argument.strip()
         handlers = {
-            "/start": self.cmd_help, "/help": self.cmd_help, "/chatid": self.cmd_chatid,
+            "/start": self.cmd_help, "/help": self.cmd_help, "/menu": self.cmd_menu,
+            "/chatid": self.cmd_chatid,
             "/setfolder": self.cmd_setfolder, "/folder": self.cmd_folder,
+            "/renamefolder": self.cmd_renamefolder,
             "/unsetfolder": self.cmd_unsetfolder, "/queue": self.cmd_queue,
             "/clearqueue": self.cmd_clearqueue, "/remove": self.cmd_remove,
             "/download": self.cmd_download, "/confirm_download": self.cmd_confirm,
@@ -200,6 +305,13 @@ class BotApp:
 
     async def cmd_help(self, chat_id: int, _: str) -> None:
         await self.send(chat_id, HELP)
+
+    async def cmd_menu(self, chat_id: int, _: str) -> None:
+        await self.send(
+            chat_id,
+            "منوی مدیریت دانلود و مرتب‌سازی:",
+            CHANNEL_MENU,
+        )
 
     async def cmd_chatid(self, chat_id: int, _: str) -> None:
         await self.send(chat_id, f"chat_id این گفتگو:\n{chat_id}")
@@ -219,6 +331,63 @@ class BotApp:
             await self.send(chat_id, "فولدر مقصد تنظیم نشده است. /setfolder NAME")
         else:
             await self.send(chat_id, f"فولدر فعلی:\n{self.config.target_path(folder)}")
+
+    async def cmd_renamefolder(self, chat_id: int, argument: str) -> None:
+        assert self.downloader
+        old_name = self.store.get_setting("current_folder")
+        if not old_name:
+            await self.send(chat_id, "فولدر فعلی تنظیم نشده است. ابتدا /setfolder را بزن.")
+            return
+        if self.downloader.running or self.sorter.active:
+            await self.send(chat_id, "هنگام دانلود یا مرتب‌سازی نمی‌توان نام فولدر را تغییر داد.")
+            return
+        try:
+            new_name = sanitize_folder_name(argument)
+            old_path = self.config.target_path(old_name)
+            new_path = self.config.target_path(new_name)
+        except ValueError as exc:
+            await self.send(chat_id, str(exc))
+            return
+        if new_name == old_name:
+            await self.send(chat_id, "نام جدید با نام فعلی یکسان است.")
+            return
+        if new_path.exists():
+            await self.send(
+                chat_id,
+                f"تغییر انجام نشد؛ فولدر مقصد از قبل وجود دارد:\n{new_path}",
+            )
+            return
+        if old_path.exists() and any(old_path.rglob(".rename_history.json")):
+            await self.send(
+                chat_id,
+                "تغییر انجام نشد؛ این فولدر تاریخچه مرتب‌سازی دارد و تغییر نام "
+                "می‌تواند rollback را خراب کند.",
+            )
+            return
+        try:
+            if old_path.exists():
+                old_path.rename(new_path)
+            changed = self.store.rename_target_folder(
+                old_name, new_name, old_path, new_path
+            )
+            self.store.set_setting("current_folder", new_name)
+            if self.store.get_setting("latest_downloaded_folder") == old_name:
+                self.store.set_setting("latest_downloaded_folder", new_name)
+            latest_file = self.store.get_setting("latest_downloaded_file")
+            old_prefix = str(old_path)
+            if latest_file.startswith(old_prefix):
+                self.store.set_setting(
+                    "latest_downloaded_file",
+                    str(new_path) + latest_file[len(old_prefix):],
+                )
+            await self.send(
+                chat_id,
+                f"نام فولدر اصلاح شد:\n{old_path}\n→ {new_path}\n"
+                f"مقصد {changed} مورد صف نیز به‌روزرسانی شد.",
+            )
+        except OSError as exc:
+            LOG.exception("Folder rename failed")
+            await self.send(chat_id, f"تغییر نام فولدر انجام نشد: {exc}")
 
     async def cmd_unsetfolder(self, chat_id: int, _: str) -> None:
         self.store.set_setting("current_folder", "")

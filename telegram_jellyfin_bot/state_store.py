@@ -141,6 +141,35 @@ class StateStore:
             )
             return cursor.rowcount
 
+    def rename_target_folder(
+        self, old_name: str, new_name: str, old_path: Path, new_path: Path
+    ) -> int:
+        """Retarget queue records after a safe destination-folder rename."""
+        old_prefix = str(old_path)
+        new_prefix = str(new_path)
+        with self.lock, self.conn:
+            cursor = self.conn.execute(
+                """
+                UPDATE queue_items
+                SET target_folder=?,
+                    downloaded_path=CASE
+                      WHEN downloaded_path IS NOT NULL
+                       AND substr(downloaded_path,1,?)=?
+                      THEN ? || substr(downloaded_path,?)
+                      ELSE downloaded_path
+                    END,
+                    updated_at=?
+                WHERE target_folder=?
+                """,
+                (
+                    new_name,
+                    len(old_prefix), old_prefix,
+                    new_prefix, len(old_prefix) + 1,
+                    utc_now(), old_name,
+                ),
+            )
+            return cursor.rowcount
+
     def create_sorter_run(self, folder: str, command: str) -> int:
         with self.lock, self.conn:
             cursor = self.conn.execute(

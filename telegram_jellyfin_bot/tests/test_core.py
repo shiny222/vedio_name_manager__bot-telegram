@@ -31,7 +31,7 @@ def config_data(root: Path) -> dict:
         "data_path": str(root / "data"),
         "logs_path": str(root / "logs"),
         "sorter_command": [sys.executable, "-c", "print('dry sorter')", "{folder}", "{mode}"],
-        "allowed_chat_ids": [-100123],
+        "allowed_chat_ids": [-100123, 987654321],
         "allowed_video_extensions": [".mkv", ".mp4"],
         "max_parallel_downloads": 1,
         "default_target_folder": "",
@@ -49,7 +49,7 @@ class ConfigAndPathTests(unittest.TestCase):
             path.write_text(json.dumps(config_data(root)), encoding="utf-8")
             cfg = load_config(path, create_from_example=False)
             self.assertEqual(cfg.local_bot_api_host, "127.0.0.1")
-            self.assertEqual(cfg.allowed_chat_ids, {-100123})
+            self.assertEqual(cfg.allowed_chat_ids, {-100123, 987654321})
 
     def test_sanitize_folder(self):
         self.assertEqual(sanitize_folder_name("My Course"), "My Course")
@@ -84,6 +84,25 @@ class QueueTests(unittest.TestCase):
             self.assertEqual(reopened.get_item(pending_id)["original_filename"], "episode.mkv")
             reopened.close()
 
+    def test_rename_target_folder_updates_queue(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store = StateStore(root / "state.db")
+            queue = QueueManager(store)
+            pending_id = queue.add(
+                message_id=2, chat_id=-1, file_id="f2", file_unique_id="u2",
+                original_filename="episode2.mkv", file_size=20,
+                target_folder="Wrong Name",
+            )
+            old_path = root / "library" / "Wrong Name"
+            new_path = root / "library" / "Correct Name"
+            changed = store.rename_target_folder(
+                "Wrong Name", "Correct Name", old_path, new_path
+            )
+            self.assertEqual(changed, 1)
+            self.assertEqual(store.get_item(pending_id)["target_folder"], "Correct Name")
+            store.close()
+
 
 class SorterTests(unittest.TestCase):
     def test_sorter_bridge_dry_run(self):
@@ -100,6 +119,7 @@ class SorterTests(unittest.TestCase):
                 command = bridge.build_command(folder, dry_run=True)
                 self.assertIn("dry-run", command)
                 self.assertIn(str(folder.resolve()), command)
+                self.assertTrue(Path(command[0]).is_absolute())
                 ok, output = await bridge.run(folder, dry_run=True)
                 self.assertTrue(ok)
                 self.assertIn("dry sorter", output)

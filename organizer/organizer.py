@@ -94,19 +94,64 @@ def append_history(path: Path, record: HistoryRecord) -> bool:
 
 
 def explicit_episode_match(stem: str) -> tuple[int, int] | None:
+    def numbers(match: re.Match) -> tuple[int, int]:
+        return (
+            int(normalize_digits(match["s"])),
+            int(normalize_digits(match["e"])),
+        )
+
     patterns = (
         r"(?i)(?<![a-z0-9])s(?P<s>\d{1,3})[ ._-]*e(?P<e>\d{1,4})(?!\d)",
         r"(?i)(?<!\d)(?P<s>\d{1,3})[ ._-]*x[ ._-]*(?P<e>\d{1,4})(?!\d)",
+        # Season 4 Episode 25 / Season.4.Ep.25 / Season04E25
+        r"(?i)\bseason[ ._-]*(?P<s>\d{1,3})[ ._-]*"
+        r"(?:episode|ep|e)[ ._-]*(?P<e>\d{1,4})(?!\d)",
+        # S4 EP25 / S04 Episode 025
+        r"(?i)(?<![a-z0-9])s(?P<s>\d{1,3})[ ._-]*"
+        r"(?:episode|ep)[ ._-]*(?P<e>\d{1,4})(?!\d)",
+        # Episode 25 - S4 / E25.S04
+        r"(?i)(?:episode|ep|e)[ ._-]*(?P<e>\d{1,4})[ ._-]+"
+        r"s(?:eason)?[ ._-]*(?P<s>\d{1,3})(?!\d)",
     )
     for pattern in patterns:
         match = re.search(pattern, stem)
         if match:
-            return int(match["s"]), int(match["e"])
+            return numbers(match)
+
+    # Common anime release formats without an E marker:
+    # "Show S4 - 25 [480p]" and "Season 4 - 25".
+    for pattern in (
+        r"(?i)(?<![a-z0-9])s(?P<s>\d{1,3})\s*[-._ ]+\s*"
+        r"(?P<e>\d{1,4})(?!\d|p\b)",
+        r"(?i)\bseason[ ._-]*(?P<s>\d{1,3})\s*[-._ ]+\s*"
+        r"(?P<e>\d{1,4})(?!\d|p\b)",
+    ):
+        anime_match = re.search(pattern, stem)
+        if anime_match:
+            season, episode = numbers(anime_match)
+            if episode not in {360, 480, 720, 1080, 1440, 2160}:
+                return season, episode
+
+    # Persian/Arabic season + episode:
+    # "فصل ۴ قسمت ۲۵" / "الموسم 4 الحلقة 25".
+    localized_pair = re.search(
+        r"(?:فصل|الموسم)[\s._-]*(?P<s>[0-9۰-۹٠-٩]{1,3})"
+        r"[\s._-]*(?:قسمت|حلقة|الحلقة)[\s._-]*"
+        r"(?P<e>[0-9۰-۹٠-٩]{1,4})",
+        stem,
+    )
+    if localized_pair:
+        return numbers(localized_pair)
 
     episode_patterns = (
         r"(?i)(?:episode|ep)[ ._-]*(?P<e>\d{1,4})(?!\d)",
         r"(?i)(?<![a-z0-9])e[ ._-]*(?P<e>\d{1,4})(?!\d)",
+        # Versioned anime releases: "Episode 25v2" / "EP25v3".
+        r"(?i)(?:episode|ep)[ ._-]*(?P<e>\d{1,4})v\d+(?!\d)",
         r"(?:قسمت|حلقة|الحلقة)[\s._-]*(?P<e>[0-9۰-۹٠-٩]{1,4})",
+        # Japanese 第25話 / 25話 and Korean 25화.
+        r"(?:第\s*)?(?P<e>[0-9０-９]{1,4})\s*話",
+        r"(?P<e>[0-9０-９]{1,4})\s*화",
     )
     for pattern in episode_patterns:
         match = re.search(pattern, stem)
@@ -116,8 +161,8 @@ def explicit_episode_match(stem: str) -> tuple[int, int] | None:
 
 
 def normalize_digits(value: str) -> str:
-    source = "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩"
-    target = "01234567890123456789"
+    source = "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩０１２３４５６７８９"
+    target = "012345678901234567890123456789"
     return value.translate(str.maketrans(source, target))
 
 
@@ -137,6 +182,15 @@ def detect_episode(path: Path) -> tuple[int, int] | None:
     explicit = explicit_episode_match(stem)
     if explicit:
         return explicit
+
+    # A visible season marker without a matched episode must not be recycled by
+    # guessit or the lone-number fallback as an episode number.
+    if re.search(
+        r"(?i)(?<![a-z0-9])s(?:eason)?[ ._-]*\d{1,3}(?!\d)|"
+        r"(?:فصل|الموسم)[\s._-]*[0-9۰-۹٠-٩]{1,3}",
+        stem,
+    ):
+        return None
 
     if guessit is not None:
         try:
