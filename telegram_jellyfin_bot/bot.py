@@ -105,6 +105,50 @@ CHANNEL_MENU = {
     ]
 }
 
+# Telegram immediately sends highlighted slash commands when tapped. In
+# channels, switch_inline_query_current_chat (the only input-prefill button) is
+# unsupported, so copy_text is the safe editable-template alternative.
+HELP_COMMAND_TEMPLATES = {
+    "inline_keyboard": [
+        [
+            {
+                "text": "📋 Copy /setfolder",
+                "copy_text": {"text": "/setfolder "},
+            },
+            {
+                "text": "📋 Copy /renamefolder",
+                "copy_text": {"text": "/renamefolder "},
+            },
+        ],
+        [
+            {
+                "text": "📋 Copy /remove",
+                "copy_text": {"text": "/remove "},
+            },
+            {
+                "text": "📋 Copy /resolve",
+                "copy_text": {"text": "/resolve "},
+            },
+        ],
+        [
+            {
+                "text": "📋 Copy /sort_folder",
+                "copy_text": {"text": "/sort_folder "},
+            },
+            {
+                "text": "📋 Copy /undo_sort_batch",
+                "copy_text": {"text": "/undo_sort_batch "},
+            },
+        ],
+        [
+            {
+                "text": "🎛 Open main menu",
+                "callback_data": "menu:open",
+            }
+        ],
+    ]
+}
+
 
 class TelegramAPI:
     def __init__(self, config: Config, session: aiohttp.ClientSession):
@@ -239,14 +283,16 @@ class BotApp:
             "menu:sort_current": self.cmd_sort_current,
             "menu:sort_latest": self.cmd_sort_latest,
             "menu:undo_sort_last": self.cmd_undo_sort_last,
+            "menu:open": self.cmd_menu,
             "menu:help": self.cmd_help,
         }
         if action == "menu:folder_help":
             await self.send(
                 int(chat_id),
                 "برای تنظیم نام:\n/setfolder My Anime\n\n"
-                "برای اصلاح نام فعلی:\n/renamefolder Correct Anime Name",
-                CHANNEL_MENU,
+                "برای اصلاح نام فعلی:\n/renamefolder Correct Anime Name\n\n"
+                "دکمه زیر فرمان را کپی می‌کند؛ سپس آن را Paste کن و نام را بنویس.",
+                HELP_COMMAND_TEMPLATES,
             )
             return
         if action == "menu:undo_batch_help":
@@ -324,7 +370,12 @@ class BotApp:
         await handler(chat_id, argument)
 
     async def cmd_help(self, chat_id: int, _: str) -> None:
-        await self.send(chat_id, HELP)
+        await self.send(
+            chat_id,
+            HELP + "\n\nدکمه‌های زیر فرمان قابل‌ویرایش را کپی می‌کنند. "
+            "بعد از زدن دکمه، فرمان را Paste کن و مقدارش را بنویس.",
+            HELP_COMMAND_TEMPLATES,
+        )
 
     async def cmd_menu(self, chat_id: int, _: str) -> None:
         await self.send(
