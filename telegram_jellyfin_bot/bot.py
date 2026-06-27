@@ -15,6 +15,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from telegram_jellyfin_bot.config import Config, load_config
     from telegram_jellyfin_bot.downloader import DownloadManager
+    from telegram_jellyfin_bot.jellyfin_bridge import JellyfinBridge
     from telegram_jellyfin_bot.queue_manager import QueueManager
     from telegram_jellyfin_bot.sorter_bridge import SorterBridge
     from telegram_jellyfin_bot.state_store import StateStore
@@ -24,6 +25,7 @@ if __package__ in {None, ""}:
 else:
     from .config import Config, load_config
     from .downloader import DownloadManager
+    from .jellyfin_bridge import JellyfinBridge
     from .queue_manager import QueueManager
     from .sorter_bridge import SorterBridge
     from .state_store import StateStore
@@ -50,6 +52,8 @@ HELP = """دستورها:
 /sort_status - وضعیت sorter
 /undo_sort_last - برگرداندن آخرین مرتب‌سازی
 /undo_sort_batch ID - برگرداندن Batch مشخص
+/jellyfin_scan - شروع Scan کتابخانه Jellyfin
+/jellyfin_status - وضعیت اتصال Jellyfin
 /chatid - نمایش شناسه چت
 /help - راهنما"""
 
@@ -72,6 +76,8 @@ BOT_COMMANDS = [
     {"command": "sort_status", "description": "وضعیت مرتب‌ساز"},
     {"command": "undo_sort_last", "description": "برگرداندن آخرین مرتب‌سازی"},
     {"command": "undo_sort_batch", "description": "برگرداندن Batch مشخص"},
+    {"command": "jellyfin_scan", "description": "شروع Scan کتابخانه Jellyfin"},
+    {"command": "jellyfin_status", "description": "وضعیت اتصال Jellyfin"},
     {"command": "chatid", "description": "نمایش شناسه چت"},
     {"command": "help", "description": "نمایش راهنما"},
 ]
@@ -97,6 +103,10 @@ CHANNEL_MENU = {
         [
             {"text": "↩️ Undo آخرین Sort", "callback_data": "menu:undo_sort_last"},
             {"text": "🔢 Undo با Batch ID", "callback_data": "menu:undo_batch_help"},
+        ],
+        [
+            {"text": "🔄 Scan Jellyfin", "callback_data": "menu:jellyfin_scan"},
+            {"text": "🟢 Jellyfin Status", "callback_data": "menu:jellyfin_status"},
         ],
         [
             {"text": "✏️ تنظیم/اصلاح فولدر", "callback_data": "menu:folder_help"},
@@ -184,6 +194,7 @@ class BotApp:
         self.session: aiohttp.ClientSession | None = None
         self.api: TelegramAPI | None = None
         self.downloader: DownloadManager | None = None
+        self.jellyfin: JellyfinBridge | None = None
         self.sorter = SorterBridge(config, self.store)
         if not self.store.get_setting("current_folder") and config.default_target_folder:
             self.store.set_setting("current_folder", sanitize_folder_name(config.default_target_folder))
@@ -196,6 +207,7 @@ class BotApp:
             self.downloader = DownloadManager(
                 self.config, self.queue, self.api.call, session
             )
+            self.jellyfin = JellyfinBridge(self.config, self.store, session)
             me = await self.api.call("getMe")
             LOG.info("Bot connected as @%s", me.get("username", "unknown"))
             try:
@@ -283,6 +295,8 @@ class BotApp:
             "menu:sort_current": self.cmd_sort_current,
             "menu:sort_latest": self.cmd_sort_latest,
             "menu:undo_sort_last": self.cmd_undo_sort_last,
+            "menu:jellyfin_scan": self.cmd_jellyfin_scan,
+            "menu:jellyfin_status": self.cmd_jellyfin_status,
             "menu:open": self.cmd_menu,
             "menu:help": self.cmd_help,
         }
@@ -362,6 +376,8 @@ class BotApp:
             "/sort_status": self.cmd_sort_status,
             "/undo_sort_last": self.cmd_undo_sort_last,
             "/undo_sort_batch": self.cmd_undo_sort_batch,
+            "/jellyfin_scan": self.cmd_jellyfin_scan,
+            "/jellyfin_status": self.cmd_jellyfin_status,
         }
         handler = handlers.get(command)
         if not handler:
@@ -671,6 +687,47 @@ class BotApp:
             )
             return
         asyncio.create_task(self._run_sort_undo(chat_id, batch_id))
+
+    async def _run_jellyfin_scan(self, chat_id: int) -> None:
+        if not self.jellyfin:
+            await self.send(chat_id, "اتصال Jellyfin هنوز آماده نیست.")
+            return
+        try:
+            await self.send(chat_id, "درخواست Scan کتابخانه به Jellyfin ارسال شد...")
+            requested_at = await self.jellyfin.scan_library()
+            await self.send(
+                chat_id,
+                "Jellyfin درخواست Scan را پذیرفت.\n"
+                f"زمان درخواست: {requested_at}\n"
+                "توجه: Scan در پس‌زمینه Jellyfin ادامه پیدا می‌کند.",
+            )
+        except Exception as exc:
+            LOG.exception("Jellyfin scan request failed")
+            await self.send(chat_id, f"خطای Jellyfin Scan: {exc}")
+
+    async def cmd_jellyfin_scan(self, chat_id: int, _: str) -> None:
+        asyncio.create_task(self._run_jellyfin_scan(chat_id))
+
+    async def cmd_jellyfin_status(self, chat_id: int, _: str) -> None:
+        if not self.jellyfin:
+            await self.send(chat_id, "اتصال Jellyfin هنوز آماده نیست.")
+            return
+        try:
+            info = await self.jellyfin.server_status()
+            await self.send(
+                chat_id,
+                "اتصال Jellyfin برقرار است.\n"
+                f"Server: {info.get('ServerName', 'نامشخص')}\n"
+                f"Version: {info.get('Version', 'نامشخص')}\n"
+                f"{self.jellyfin.last_scan_summary()}",
+            )
+        except Exception as exc:
+            LOG.exception("Jellyfin status failed")
+            await self.send(
+                chat_id,
+                f"اتصال Jellyfin ناموفق بود: {exc}\n"
+                f"{self.jellyfin.last_scan_summary()}",
+            )
 
 
 async def async_main() -> None:

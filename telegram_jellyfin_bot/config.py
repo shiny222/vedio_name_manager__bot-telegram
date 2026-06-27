@@ -40,6 +40,9 @@ class Config:
     keep_original_filenames: bool
     ask_before_overwrite: bool
     auto_sort_after_download: bool
+    jellyfin_server_url: str
+    jellyfin_api_key: str
+    jellyfin_request_timeout_seconds: int
 
     @property
     def api_root(self) -> str:
@@ -111,11 +114,20 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         keep_original_filenames=bool(raw.get("keep_original_filenames", True)),
         ask_before_overwrite=bool(raw.get("ask_before_overwrite", True)),
         auto_sort_after_download=bool(raw.get("auto_sort_after_download", False)),
+        jellyfin_server_url=str(raw.get("jellyfin_server_url", "")).strip().rstrip("/"),
+        jellyfin_api_key=str(raw.get("jellyfin_api_key", "")).strip(),
+        jellyfin_request_timeout_seconds=max(
+            1, int(raw.get("jellyfin_request_timeout_seconds", 30))
+        ),
     )
     if not cfg.keep_original_filenames:
         raise ValueError("keep_original_filenames باید true باشد.")
     if default_folder:
         cfg.target_path(default_folder)
+    if cfg.jellyfin_server_url and not cfg.jellyfin_server_url.lower().startswith(
+        ("http://", "https://")
+    ):
+        raise ValueError("jellyfin_server_url باید با http:// یا https:// شروع شود.")
     for directory in (cfg.jellyfin_library_path, cfg.temp_download_path, cfg.data_path, cfg.logs_path):
         directory.mkdir(parents=True, exist_ok=True)
     return cfg

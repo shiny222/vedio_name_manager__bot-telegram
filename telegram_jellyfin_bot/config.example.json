@@ -26,5 +26,8 @@
   "confirm_before_download": true,
   "keep_original_filenames": true,
   "ask_before_overwrite": true,
-  "auto_sort_after_download": false
+  "auto_sort_after_download": false,
+  "jellyfin_server_url": "http://127.0.0.1:8096",
+  "jellyfin_api_key": "PUT_JELLYFIN_API_KEY_HERE",
+  "jellyfin_request_timeout_seconds": 30
 }

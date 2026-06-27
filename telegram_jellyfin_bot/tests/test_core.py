@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 from telegram_jellyfin_bot.config import load_config
+from telegram_jellyfin_bot.jellyfin_bridge import JellyfinBridge
 from telegram_jellyfin_bot.queue_manager import QueueManager
 from telegram_jellyfin_bot.sorter_bridge import SorterBridge
 from telegram_jellyfin_bot.state_store import StateStore
@@ -37,7 +38,9 @@ def config_data(root: Path) -> dict:
         "default_target_folder": "",
         "confirm_before_download": True,
         "keep_original_filenames": True,
-        "ask_before_overwrite": True
+        "ask_before_overwrite": True,
+        "jellyfin_server_url": "http://127.0.0.1:8096",
+        "jellyfin_api_key": "test-api-key",
     }
 
 
@@ -129,6 +132,63 @@ class SorterTests(unittest.TestCase):
                 ok, output = await bridge.run(folder, dry_run=True)
                 self.assertTrue(ok)
                 self.assertIn("dry sorter", output)
+                store.close()
+        asyncio.run(exercise())
+
+
+class _FakeResponse:
+    def __init__(self, status=204, data=None):
+        self.status = status
+        self.data = data or {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+    async def text(self):
+        return ""
+
+    async def json(self, content_type=None):
+        return self.data
+
+
+class _FakeJellyfinSession:
+    def __init__(self):
+        self.posts = []
+        self.gets = []
+
+    def post(self, url, **kwargs):
+        self.posts.append((url, kwargs))
+        return _FakeResponse(204)
+
+    def get(self, url, **kwargs):
+        self.gets.append((url, kwargs))
+        return _FakeResponse(200, {"ServerName": "Test", "Version": "10.x"})
+
+
+class JellyfinBridgeTests(unittest.TestCase):
+    def test_scan_and_status(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                store = StateStore(cfg.data_path / "state.db")
+                session = _FakeJellyfinSession()
+                bridge = JellyfinBridge(cfg, store, session)
+                await bridge.scan_library()
+                info = await bridge.server_status()
+                self.assertEqual(info["ServerName"], "Test")
+                self.assertTrue(session.posts[0][0].endswith("/Library/Refresh"))
+                self.assertTrue(session.gets[0][0].endswith("/System/Info"))
+                self.assertEqual(
+                    session.posts[0][1]["headers"]["X-Emby-Token"],
+                    "test-api-key",
+                )
+                self.assertIn("accepted", bridge.last_scan_summary())
                 store.close()
         asyncio.run(exercise())
 

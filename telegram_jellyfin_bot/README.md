@@ -70,6 +70,9 @@ https://api.telegram.org/botYOUR_TOKEN/logOut
   از پوشه هم‌سطح `organizer` اجرا می‌کند؛ `{folder}` و `{mode}` جایگزین می‌شوند
   و `shell=True` استفاده نمی‌شود.
 - `auto_sort_after_download`: پیش‌فرض `false` است؛ مرتب‌سازی فقط با دستور شماست.
+- `jellyfin_server_url`: آدرس سرور، مثلاً `http://127.0.0.1:8096`.
+- `jellyfin_api_key`: از Jellyfin Dashboard بخش API Keys ساخته می‌شود.
+- `jellyfin_request_timeout_seconds`: مهلت اتصال بات به Jellyfin.
 
 اگر `allowed_chat_ids` خالی باشد، تمام چت‌هایی که به بات دسترسی دارند مجاز
 خواهند بود. برای امنیت آن را حتماً پر کنید.
@@ -168,6 +171,8 @@ D:\Media\Jellyfin\Shows\My Course
 - `/sort_status` — وضعیت آخرین اجرای مرتب‌ساز
 - `/undo_sort_last` — برگرداندن آخرین Batch مرتب‌سازی
 - `/undo_sort_batch ID` — برگرداندن Batch مشخص با شناسه
+- `/jellyfin_scan` — درخواست Scan کامل Library از Jellyfin
+- `/jellyfin_status` — آزمایش اتصال و نمایش آخرین درخواست Scan
 - `/chatid` — نمایش chat ID
 - `/help` — راهنما
 
@@ -200,6 +205,22 @@ command معمولی در input برای ویرایش را نمی‌دهد. بن
 
 SQLite باعث می‌شود صف، فولدر فعلی، وضعیت دانلودها و اجرای sorter پس از restart
 حفظ شوند.
+
+## اتصال به Jellyfin
+
+در Jellyfin وارد `Dashboard` شوید و از بخش `API Keys` یک کلید مخصوص این بات
+بسازید. سپس در `config.json` قرار دهید:
+
+```json
+"jellyfin_server_url": "http://127.0.0.1:8096",
+"jellyfin_api_key": "YOUR_JELLYFIN_API_KEY",
+"jellyfin_request_timeout_seconds": 30
+```
+
+اگر Jellyfin روی سیستم دیگری است، IP همان سیستم را جایگزین `127.0.0.1` کنید.
+کلید API را در GitHub قرار ندهید. فرمان `/jellyfin_scan` درخواست
+`POST /Library/Refresh` را می‌فرستد. پذیرش این درخواست به معنی شروع Scan است؛
+خود Scan در پس‌زمینه Jellyfin ادامه می‌یابد.
 
 ## تست‌ها
 
