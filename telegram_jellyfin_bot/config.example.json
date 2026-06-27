@@ -1,0 +1,30 @@
+{
+  "bot_token": "PUT_BOT_TOKEN_HERE",
+  "telegram_api_id": 12345678,
+  "telegram_api_hash": "PUT_API_HASH_HERE",
+  "telegram_bot_api_exe_path": "tools\\telegram-bot-api.exe",
+  "local_bot_api_host": "127.0.0.1",
+  "local_bot_api_port": 8081,
+  "local_bot_api_base_url": "http://127.0.0.1:8081/bot",
+  "local_bot_api_base_file_url": "http://127.0.0.1:8081/file/bot",
+  "jellyfin_library_path": "D:\\Media\\Jellyfin\\Shows",
+  "temp_download_path": "temp",
+  "data_path": "data",
+  "logs_path": "logs",
+  "sorter_command": [
+    "organizer\\.venv\\Scripts\\python.exe",
+    "organizer\\organizer.py",
+    "{mode}",
+    "--series-folder",
+    "{folder}"
+  ],
+  "sorter_timeout_seconds": 1800,
+  "allowed_chat_ids": [],
+  "allowed_video_extensions": [".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"],
+  "max_parallel_downloads": 1,
+  "default_target_folder": "",
+  "confirm_before_download": true,
+  "keep_original_filenames": true,
+  "ask_before_overwrite": true,
+  "auto_sort_after_download": false
+}

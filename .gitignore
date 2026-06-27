@@ -1,0 +1,19 @@
+# Secrets
+config.json
+telegram_jellyfin_bot/config.json
+
+# Runtime state and downloads
+telegram_jellyfin_bot/data/
+telegram_jellyfin_bot/logs/
+telegram_jellyfin_bot/temp/
+telegram_jellyfin_bot/tools/
+*.part
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/

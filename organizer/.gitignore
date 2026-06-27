@@ -1,0 +1,4 @@
+.venv/
+__pycache__/
+*.py[cod]
+.rename_history.json
