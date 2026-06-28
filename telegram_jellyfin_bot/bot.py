@@ -103,8 +103,23 @@ BOT_COMMANDS = [
     {"command": "help", "description": "نمایش راهنما"},
 ]
 
+BOT_COMMANDS.extend([
+    {"command": "resort_current", "description": "Rename existing sorted episodes"},
+    {"command": "sort_history", "description": "Show numbered sort history"},
+    {"command": "sort_back", "description": "Undo one sort revision"},
+    {"command": "sort_forward", "description": "Redo one sort revision"},
+])
+
 CHANNEL_MENU = {
     "inline_keyboard": [
+        [
+            {"text": "Rename sorted files", "callback_data": "menu:resort_current"},
+            {"text": "Sort history", "callback_data": "menu:sort_history"},
+        ],
+        [
+            {"text": "Sort back", "callback_data": "menu:sort_back"},
+            {"text": "Sort forward", "callback_data": "menu:sort_forward"},
+        ],
         [
             {"text": "📁 فولدر فعلی", "callback_data": "menu:folder"},
             {"text": "📋 صف", "callback_data": "menu:queue"},
@@ -351,6 +366,10 @@ class BotApp:
             "menu:cancel": self.cmd_cancel,
             "menu:sort_current": self.cmd_sort_current,
             "menu:sort_latest": self.cmd_sort_latest,
+            "menu:resort_current": self.cmd_resort_current,
+            "menu:sort_history": self.cmd_sort_history,
+            "menu:sort_back": self.cmd_sort_back,
+            "menu:sort_forward": self.cmd_sort_forward,
             "menu:undo_sort_last": self.cmd_undo_sort_last,
             "menu:jellyfin_scan": self.cmd_jellyfin_scan,
             "menu:jellyfin_status": self.cmd_jellyfin_status,
@@ -526,6 +545,10 @@ class BotApp:
             "/resolve": self.cmd_resolve, "/sort_current": self.cmd_sort_current,
             "/sort_latest": self.cmd_sort_latest, "/sort_folder": self.cmd_sort_folder,
             "/sort_status": self.cmd_sort_status,
+            "/resort_current": self.cmd_resort_current,
+            "/sort_history": self.cmd_sort_history,
+            "/sort_back": self.cmd_sort_back,
+            "/sort_forward": self.cmd_sort_forward,
             "/undo_sort_last": self.cmd_undo_sort_last,
             "/undo_sort_batch": self.cmd_undo_sort_batch,
             "/jellyfin_scan": self.cmd_jellyfin_scan,
@@ -880,6 +903,52 @@ class BotApp:
             await self.send(chat_id, "فولدر فعلی تنظیم نشده است.")
             return
         asyncio.create_task(self._run_sorter(chat_id, folder))
+
+    async def _run_series_sort_action(
+        self, chat_id: int, action: str, label: str
+    ) -> None:
+        folder_name = self.store.get_setting("current_folder")
+        if not folder_name:
+            await self.send(chat_id, "No current folder is selected.")
+            return
+        if self.downloader and self.downloader.running:
+            await self.send(chat_id, "Wait for the current download to finish first.")
+            return
+        folder = self.config.target_path(folder_name)
+        if not folder.is_dir():
+            await self.send(chat_id, f"Folder not found:\n{folder}")
+            return
+        try:
+            await self.send(chat_id, f"{label}:\n{folder}")
+            ok, output = await self.sorter.series_action(action, folder)
+            await self.send(
+                chat_id,
+                ("Completed.\n" if ok else "Could not complete the action.\n")
+                + output[-3000:],
+            )
+        except Exception as exc:
+            LOG.exception("Series sort action failed")
+            await self.send(chat_id, f"Sorter error: {exc}")
+
+    async def cmd_resort_current(self, chat_id: int, _: str) -> None:
+        asyncio.create_task(self._run_series_sort_action(
+            chat_id, "resort-existing", "Renaming existing sorted episodes"
+        ))
+
+    async def cmd_sort_history(self, chat_id: int, _: str) -> None:
+        asyncio.create_task(self._run_series_sort_action(
+            chat_id, "sort-history", "Reading sort history"
+        ))
+
+    async def cmd_sort_back(self, chat_id: int, _: str) -> None:
+        asyncio.create_task(self._run_series_sort_action(
+            chat_id, "sort-back", "Moving one revision back"
+        ))
+
+    async def cmd_sort_forward(self, chat_id: int, _: str) -> None:
+        asyncio.create_task(self._run_series_sort_action(
+            chat_id, "sort-forward", "Moving one revision forward"
+        ))
 
     async def cmd_sort_latest(self, chat_id: int, _: str) -> None:
         folder = self.store.get_setting("latest_downloaded_folder")

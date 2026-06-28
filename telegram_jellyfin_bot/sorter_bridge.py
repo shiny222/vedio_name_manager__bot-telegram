@@ -85,6 +85,20 @@ class SorterBridge:
         ]
         return self._resolve_program_paths(command)
 
+    def build_series_action_command(self, action: str, folder: Path) -> list[str]:
+        allowed = {"resort-existing", "sort-history", "sort-back", "sort-forward"}
+        if action not in allowed:
+            raise ValueError("Unsupported sorter action.")
+        safe_folder = folder.resolve()
+        library = self.config.jellyfin_library_path.resolve()
+        if safe_folder == library or library not in safe_folder.parents:
+            raise ValueError("Series folder must be inside the Jellyfin library.")
+        if not self.config.sorter_command or len(self.config.sorter_command) < 2:
+            raise ValueError("sorter_command must specify Python and organizer.py.")
+        return self._resolve_program_paths(
+            list(self.config.sorter_command[:2]) + [action, str(safe_folder)]
+        )
+
     async def run(self, folder: Path, dry_run: bool = False) -> tuple[bool, str]:
         command = self.build_command(folder, dry_run)
         return await self._execute(folder, command)
@@ -101,6 +115,10 @@ class SorterBridge:
         self, folder: Path, new_name: str
     ) -> tuple[bool, str]:
         command = self.build_rename_command(folder, new_name)
+        return await self._execute(folder, command)
+
+    async def series_action(self, action: str, folder: Path) -> tuple[bool, str]:
+        command = self.build_series_action_command(action, folder)
         return await self._execute(folder, command)
 
     async def _execute(self, folder: Path, command: list[str]) -> tuple[bool, str]:

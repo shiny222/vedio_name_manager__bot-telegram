@@ -120,5 +120,52 @@ class HistoryAwareRenameTests(unittest.TestCase):
             self.assertTrue(old.exists())
 
 
+class SortRevisionTests(unittest.TestCase):
+    def test_existing_resort_and_simple_back_forward(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "Correct Show [imdbid-tt123]"
+            season = series / "Season 01"
+            season.mkdir(parents=True)
+            old_file = season / "Old Show - S01E01.mkv"
+            old_file.write_bytes(b"episode")
+
+            self.assertEqual(organizer.resort_existing(series), 0)
+            renamed = season / "Correct Show - S01E01.mkv"
+            self.assertTrue(renamed.exists())
+
+            revisions = organizer.sync_sort_revisions(series)
+            self.assertEqual(len(revisions), 1)
+            self.assertEqual(revisions[0]["revision"], 1)
+            self.assertEqual(revisions[0]["operation"], "resort-existing")
+
+            self.assertEqual(
+                organizer.change_sort_revision(series, "back"), 0
+            )
+            self.assertTrue(old_file.exists())
+            self.assertFalse(renamed.exists())
+
+            self.assertEqual(
+                organizer.change_sort_revision(series, "forward"), 0
+            )
+            self.assertTrue(renamed.exists())
+            self.assertFalse(old_file.exists())
+
+    def test_normal_sort_does_not_rename_existing_episodes(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "New Folder Name"
+            season = series / "Season 01"
+            season.mkdir(parents=True)
+            existing = season / "Old Folder Name - S01E01.mkv"
+            existing.write_bytes(b"old")
+            incoming = series / "episode 2.mkv"
+            incoming.write_bytes(b"new")
+
+            self.assertEqual(organizer.run_organizer(series), 0)
+            self.assertTrue(existing.exists())
+            self.assertTrue(
+                season.joinpath("New Folder Name - S01E02.mkv").exists()
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

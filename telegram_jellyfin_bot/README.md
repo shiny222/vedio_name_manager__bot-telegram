@@ -173,6 +173,10 @@ D:\Media\Jellyfin\Shows\Official Title (2025) [imdbid-tt1234567]
 - `/cancel` — درخواست توقف دانلود
 - `/resolve ID ACTION` — تصمیم درباره فایل تکراری
 - `/sort_current` — مرتب‌سازی فولدر فعلی
+- `/resort_current` — تغییر نام فایل‌های داخل Seasonها مطابق نام فعلی فولدر
+- `/sort_history` — نمایش شماره و وضعیت مرحله‌های مرتب‌سازی فولدر فعلی
+- `/sort_back` — یک مرحله مرتب‌سازی به عقب، بدون نیاز به Batch ID
+- `/sort_forward` — یک مرحله مرتب‌سازی به جلو
 - `/sort_latest` — مرتب‌سازی آخرین فولدر دانلود
 - `/sort_folder NAME` — مرتب‌سازی فولدر مشخص داخل Library
 - `/sort_status` — وضعیت آخرین اجرای مرتب‌ساز

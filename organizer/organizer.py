@@ -25,6 +25,7 @@ VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v"}
 SUBTITLE_EXTENSIONS = {".srt", ".ass", ".vtt"}
 HISTORY_NAME = ".rename_history.json"
 FOLDER_HISTORY_NAME = ".folder_rename_history.json"
+REVISION_HISTORY_NAME = ".sort_revisions.json"
 LOG = logging.getLogger("jellyfin-organizer")
 
 
@@ -39,10 +40,22 @@ class HistoryRecord:
     file_type: str
     status: str
     batch_id: str
+    operation: str = "organize"
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def series_file_title(folder_name: str) -> str:
+    """Remove Jellyfin provider tags from episode filenames, not the folder."""
+    title = re.sub(
+        r"\s*\[(?:imdbid|tmdbid|tvdbid)-[^\]]+\]\s*",
+        " ",
+        folder_name,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", title).strip() or folder_name
 
 
 def load_history(path: Path) -> list[dict]:
@@ -406,6 +419,7 @@ def move_and_record(
     status: str,
     batch_id: str,
     dry_run: bool,
+    operation: str = "organize",
 ) -> bool:
     action = "WOULD MOVE" if dry_run else "MOVE"
     LOG.info("%s: %s -> %s [%s]", action, source, destination, status)
@@ -435,6 +449,7 @@ def move_and_record(
         file_type=file_type,
         status=status,
         batch_id=batch_id,
+        operation=operation,
     )
     if not append_history(history_folder / HISTORY_NAME, record):
         LOG.error("Move succeeded but history recording failed for %s", destination)
@@ -456,6 +471,7 @@ def organize_video(
     subtitles: list[Path],
     batch_id: str,
     dry_run: bool,
+    operation: str = "organize",
 ) -> None:
     series_folder = library / series_name
     detected = detect_episode(video)
@@ -471,7 +487,8 @@ def organize_video(
             status = "unsorted"
         history_folder = series_folder
         moved = move_and_record(
-            video, target, history_folder, "video", status, batch_id, dry_run
+            video, target, history_folder, "video", status, batch_id, dry_run,
+            operation
         )
         if moved:
             for subtitle in subtitles:
@@ -485,32 +502,36 @@ def organize_video(
                     subtitle_status = status
                 move_and_record(
                     subtitle, subtitle_target, history_folder, "subtitle",
-                    subtitle_status, batch_id, dry_run
+                    subtitle_status, batch_id, dry_run, operation
                 )
         return
 
     season, episode = detected
     season_folder = series_folder / f"Season {season:02d}"
-    clean_stem = f"{series_name} - S{season:02d}E{episode:02d}"
+    clean_stem = f"{series_file_title(series_name)} - S{season:02d}E{episode:02d}"
     target = season_folder / f"{clean_stem}{video.suffix}"
+    if target.resolve(strict=False) == video.resolve(strict=False):
+        LOG.info("SKIP (already correctly named): %s", video)
+        return
     if target.exists():
         conflict_folder = series_folder / "_Conflicts"
         conflict_target = unique_conflict_path(conflict_folder, video.name)
         moved = move_and_record(
             video, conflict_target, series_folder, "video", "conflict",
-            batch_id, dry_run
+            batch_id, dry_run, operation
         )
         if moved:
             for subtitle in subtitles:
                 sub_target = unique_conflict_path(conflict_folder, subtitle.name)
                 move_and_record(
                     subtitle, sub_target, series_folder, "subtitle", "conflict",
-                    batch_id, dry_run
+                    batch_id, dry_run, operation
                 )
         return
 
     moved = move_and_record(
-        video, target, season_folder, "video", "done", batch_id, dry_run
+        video, target, season_folder, "video", "done", batch_id, dry_run,
+        operation
     )
     if moved:
         for subtitle in subtitles:
@@ -521,13 +542,146 @@ def organize_video(
                 )
                 move_and_record(
                     subtitle, subtitle_target, series_folder, "subtitle", "conflict",
-                    batch_id, dry_run
+                    batch_id, dry_run, operation
                 )
             else:
                 move_and_record(
                     subtitle, subtitle_target, season_folder, "subtitle", "done",
-                    batch_id, dry_run
+                    batch_id, dry_run, operation
                 )
+
+
+def _strict_json_list(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Invalid JSON file {path}: {exc}") from exc
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise ValueError(f"JSON root must be an array of objects: {path}")
+    return value
+
+
+def _series_batch_records(series_folder: Path) -> dict[str, list[dict]]:
+    batches: dict[str, list[dict]] = {}
+    for path in history_files(series_folder):
+        for record in load_history(path):
+            batch_id = record.get("batch_id")
+            if batch_id:
+                batches.setdefault(str(batch_id), []).append(record)
+    return batches
+
+
+def _revision_status(records: list[dict]) -> str:
+    statuses = {record.get("status") for record in records}
+    if statuses == {"undone"}:
+        return "undone"
+    if "undone" in statuses:
+        return "partial"
+    return "applied"
+
+
+def sync_sort_revisions(
+    series_folder: Path, operation_overrides: dict[str, str] | None = None
+) -> list[dict]:
+    """Discover old batches and maintain stable human-friendly revision numbers."""
+    operation_overrides = operation_overrides or {}
+    revision_path = series_folder / REVISION_HISTORY_NAME
+    revisions = _strict_json_list(revision_path)
+    batches = _series_batch_records(series_folder)
+    by_batch = {str(item.get("batch_id")): item for item in revisions}
+    next_number = max((int(item.get("revision", 0)) for item in revisions), default=0) + 1
+
+    ordered_batches = sorted(
+        batches.items(),
+        key=lambda item: min(
+            (str(record.get("timestamp", "")) for record in item[1]),
+            default="",
+        ),
+    )
+    for batch_id, records in ordered_batches:
+        operation = operation_overrides.get(
+            batch_id, str(records[0].get("operation", "organize"))
+        )
+        if batch_id not in by_batch:
+            entry = {
+                "revision": next_number,
+                "batch_id": batch_id,
+                "timestamp": min(
+                    (str(record.get("timestamp", "")) for record in records),
+                    default=now_iso(),
+                ),
+                "operation": operation,
+                "file_count": len(records),
+                "status": _revision_status(records),
+            }
+            revisions.append(entry)
+            by_batch[batch_id] = entry
+            next_number += 1
+        else:
+            entry = by_batch[batch_id]
+            entry["operation"] = operation
+            entry["file_count"] = len(records)
+            entry["status"] = _revision_status(records)
+
+    revisions.sort(key=lambda item: int(item.get("revision", 0)))
+    if series_folder.exists() and (revisions or revision_path.exists()):
+        if not save_history(revision_path, revisions):
+            raise OSError(f"Could not save sort revisions: {revision_path}")
+    return revisions
+
+
+def resort_existing(series_folder: Path, dry_run: bool = False) -> int:
+    """Explicitly rename already-organized Season files to the current title."""
+    if not series_folder.is_dir():
+        LOG.error("Series folder does not exist: %s", series_folder)
+        return 2
+    batch_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+    LOG.info("Resort Batch ID: %s", batch_id)
+    videos_found = 0
+    for season_folder in sorted(series_folder.iterdir(), key=lambda p: p.name.casefold()):
+        if not season_folder.is_dir() or not re.fullmatch(
+            r"(?i)Season \d{1,3}", season_folder.name
+        ):
+            continue
+        videos = sorted(
+            (
+                path for path in season_folder.iterdir()
+                if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+            ),
+            key=lambda path: path.name.casefold(),
+        )
+        subtitles: dict[str, list[Path]] = {}
+        for path in season_folder.iterdir():
+            if path.is_file() and path.suffix.lower() in SUBTITLE_EXTENSIONS:
+                subtitles.setdefault(path.stem.casefold(), []).append(path)
+        for video in videos:
+            videos_found += 1
+            organize_video(
+                video,
+                series_folder.name,
+                series_folder.parent,
+                subtitles.get(video.stem.casefold(), []),
+                batch_id,
+                dry_run,
+                operation="resort-existing",
+            )
+    if not videos_found:
+        LOG.warning("No organized episode files found in Season folders.")
+        return 0
+    if not dry_run:
+        revisions = sync_sort_revisions(
+            series_folder, {batch_id: "resort-existing"}
+        )
+        current = next(
+            (item for item in revisions if item["batch_id"] == batch_id), None
+        )
+        if current:
+            LOG.info("Sort revision: #%s", current["revision"])
+        else:
+            LOG.info("No filenames needed changing; no revision was created.")
+    return 0
 
 
 def run_organizer(
@@ -575,6 +729,15 @@ def run_organizer(
     elif dry_run:
         LOG.info("Dry run complete; no files or history were changed.")
     else:
+        series_destination = library / series_folder.name
+        revisions = sync_sort_revisions(
+            series_destination, {batch_id: "sort-new"}
+        )
+        current = next(
+            (item for item in revisions if item["batch_id"] == batch_id), None
+        )
+        if current:
+            LOG.info("Sort revision: #%s", current["revision"])
         LOG.info("Batch complete: %s", batch_id)
     return 0
 
@@ -631,6 +794,9 @@ def undo_records(files: list[Path], batch_id: str | None = None) -> tuple[int, i
         try:
             original.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(current), str(original))
+            histories[history_path][index]["previous_status"] = record.get(
+                "status", "done"
+            )
             histories[history_path][index]["status"] = "undone"
             histories[history_path][index]["undone_timestamp"] = now_iso()
             changed.add(history_path)
@@ -643,6 +809,115 @@ def undo_records(files: list[Path], batch_id: str | None = None) -> tuple[int, i
     for history_path in changed:
         save_history(history_path, histories[history_path])
     return restored, skipped
+
+
+def redo_records(files: list[Path], batch_id: str) -> tuple[int, int]:
+    candidates: list[tuple[str, Path, int, dict]] = []
+    histories: dict[Path, list[dict]] = {}
+    for history_path in files:
+        records = load_history(history_path)
+        histories[history_path] = records
+        for index, record in enumerate(records):
+            if (
+                record.get("status") == "undone"
+                and record.get("batch_id") == batch_id
+            ):
+                candidates.append(
+                    (record.get("timestamp", ""), history_path, index, record)
+                )
+
+    candidates.sort(key=lambda item: item[0])
+    restored = skipped = 0
+    changed: set[Path] = set()
+    for _, history_path, index, record in candidates:
+        original = Path(record["original_full_path"])
+        target = Path(record["new_full_path"])
+        if target.exists():
+            LOG.warning("SKIP (destination exists): %s", target)
+            skipped += 1
+            continue
+        if not original.exists():
+            LOG.warning("SKIP (original file missing): %s", original)
+            skipped += 1
+            continue
+        expected_size = record.get("file_size")
+        try:
+            actual_size = original.stat().st_size
+        except OSError as exc:
+            LOG.warning("SKIP (cannot inspect %s): %s", original, exc)
+            skipped += 1
+            continue
+        if isinstance(expected_size, int) and actual_size != expected_size:
+            LOG.warning("SKIP (size changed): %s", original)
+            skipped += 1
+            continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(original), str(target))
+            histories[history_path][index]["status"] = record.get(
+                "previous_status", "done"
+            )
+            histories[history_path][index]["redone_timestamp"] = now_iso()
+            changed.add(history_path)
+            restored += 1
+            LOG.info("REAPPLIED: %s -> %s", original, target)
+        except OSError as exc:
+            LOG.error("Failed reapplying %s: %s", original, exc)
+            skipped += 1
+    for history_path in changed:
+        save_history(history_path, histories[history_path])
+    return restored, skipped
+
+
+def sort_history(series_folder: Path) -> int:
+    if not series_folder.is_dir():
+        LOG.error("Series folder does not exist: %s", series_folder)
+        return 2
+    revisions = sync_sort_revisions(series_folder)
+    if not revisions:
+        LOG.warning("No sort revisions found.")
+        return 1
+    for item in revisions:
+        LOG.info(
+            "#%s | %s | %s | %s files",
+            item["revision"], item["status"], item["operation"], item["file_count"],
+        )
+    return 0
+
+
+def change_sort_revision(
+    series_folder: Path, direction: str, revision: int | None = None
+) -> int:
+    if not series_folder.is_dir():
+        LOG.error("Series folder does not exist: %s", series_folder)
+        return 2
+    revisions = sync_sort_revisions(series_folder)
+    if revision is not None:
+        selected = next(
+            (item for item in revisions if item["revision"] == revision), None
+        )
+    elif direction == "back":
+        active = [item for item in revisions if item["status"] != "undone"]
+        selected = max(active, key=lambda item: item["revision"], default=None)
+    else:
+        undone = [item for item in revisions if item["status"] == "undone"]
+        selected = min(undone, key=lambda item: item["revision"], default=None)
+    if not selected:
+        LOG.warning("No revision is available to move %s.", direction)
+        return 1
+
+    files = list(history_files(series_folder))
+    batch_id = selected["batch_id"]
+    if direction == "back":
+        moved, skipped = undo_records(files, batch_id)
+    else:
+        moved, skipped = redo_records(files, batch_id)
+    sync_sort_revisions(series_folder)
+    LOG.info(
+        "Sort %s revision #%s: %d moved, %d skipped",
+        direction, selected["revision"], moved, skipped,
+    )
+    return 0 if moved or not skipped else 1
 
 
 def undo_batch(library: Path, batch_id: str) -> int:
@@ -717,6 +992,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rename.add_argument("folder_path", type=Path)
     rename.add_argument("new_name")
+
+    resort = subparsers.add_parser(
+        "resort-existing", help="rename already sorted episodes to match the folder"
+    )
+    resort.add_argument("folder_path", type=Path)
+    resort.add_argument("--dry-run", action="store_true")
+
+    revisions = subparsers.add_parser(
+        "sort-history", help="show numbered sort revisions for one series"
+    )
+    revisions.add_argument("folder_path", type=Path)
+
+    for command in ("sort-back", "sort-forward"):
+        revision = subparsers.add_parser(command)
+        revision.add_argument("folder_path", type=Path)
+        revision.add_argument("--revision", type=int)
     return parser
 
 
@@ -744,6 +1035,16 @@ def main(argv: list[str] | None = None) -> int:
             LOG.info("Migrated history records: %d", affected)
             LOG.info("Folder migration ID: %s", migration_id)
             return 0
+        if args.command == "resort-existing":
+            return resort_existing(args.folder_path.expanduser(), args.dry_run)
+        if args.command == "sort-history":
+            return sort_history(args.folder_path.expanduser())
+        if args.command in {"sort-back", "sort-forward"}:
+            return change_sort_revision(
+                args.folder_path.expanduser(),
+                "back" if args.command == "sort-back" else "forward",
+                args.revision,
+            )
     except KeyboardInterrupt:
         LOG.warning("Cancelled.")
         return 130
