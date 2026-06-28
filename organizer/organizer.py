@@ -48,13 +48,17 @@ def now_iso() -> str:
 
 
 def series_file_title(folder_name: str) -> str:
-    """Remove Jellyfin provider tags from episode filenames, not the folder."""
+    """Keep year/provider metadata on the folder, but not episode filenames."""
     title = re.sub(
         r"\s*\[(?:imdbid|tmdbid|tvdbid)-[^\]]+\]\s*",
         " ",
         folder_name,
         flags=re.IGNORECASE,
     )
+    # Fuzzy-search names use Jellyfin's recommended:
+    # "Official Title (2026) [imdbid-tt123]".  Episode files should contain
+    # only "Official Title - S01E01.ext".
+    title = re.sub(r"\s*[\(\[](?:19|20)\d{2}[\)\]]\s*$", " ", title)
     return re.sub(r"\s+", " ", title).strip() or folder_name
 
 
@@ -640,36 +644,51 @@ def resort_existing(series_folder: Path, dry_run: bool = False) -> int:
     batch_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
     LOG.info("Resort Batch ID: %s", batch_id)
     videos_found = 0
-    for season_folder in sorted(series_folder.iterdir(), key=lambda p: p.name.casefold()):
-        if not season_folder.is_dir() or not re.fullmatch(
-            r"(?i)Season \d{1,3}", season_folder.name
-        ):
+    candidate_folders = []
+    for folder in series_folder.iterdir():
+        if not folder.is_dir():
             continue
+        # Support folders produced by older versions and common manual layouts.
+        if (
+            re.fullmatch(r"(?i)Season[\s._-]*\d{1,3}", folder.name)
+            or re.fullmatch(r"(?i)S\d{1,3}", folder.name)
+            or re.fullmatch(r"(?:فصل|الموسم)[\s._-]*[0-9۰-۹٠-٩]{1,3}", folder.name)
+            or folder.name.casefold() == "_unsorted"
+        ):
+            candidate_folders.append(folder)
+
+    for season_folder in sorted(candidate_folders, key=lambda p: p.name.casefold()):
         videos = sorted(
             (
-                path for path in season_folder.iterdir()
+                path for path in season_folder.rglob("*")
                 if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
             ),
             key=lambda path: path.name.casefold(),
         )
         subtitles: dict[str, list[Path]] = {}
-        for path in season_folder.iterdir():
+        for path in season_folder.rglob("*"):
             if path.is_file() and path.suffix.lower() in SUBTITLE_EXTENSIONS:
-                subtitles.setdefault(path.stem.casefold(), []).append(path)
+                key = f"{path.parent.resolve()}::{path.stem.casefold()}"
+                subtitles.setdefault(key, []).append(path)
         for video in videos:
             videos_found += 1
+            subtitle_key = f"{video.parent.resolve()}::{video.stem.casefold()}"
             organize_video(
                 video,
                 series_folder.name,
                 series_folder.parent,
-                subtitles.get(video.stem.casefold(), []),
+                subtitles.get(subtitle_key, []),
                 batch_id,
                 dry_run,
                 operation="resort-existing",
             )
     if not videos_found:
-        LOG.warning("No organized episode files found in Season folders.")
-        return 0
+        LOG.error(
+            "No existing videos found in Season, Sxx, localized season, "
+            "or _Unsorted folders under %s",
+            series_folder,
+        )
+        return 1
     if not dry_run:
         revisions = sync_sort_revisions(
             series_folder, {batch_id: "resort-existing"}

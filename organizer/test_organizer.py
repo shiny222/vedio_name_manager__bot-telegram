@@ -121,9 +121,17 @@ class HistoryAwareRenameTests(unittest.TestCase):
 
 
 class SortRevisionTests(unittest.TestCase):
+    def test_episode_title_excludes_folder_year_and_provider_id(self):
+        self.assertEqual(
+            organizer.series_file_title(
+                "Correct Official Title (2026) [imdbid-tt40548519]"
+            ),
+            "Correct Official Title",
+        )
+
     def test_existing_resort_and_simple_back_forward(self):
         with tempfile.TemporaryDirectory() as td:
-            series = Path(td) / "Correct Show [imdbid-tt123]"
+            series = Path(td) / "Correct Show (2026) [imdbid-tt123]"
             season = series / "Season 01"
             season.mkdir(parents=True)
             old_file = season / "Old Show - S01E01.mkv"
@@ -164,6 +172,21 @@ class SortRevisionTests(unittest.TestCase):
             self.assertTrue(existing.exists())
             self.assertTrue(
                 season.joinpath("New Folder Name - S01E02.mkv").exists()
+            )
+
+    def test_resort_handles_unsorted_and_nested_old_layouts(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "Correct Show"
+            nested = series / "_Unsorted" / "480p"
+            nested.mkdir(parents=True)
+            old_file = nested / "Old.Show.S02E03.mkv"
+            old_file.write_bytes(b"episode")
+
+            self.assertEqual(organizer.resort_existing(series), 0)
+            self.assertTrue(
+                series.joinpath(
+                    "Season 02", "Correct Show - S02E03.mkv"
+                ).exists()
             )
 
 
