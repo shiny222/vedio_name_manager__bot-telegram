@@ -220,6 +220,31 @@ class FolderSuggestionTests(unittest.TestCase):
                     app.store.close()
         asyncio.run(exercise())
 
+    def test_fix_current_uses_current_folder_as_default_query(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                calls = []
+
+                async def fake_search(chat_id, query, mode):
+                    calls.append((chat_id, query, mode))
+
+                app._run_imdb_search = fake_search
+                app.store.set_setting("current_folder", "NIPPON SAGOKu")
+                try:
+                    await app.cmd_imdb_fix_current(123, "")
+                    await asyncio.sleep(0)
+                    self.assertEqual(
+                        calls, [(123, "NIPPON SAGOKu", "rename")]
+                    )
+                finally:
+                    app.store.close()
+        asyncio.run(exercise())
+
 
 class SorterTests(unittest.TestCase):
     def test_sorter_bridge_dry_run(self):

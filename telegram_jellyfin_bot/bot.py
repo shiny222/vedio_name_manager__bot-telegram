@@ -68,7 +68,7 @@ HELP = """دستورها:
 /episodes [NAME] - نمایش اپیزودهای یک سریال
 /library_episodes - خلاصه تمام سریال‌ها
 /imdb_search NAME - جستجوی نام درست در IMDb
-/imdb_fix_current NAME - اصلاح فولدر فعلی با نتیجه IMDb
+/imdb_fix_current [NAME] - اصلاح فولدر فعلی با نتیجه IMDb
 /chatid - نمایش شناسه چت
 /help - راهنما"""
 
@@ -200,7 +200,7 @@ HELP_COMMAND_TEMPLATES = {
             },
             {
                 "text": "📋 Copy /imdb_fix_current",
-                "copy_text": {"text": "/imdb_fix_current "},
+                "copy_text": {"text": "/imdb_fix_current"},
             },
         ],
         [
@@ -381,7 +381,9 @@ class BotApp:
             await self.send(
                 int(chat_id),
                 "برای پیدا کردن نام درست و ساخت مقصد:\n/imdb_search dr ston\n\n"
-                "برای تغییر نام امن فولدر فعلی:\n/imdb_fix_current dr ston",
+                "برای جستجو و تغییر نام امن فولدر فعلی:\n/imdb_fix_current\n\n"
+                "در صورت نیاز می‌توانی عبارت جستجو را هم مشخص کنی:\n"
+                "/imdb_fix_current dr ston",
                 HELP_COMMAND_TEMPLATES,
             )
             return
@@ -1092,7 +1094,14 @@ class BotApp:
         asyncio.create_task(self._run_imdb_search(chat_id, argument, "use"))
 
     async def cmd_imdb_fix_current(self, chat_id: int, argument: str) -> None:
-        asyncio.create_task(self._run_imdb_search(chat_id, argument, "rename"))
+        query = argument.strip() or self.store.get_setting("current_folder")
+        if not query:
+            await self.send(
+                chat_id,
+                "فولدر فعلی تنظیم نشده است. ابتدا /folders یا /setfolder را استفاده کن.",
+            )
+            return
+        asyncio.create_task(self._run_imdb_search(chat_id, query, "rename"))
 
     async def cmd_episodes(self, chat_id: int, argument: str) -> None:
         folder_name = argument.strip() or self.store.get_setting("current_folder")
