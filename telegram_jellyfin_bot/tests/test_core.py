@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 from telegram_jellyfin_bot.config import load_config
+from telegram_jellyfin_bot.bot import BotApp
 from telegram_jellyfin_bot.episode_catalog import (
     EpisodeCatalog, compact_numbers, detect_episode, format_series_inventory
 )
@@ -71,6 +72,31 @@ class ConfigAndPathTests(unittest.TestCase):
             self.assertEqual(safe_child(base, "Anime").parent, base.resolve())
             with self.assertRaises(ValueError):
                 safe_child(base, r"..\outside")
+
+    def test_existing_folder_picker(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "config.json"
+            path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+            cfg = load_config(path, create_from_example=False)
+            (cfg.jellyfin_library_path / "Dr. Stone").mkdir()
+            (cfg.jellyfin_library_path / "One Piece").mkdir()
+            app = BotApp(cfg)
+            try:
+                folders = app._existing_series_folders()
+                self.assertEqual(
+                    [item.name for item in folders], ["Dr. Stone", "One Piece"]
+                )
+                markup, page, pages = app._folder_picker_markup(0)
+                labels = [
+                    button["text"]
+                    for row in markup["inline_keyboard"]
+                    for button in row
+                ]
+                self.assertTrue(any("Dr. Stone" in label for label in labels))
+                self.assertEqual((page, pages), (0, 1))
+            finally:
+                app.store.close()
 
 
 class QueueTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import mimetypes
@@ -39,6 +40,8 @@ LOG = logging.getLogger(__name__)
 HELP = """دستورها:
 /menu - نمایش منوی دکمه‌ای
 /setfolder NAME - تنظیم فولدر مقصد
+/folders - انتخاب از فولدرهای موجود
+/usefolder NAME - انتخاب فولدر موجود با نام
 /renamefolder NAME - اصلاح نام فولدر فعلی
 /folder - نمایش فولدر فعلی
 /unsetfolder - پاک کردن فولدر فعلی
@@ -66,6 +69,8 @@ HELP = """دستورها:
 BOT_COMMANDS = [
     {"command": "menu", "description": "نمایش منوی دکمه‌ای"},
     {"command": "setfolder", "description": "تنظیم فولدر مقصد"},
+    {"command": "folders", "description": "انتخاب از فولدرهای موجود"},
+    {"command": "usefolder", "description": "انتخاب فولدر موجود با نام"},
     {"command": "renamefolder", "description": "اصلاح نام فولدر فعلی"},
     {"command": "folder", "description": "نمایش فولدر فعلی"},
     {"command": "unsetfolder", "description": "پاک کردن فولدر فعلی"},
@@ -95,6 +100,9 @@ CHANNEL_MENU = {
         [
             {"text": "📁 فولدر فعلی", "callback_data": "menu:folder"},
             {"text": "📋 صف", "callback_data": "menu:queue"},
+        ],
+        [
+            {"text": "🗂 انتخاب فولدر موجود", "callback_data": "menu:folders"},
         ],
         [
             {"text": "⬇️ دانلود", "callback_data": "menu:download"},
@@ -141,6 +149,12 @@ HELP_COMMAND_TEMPLATES = {
                 "text": "📋 Copy /renamefolder",
                 "copy_text": {"text": "/renamefolder "},
             },
+        ],
+        [
+            {
+                "text": "📋 Copy /usefolder",
+                "copy_text": {"text": "/usefolder "},
+            }
         ],
         [
             {
@@ -306,6 +320,7 @@ class BotApp:
         action = str(query.get("data", ""))
         handlers = {
             "menu:folder": self.cmd_folder,
+            "menu:folders": self.cmd_folders,
             "menu:queue": self.cmd_queue,
             "menu:download": self.cmd_download,
             "menu:confirm": self.cmd_confirm,
@@ -338,6 +353,27 @@ class BotApp:
                 "مثال:\n/undo_sort_batch 20260628-024900-a1b2c3d4",
                 CHANNEL_MENU,
             )
+            return
+        if action.startswith("folders:"):
+            try:
+                page = max(0, int(action.partition(":")[2]))
+            except ValueError:
+                page = 0
+            await self._send_folder_picker(int(chat_id), page)
+            return
+        if action.startswith("pickfolder:"):
+            token = action.partition(":")[2]
+            matches = [
+                folder for folder in self._existing_series_folders()
+                if self._folder_token(folder.name) == token
+            ]
+            if len(matches) != 1:
+                await self.send(
+                    int(chat_id),
+                    "این انتخاب دیگر معتبر نیست. دوباره /folders را بفرست.",
+                )
+                return
+            await self._select_existing_folder(int(chat_id), matches[0])
             return
         handler = handlers.get(action)
         if handler:
@@ -421,6 +457,7 @@ class BotApp:
             "/start": self.cmd_help, "/help": self.cmd_help, "/menu": self.cmd_menu,
             "/chatid": self.cmd_chatid,
             "/setfolder": self.cmd_setfolder, "/folder": self.cmd_folder,
+            "/folders": self.cmd_folders, "/usefolder": self.cmd_usefolder,
             "/renamefolder": self.cmd_renamefolder,
             "/unsetfolder": self.cmd_unsetfolder, "/queue": self.cmd_queue,
             "/clearqueue": self.cmd_clearqueue, "/remove": self.cmd_remove,
@@ -468,6 +505,94 @@ class BotApp:
             await self.send(chat_id, f"فولدر مقصد تنظیم شد:\n{path}")
         except ValueError as exc:
             await self.send(chat_id, str(exc))
+
+    @staticmethod
+    def _folder_token(name: str) -> str:
+        return hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
+
+    def _existing_series_folders(self) -> list[Path]:
+        folders: list[Path] = []
+        for folder in self.config.jellyfin_library_path.iterdir():
+            if not folder.is_dir() or folder.name.startswith("_"):
+                continue
+            try:
+                # Reuse the path-containment guard; directory junctions that
+                # escape the configured library are deliberately excluded.
+                safe = self.config.target_path(folder.name)
+            except ValueError:
+                continue
+            if safe == folder.resolve():
+                folders.append(folder)
+        return sorted(folders, key=lambda path: path.name.casefold())
+
+    def _folder_picker_markup(self, page: int, page_size: int = 12) -> tuple[dict, int, int]:
+        folders = self._existing_series_folders()
+        pages = max(1, (len(folders) + page_size - 1) // page_size)
+        page = min(max(0, page), pages - 1)
+        selected = folders[page * page_size:(page + 1) * page_size]
+        rows = [
+            [{
+                "text": f"📁 {folder.name}",
+                "callback_data": f"pickfolder:{self._folder_token(folder.name)}",
+            }]
+            for folder in selected
+        ]
+        navigation = []
+        if page > 0:
+            navigation.append(
+                {"text": "⬅️ Previous", "callback_data": f"folders:{page - 1}"}
+            )
+        if page + 1 < pages:
+            navigation.append(
+                {"text": "Next ➡️", "callback_data": f"folders:{page + 1}"}
+            )
+        if navigation:
+            rows.append(navigation)
+        rows.append([{"text": "🎛 Main menu", "callback_data": "menu:open"}])
+        return {"inline_keyboard": rows}, page, pages
+
+    async def _send_folder_picker(self, chat_id: int, page: int = 0) -> None:
+        markup, page, pages = self._folder_picker_markup(page)
+        if len(markup["inline_keyboard"]) == 1:
+            await self.send(
+                chat_id,
+                "هیچ فولدر سریالی داخل Jellyfin Library پیدا نشد.",
+                CHANNEL_MENU,
+            )
+            return
+        await self.send(
+            chat_id,
+            f"یک فولدر موجود را انتخاب کن (صفحه {page + 1}/{pages}):",
+            markup,
+        )
+
+    async def _select_existing_folder(self, chat_id: int, folder: Path) -> None:
+        self.store.set_setting("current_folder", folder.name)
+        await self.send(
+            chat_id,
+            "فولدر موجود به‌عنوان مقصد قسمت‌های جدید انتخاب شد:\n"
+            f"{folder}\n\nفایل‌های جدیدی که بعد از این وارد صف شوند به این مقصد می‌روند.",
+            CHANNEL_MENU,
+        )
+
+    async def cmd_folders(self, chat_id: int, _: str) -> None:
+        await self._send_folder_picker(chat_id)
+
+    async def cmd_usefolder(self, chat_id: int, argument: str) -> None:
+        try:
+            name = sanitize_folder_name(argument)
+            folder = self.config.target_path(name)
+        except ValueError as exc:
+            await self.send(chat_id, str(exc))
+            return
+        if not folder.is_dir():
+            await self.send(
+                chat_id,
+                f"این فولدر موجود نیست:\n{folder}\n"
+                "برای دیدن فولدرهای موجود /folders را بفرست.",
+            )
+            return
+        await self._select_existing_folder(chat_id, folder)
 
     async def cmd_folder(self, chat_id: int, _: str) -> None:
         folder = self.store.get_setting("current_folder")
