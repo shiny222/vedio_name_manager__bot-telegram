@@ -10,6 +10,9 @@ import urllib.request
 from pathlib import Path
 
 from telegram_jellyfin_bot.config import load_config
+from telegram_jellyfin_bot.episode_catalog import (
+    EpisodeCatalog, compact_numbers, detect_episode, format_series_inventory
+)
 from telegram_jellyfin_bot.jellyfin_bridge import JellyfinBridge
 from telegram_jellyfin_bot.queue_manager import QueueManager
 from telegram_jellyfin_bot.sorter_bridge import SorterBridge
@@ -105,6 +108,37 @@ class QueueTests(unittest.TestCase):
             self.assertEqual(changed, 1)
             self.assertEqual(store.get_item(pending_id)["target_folder"], "Correct Name")
             store.close()
+
+
+class EpisodeCatalogTests(unittest.TestCase):
+    def test_detects_common_arrival_names(self):
+        cases = {
+            "Show - S04E25.mkv": (4, 25),
+            "[AWHT] Dr. Stone S4 - 25 [480p].mkv": (4, 25),
+            "Anime - 026 [1080p].mkv": (1, 26),
+            "فصل ۲ قسمت ۱۲.mkv": (2, 12),
+        }
+        for filename, expected in cases.items():
+            with self.subTest(filename=filename):
+                self.assertEqual(detect_episode(filename), expected)
+
+    def test_inventory_and_missing_episodes(self):
+        with tempfile.TemporaryDirectory() as td:
+            folder = Path(td) / "Anime"
+            season = folder / "Season 01"
+            unsorted = folder / "_Unsorted"
+            season.mkdir(parents=True)
+            unsorted.mkdir()
+            for episode in (1, 2, 4):
+                (season / f"Anime - S01E{episode:02d}.mkv").write_bytes(b"x")
+            (unsorted / "Anime - S01E03.mkv").write_bytes(b"x")
+            catalog = EpisodeCatalog({".mkv"})
+            entries = catalog.scan_series(folder)
+            text = format_series_inventory("Anime", entries)
+            self.assertEqual(len(entries), 3)
+            self.assertIn("01-02, 04", text)
+            self.assertIn("Missing: 03", text)
+            self.assertEqual(compact_numbers({1, 2, 3, 5}), "01-03, 05")
 
 
 class SorterTests(unittest.TestCase):

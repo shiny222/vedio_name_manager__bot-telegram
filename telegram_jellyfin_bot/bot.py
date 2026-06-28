@@ -15,6 +15,9 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from telegram_jellyfin_bot.config import Config, load_config
     from telegram_jellyfin_bot.downloader import DownloadManager
+    from telegram_jellyfin_bot.episode_catalog import (
+        EpisodeCatalog, detect_episode, format_series_inventory
+    )
     from telegram_jellyfin_bot.jellyfin_bridge import JellyfinBridge
     from telegram_jellyfin_bot.queue_manager import QueueManager
     from telegram_jellyfin_bot.sorter_bridge import SorterBridge
@@ -25,6 +28,7 @@ if __package__ in {None, ""}:
 else:
     from .config import Config, load_config
     from .downloader import DownloadManager
+    from .episode_catalog import EpisodeCatalog, detect_episode, format_series_inventory
     from .jellyfin_bridge import JellyfinBridge
     from .queue_manager import QueueManager
     from .sorter_bridge import SorterBridge
@@ -54,6 +58,8 @@ HELP = """دستورها:
 /undo_sort_batch ID - برگرداندن Batch مشخص
 /jellyfin_scan - شروع Scan کتابخانه Jellyfin
 /jellyfin_status - وضعیت اتصال Jellyfin
+/episodes [NAME] - نمایش اپیزودهای یک سریال
+/library_episodes - خلاصه تمام سریال‌ها
 /chatid - نمایش شناسه چت
 /help - راهنما"""
 
@@ -78,6 +84,8 @@ BOT_COMMANDS = [
     {"command": "undo_sort_batch", "description": "برگرداندن Batch مشخص"},
     {"command": "jellyfin_scan", "description": "شروع Scan کتابخانه Jellyfin"},
     {"command": "jellyfin_status", "description": "وضعیت اتصال Jellyfin"},
+    {"command": "episodes", "description": "نمایش اپیزودهای یک سریال"},
+    {"command": "library_episodes", "description": "خلاصه اپیزودهای Library"},
     {"command": "chatid", "description": "نمایش شناسه چت"},
     {"command": "help", "description": "نمایش راهنما"},
 ]
@@ -107,6 +115,10 @@ CHANNEL_MENU = {
         [
             {"text": "🔄 Scan Jellyfin", "callback_data": "menu:jellyfin_scan"},
             {"text": "🟢 Jellyfin Status", "callback_data": "menu:jellyfin_status"},
+        ],
+        [
+            {"text": "🎞 Episodes", "callback_data": "menu:episodes"},
+            {"text": "📚 All series", "callback_data": "menu:library_episodes"},
         ],
         [
             {"text": "✏️ تنظیم/اصلاح فولدر", "callback_data": "menu:folder_help"},
@@ -149,6 +161,12 @@ HELP_COMMAND_TEMPLATES = {
                 "text": "📋 Copy /undo_sort_batch",
                 "copy_text": {"text": "/undo_sort_batch "},
             },
+        ],
+        [
+            {
+                "text": "📋 Copy /episodes",
+                "copy_text": {"text": "/episodes "},
+            }
         ],
         [
             {
@@ -196,6 +214,7 @@ class BotApp:
         self.downloader: DownloadManager | None = None
         self.jellyfin: JellyfinBridge | None = None
         self.sorter = SorterBridge(config, self.store)
+        self.catalog = EpisodeCatalog(config.allowed_video_extensions)
         if not self.store.get_setting("current_folder") and config.default_target_folder:
             self.store.set_setting("current_folder", sanitize_folder_name(config.default_target_folder))
 
@@ -297,6 +316,8 @@ class BotApp:
             "menu:undo_sort_last": self.cmd_undo_sort_last,
             "menu:jellyfin_scan": self.cmd_jellyfin_scan,
             "menu:jellyfin_status": self.cmd_jellyfin_status,
+            "menu:episodes": self.cmd_episodes,
+            "menu:library_episodes": self.cmd_library_episodes,
             "menu:open": self.cmd_menu,
             "menu:help": self.cmd_help,
         }
@@ -356,7 +377,41 @@ class BotApp:
         if pending_id is None:
             await self.send(chat_id, "این ویدیو قبلاً در صف ثبت شده است.")
         else:
-            await self.send(chat_id, f"ویدیو به صف اضافه شد. شناسه: #{pending_id}")
+            notice = self._episode_arrival_notice(
+                filename, self.store.get_setting("current_folder"), pending_id
+            )
+            await self.send(
+                chat_id,
+                f"ویدیو به صف اضافه شد. شناسه: #{pending_id}"
+                + (f"\n{notice}" if notice else ""),
+            )
+
+    def _episode_arrival_notice(
+        self, filename: str, target_folder: str, pending_id: int
+    ) -> str:
+        detected = detect_episode(filename)
+        if not detected or not target_folder:
+            return ""
+        season, episode = detected
+        existing = self.catalog.contains(
+            self.config.target_path(target_folder), season, episode
+        )
+        if existing:
+            return (
+                f"⚠️ S{season:02d}E{episode:02d} از قبل در Library وجود دارد:\n"
+                f"{existing.path.name}"
+            )
+        for queued in self.queue.pending():
+            if queued["pending_id"] == pending_id:
+                continue
+            if queued.get("target_folder") != target_folder:
+                continue
+            if detect_episode(queued["original_filename"]) == detected:
+                return (
+                    f"⚠️ S{season:02d}E{episode:02d} قبلاً در صف ثبت شده "
+                    f"(#{queued['pending_id']})."
+                )
+        return f"🆕 اپیزود جدید تشخیص داده شد: S{season:02d}E{episode:02d}"
 
     async def handle_command(self, chat_id: int, text: str) -> None:
         command, _, argument = text.partition(" ")
@@ -378,6 +433,8 @@ class BotApp:
             "/undo_sort_batch": self.cmd_undo_sort_batch,
             "/jellyfin_scan": self.cmd_jellyfin_scan,
             "/jellyfin_status": self.cmd_jellyfin_status,
+            "/episodes": self.cmd_episodes,
+            "/library_episodes": self.cmd_library_episodes,
         }
         handler = handlers.get(command)
         if not handler:
@@ -728,6 +785,54 @@ class BotApp:
                 f"اتصال Jellyfin ناموفق بود: {exc}\n"
                 f"{self.jellyfin.last_scan_summary()}",
             )
+
+    async def cmd_episodes(self, chat_id: int, argument: str) -> None:
+        folder_name = argument.strip() or self.store.get_setting("current_folder")
+        if not folder_name:
+            await self.send(
+                chat_id,
+                "فولدر مشخص نیست.\n/episodes Anime Name\nیا ابتدا /setfolder را بزن.",
+            )
+            return
+        try:
+            folder_name = sanitize_folder_name(folder_name)
+            folder = self.config.target_path(folder_name)
+        except ValueError as exc:
+            await self.send(chat_id, str(exc))
+            return
+        if not folder.is_dir():
+            await self.send(chat_id, f"فولدر پیدا نشد:\n{folder}")
+            return
+        entries = await asyncio.to_thread(self.catalog.scan_series, folder)
+        await self.send(chat_id, format_series_inventory(folder_name, entries))
+
+    def _library_episode_summary(self) -> str:
+        lines = ["📚 خلاصه اپیزودهای Jellyfin Library"]
+        series_count = 0
+        for folder in sorted(
+            (p for p in self.config.jellyfin_library_path.iterdir() if p.is_dir()),
+            key=lambda p: p.name.casefold(),
+        ):
+            grouped = self.catalog.grouped(self.catalog.scan_series(folder))
+            if not grouped:
+                continue
+            series_count += 1
+            seasons = ", ".join(
+                f"S{season:02d}: {len(episodes)} eps (latest E{max(episodes):02d})"
+                for season, episodes in sorted(grouped.items())
+            )
+            lines.append(f"• {folder.name} — {seasons}")
+            if len(lines) >= 60:
+                lines.append("... نتیجه کوتاه شد؛ برای جزئیات /episodes NAME")
+                break
+        if not series_count:
+            return "هیچ اپیزود قابل‌شناسایی در Library پیدا نشد."
+        return "\n".join(lines)
+
+    async def cmd_library_episodes(self, chat_id: int, _: str) -> None:
+        await self.send(chat_id, "در حال بررسی فایل‌های Library...")
+        summary = await asyncio.to_thread(self._library_episode_summary)
+        await self.send(chat_id, summary)
 
 
 async def async_main() -> None:
