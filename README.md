@@ -16,3 +16,16 @@ configure `config.json`, then start `run_local_bot_api.bat` and `run.bat`.
 
 The bot works without the organizer; only its `/sort_*` commands require the
 sibling `organizer` folder.
+
+## Updating on another PC
+
+Clone the repository once instead of downloading a ZIP:
+
+```powershell
+git clone https://github.com/shiny222/vedio_name_manager__bot-telegram.git
+```
+
+Run each project's `install.bat` only for the first setup. For later updates,
+close the bot and Local Bot API windows and double-click the root `update.bat`.
+It runs a safe fast-forward `git pull`, checks dependencies, and preserves
+ignored local files such as `config.json`, SQLite state, logs, and `.venv`.
