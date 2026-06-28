@@ -6,6 +6,8 @@ import json
 import logging
 import mimetypes
 import sys
+import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,7 @@ if __package__ in {None, ""}:
         EpisodeCatalog, detect_episode, format_series_inventory
     )
     from telegram_jellyfin_bot.jellyfin_bridge import JellyfinBridge
+    from telegram_jellyfin_bot.imdb_bridge import ImdbFuzzySearchBridge
     from telegram_jellyfin_bot.queue_manager import QueueManager
     from telegram_jellyfin_bot.sorter_bridge import SorterBridge
     from telegram_jellyfin_bot.state_store import StateStore
@@ -31,6 +34,7 @@ else:
     from .downloader import DownloadManager
     from .episode_catalog import EpisodeCatalog, detect_episode, format_series_inventory
     from .jellyfin_bridge import JellyfinBridge
+    from .imdb_bridge import ImdbFuzzySearchBridge
     from .queue_manager import QueueManager
     from .sorter_bridge import SorterBridge
     from .state_store import StateStore
@@ -63,6 +67,8 @@ HELP = """دستورها:
 /jellyfin_status - وضعیت اتصال Jellyfin
 /episodes [NAME] - نمایش اپیزودهای یک سریال
 /library_episodes - خلاصه تمام سریال‌ها
+/imdb_search NAME - جستجوی نام درست در IMDb
+/imdb_fix_current NAME - اصلاح فولدر فعلی با نتیجه IMDb
 /chatid - نمایش شناسه چت
 /help - راهنما"""
 
@@ -91,6 +97,8 @@ BOT_COMMANDS = [
     {"command": "jellyfin_status", "description": "وضعیت اتصال Jellyfin"},
     {"command": "episodes", "description": "نمایش اپیزودهای یک سریال"},
     {"command": "library_episodes", "description": "خلاصه اپیزودهای Library"},
+    {"command": "imdb_search", "description": "جستجوی نام درست در IMDb"},
+    {"command": "imdb_fix_current", "description": "اصلاح فولدر فعلی با IMDb"},
     {"command": "chatid", "description": "نمایش شناسه چت"},
     {"command": "help", "description": "نمایش راهنما"},
 ]
@@ -127,6 +135,9 @@ CHANNEL_MENU = {
         [
             {"text": "🎞 Episodes", "callback_data": "menu:episodes"},
             {"text": "📚 All series", "callback_data": "menu:library_episodes"},
+        ],
+        [
+            {"text": "🔎 IMDb title search", "callback_data": "menu:imdb_help"},
         ],
         [
             {"text": "✏️ تنظیم/اصلاح فولدر", "callback_data": "menu:folder_help"},
@@ -184,6 +195,16 @@ HELP_COMMAND_TEMPLATES = {
         ],
         [
             {
+                "text": "📋 Copy /imdb_search",
+                "copy_text": {"text": "/imdb_search "},
+            },
+            {
+                "text": "📋 Copy /imdb_fix_current",
+                "copy_text": {"text": "/imdb_fix_current "},
+            },
+        ],
+        [
+            {
                 "text": "🎛 Open main menu",
                 "callback_data": "menu:open",
             }
@@ -229,6 +250,8 @@ class BotApp:
         self.jellyfin: JellyfinBridge | None = None
         self.sorter = SorterBridge(config, self.store)
         self.catalog = EpisodeCatalog(config.allowed_video_extensions)
+        self.imdb = ImdbFuzzySearchBridge(config)
+        self.imdb_choices: dict[str, dict] = {}
         if not self.store.get_setting("current_folder") and config.default_target_folder:
             self.store.set_setting("current_folder", sanitize_folder_name(config.default_target_folder))
 
@@ -354,6 +377,14 @@ class BotApp:
                 CHANNEL_MENU,
             )
             return
+        if action == "menu:imdb_help":
+            await self.send(
+                int(chat_id),
+                "برای پیدا کردن نام درست و ساخت مقصد:\n/imdb_search dr ston\n\n"
+                "برای تغییر نام امن فولدر فعلی:\n/imdb_fix_current dr ston",
+                HELP_COMMAND_TEMPLATES,
+            )
+            return
         if action.startswith("folders:"):
             try:
                 page = max(0, int(action.partition(":")[2]))
@@ -374,6 +405,33 @@ class BotApp:
                 )
                 return
             await self._select_existing_folder(int(chat_id), matches[0])
+            return
+        if action.startswith("imdbpick:"):
+            token = action.partition(":")[2]
+            choice = self.imdb_choices.get(token)
+            if not choice or time.time() - choice["created_at"] > 600:
+                await self.send(
+                    int(chat_id),
+                    "این نتیجه منقضی شده است. دوباره /imdb_search را اجرا کن.",
+                )
+                return
+            await self._offer_folder_confirmation(int(chat_id), token, choice)
+            return
+        if action.startswith("folderconfirm:"):
+            token = action.partition(":")[2]
+            choice = self.imdb_choices.pop(token, None)
+            if not choice or time.time() - choice["created_at"] > 600:
+                await self.send(int(chat_id), "این تأیید منقضی شده است؛ دوباره تلاش کن.")
+                return
+            if choice["mode"] == "rename":
+                await self.cmd_renamefolder(int(chat_id), choice["folder_name"])
+            else:
+                await self._commit_folder(int(chat_id), choice["folder_name"])
+            return
+        if action.startswith("foldercancel:"):
+            token = action.partition(":")[2]
+            self.imdb_choices.pop(token, None)
+            await self.send(int(chat_id), "تغییر فولدر لغو شد.", CHANNEL_MENU)
             return
         handler = handlers.get(action)
         if handler:
@@ -472,6 +530,8 @@ class BotApp:
             "/jellyfin_status": self.cmd_jellyfin_status,
             "/episodes": self.cmd_episodes,
             "/library_episodes": self.cmd_library_episodes,
+            "/imdb_search": self.cmd_imdb_search,
+            "/imdb_fix_current": self.cmd_imdb_fix_current,
         }
         handler = handlers.get(command)
         if not handler:
@@ -498,11 +558,21 @@ class BotApp:
         await self.send(chat_id, f"chat_id این گفتگو:\n{chat_id}")
 
     async def cmd_setfolder(self, chat_id: int, argument: str) -> None:
+        if not argument.strip():
+            await self.send(chat_id, "فرمت درست:\n/setfolder dr ston")
+            return
+        asyncio.create_task(self._run_imdb_search(chat_id, argument, "use"))
+
+    async def _commit_folder(self, chat_id: int, folder_name: str) -> None:
         try:
-            folder = sanitize_folder_name(argument)
+            folder = sanitize_folder_name(folder_name)
             path = self.config.target_path(folder)
             self.store.set_setting("current_folder", folder)
-            await self.send(chat_id, f"فولدر مقصد تنظیم شد:\n{path}")
+            await self.send(
+                chat_id,
+                f"فولدر مقصد پس از تأیید تنظیم شد:\n{path}",
+                CHANNEL_MENU,
+            )
         except ValueError as exc:
             await self.send(chat_id, str(exc))
 
@@ -910,6 +980,116 @@ class BotApp:
                 f"اتصال Jellyfin ناموفق بود: {exc}\n"
                 f"{self.jellyfin.last_scan_summary()}",
             )
+
+    async def _run_imdb_search(
+        self, chat_id: int, query: str, mode: str
+    ) -> None:
+        if not query.strip():
+            command = "/imdb_fix_current" if mode == "rename" else "/imdb_search"
+            await self.send(chat_id, f"فرمت درست:\n{command} dr ston")
+            return
+        try:
+            await self.send(chat_id, f"در حال جستجوی IMDb برای: {query}")
+            results, source = await self.imdb.search(query)
+            if not results:
+                await self._offer_manual_folder_fallback(
+                    chat_id, query, mode, "IMDb نتیجه‌ای پیدا نکرد."
+                )
+                return
+            now = time.time()
+            self.imdb_choices = {
+                key: value for key, value in self.imdb_choices.items()
+                if now - value["created_at"] <= 600
+            }
+            rows = []
+            for result in results:
+                token = uuid.uuid4().hex[:16]
+                self.imdb_choices[token] = {
+                    "folder_name": result["folder_name"],
+                    "mode": mode,
+                    "created_at": now,
+                    "source": source,
+                }
+                title = str(result["title"])
+                year = result.get("year") or "?"
+                score_value = result.get("score", "?")
+                rows.append(
+                    [{
+                        "text": f"{title[:34]} ({year}) · {score_value}%",
+                        "callback_data": f"imdbpick:{token}",
+                    }]
+                )
+            rows.append([{"text": "🎛 Main menu", "callback_data": "menu:open"}])
+            action_text = (
+                "نتیجه درست را برای تغییر نام فولدر فعلی انتخاب کن:"
+                if mode == "rename"
+                else "نتیجه درست را برای مقصد Jellyfin انتخاب کن:"
+            )
+            await self.send(
+                chat_id,
+                f"{action_text}\nSource: {source}\n"
+                "فرمت نهایی: Title (Year) [imdbid-ID]",
+                {"inline_keyboard": rows},
+            )
+        except Exception as exc:
+            LOG.warning("Optional IMDb fuzzy search failed: %s", exc)
+            await self._offer_manual_folder_fallback(
+                chat_id,
+                query,
+                mode,
+                f"جستجوی اختیاری IMDb در دسترس نیست: {exc}",
+            )
+
+    async def _offer_folder_confirmation(
+        self, chat_id: int, token: str, choice: dict
+    ) -> None:
+        source = choice.get("source", "IMDb fuzzy search")
+        action = "تغییر نام فولدر فعلی" if choice["mode"] == "rename" else "تنظیم مقصد"
+        await self.send(
+            chat_id,
+            f"نام پیشنهادی:\n{choice['folder_name']}\n\n"
+            f"Source: {source}\nAction: {action}\nآیا تأیید می‌کنی؟",
+            {
+                "inline_keyboard": [[
+                    {
+                        "text": "✅ Confirm",
+                        "callback_data": f"folderconfirm:{token}",
+                    },
+                    {
+                        "text": "❌ Cancel",
+                        "callback_data": f"foldercancel:{token}",
+                    },
+                ]]
+            },
+        )
+
+    async def _offer_manual_folder_fallback(
+        self, chat_id: int, entered_name: str, mode: str, reason: str
+    ) -> None:
+        try:
+            manual_name = sanitize_folder_name(entered_name)
+        except ValueError as exc:
+            await self.send(chat_id, f"{reason}\nنام دستی نیز معتبر نیست: {exc}")
+            return
+        token = uuid.uuid4().hex[:16]
+        choice = {
+            "folder_name": manual_name,
+            "mode": mode,
+            "created_at": time.time(),
+            "source": "Manual fallback (IMDb unavailable)",
+        }
+        self.imdb_choices[token] = choice
+        await self.send(
+            chat_id,
+            f"{reason}\n\nنام واردشده خودت به‌عنوان fallback پیشنهاد می‌شود.",
+        )
+        await self._offer_folder_confirmation(chat_id, token, choice)
+
+    async def cmd_imdb_search(self, chat_id: int, argument: str) -> None:
+        asyncio.create_task(self._run_imdb_search(chat_id, argument, "use"))
+
+    async def cmd_imdb_fix_current(self, chat_id: int, argument: str) -> None:
+        asyncio.create_task(self._run_imdb_search(chat_id, argument, "rename"))
 
     async def cmd_episodes(self, chat_id: int, argument: str) -> None:
         folder_name = argument.strip() or self.store.get_setting("current_folder")

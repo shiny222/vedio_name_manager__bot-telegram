@@ -43,6 +43,8 @@ class Config:
     jellyfin_server_url: str
     jellyfin_api_key: str
     jellyfin_request_timeout_seconds: int
+    fuzzy_search_command: list[str]
+    fuzzy_search_timeout_seconds: int
 
     @property
     def api_root(self) -> str:
@@ -90,6 +92,20 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
     command = raw.get("sorter_command", [])
     if not isinstance(command, list) or not all(isinstance(x, str) for x in command):
         raise ValueError("sorter_command باید آرایه‌ای از آرگومان‌ها باشد.")
+    fuzzy_search_command = raw.get(
+        "fuzzy_search_command",
+        raw.get(
+            "organisation_command",  # Backward compatibility with early config.
+            [
+                r"fuzzy_search\.venv\Scripts\python.exe",
+                r"fuzzy_search\imdb_tool.py",
+            ],
+        ),
+    )
+    if not isinstance(fuzzy_search_command, list) or not all(
+        isinstance(x, str) for x in fuzzy_search_command
+    ):
+        raise ValueError("fuzzy_search_command باید آرایه‌ای از آرگومان‌ها باشد.")
     default_folder = str(raw.get("default_target_folder", "")).strip()
     cfg = Config(
         bot_token=str(raw["bot_token"]),
@@ -118,6 +134,16 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         jellyfin_api_key=str(raw.get("jellyfin_api_key", "")).strip(),
         jellyfin_request_timeout_seconds=max(
             1, int(raw.get("jellyfin_request_timeout_seconds", 30))
+        ),
+        fuzzy_search_command=fuzzy_search_command,
+        fuzzy_search_timeout_seconds=max(
+            2,
+            int(
+                raw.get(
+                    "fuzzy_search_timeout_seconds",
+                    raw.get("organisation_timeout_seconds", 20),
+                )
+            ),
         ),
     )
     if not cfg.keep_original_filenames:

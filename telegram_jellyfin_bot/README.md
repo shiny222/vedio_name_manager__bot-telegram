@@ -108,11 +108,16 @@ https://api.telegram.org/botYOUR_TOKEN/logOut
 /setfolder My Course
 ```
 
-با Library نمونه، مقصد این می‌شود:
+اگر ابزار اختیاری `fuzzy_search` نصب باشد، `/setfolder` ابتدا IMDb را به‌صورت
+fuzzy جستجو می‌کند، نام رسمی، سال و IMDb ID را پیشنهاد می‌دهد و فقط پس از زدن
+**Confirm** مقصد را تغییر می‌دهد. با Library نمونه، مقصد می‌تواند این باشد:
 
 ```text
-D:\Media\Jellyfin\Shows\My Course
+D:\Media\Jellyfin\Shows\Official Title (2025) [imdbid-tt1234567]
 ```
+
+اگر IMDb یا ابزار در دسترس نباشد، همان `My Course` به‌عنوان Manual fallback
+نمایش داده می‌شود و آن نیز بدون Confirm ذخیره نخواهد شد.
 
 حالا ویدیوها را در گروه/کانال بفرستید. بات آن‌ها را **دانلود نمی‌کند** و فقط
 پیام «ویدیو به صف اضافه شد» می‌دهد. هر آیتم فولدر مقصد زمان دریافت خودش را
@@ -177,6 +182,8 @@ D:\Media\Jellyfin\Shows\My Course
 - `/jellyfin_status` — آزمایش اتصال و نمایش آخرین درخواست Scan
 - `/episodes [NAME]` — نمایش اپیزودها و شماره‌های Missing یک سریال
 - `/library_episodes` — خلاصه فصل‌ها و اپیزودهای تمام Library
+- `/imdb_search NAME` — جستجوی fuzzy نام و انتخاب فولدر استاندارد Jellyfin
+- `/imdb_fix_current NAME` — تغییر نام امن فولدر فعلی با نتیجه IMDb
 - `/chatid` — نمایش chat ID
 - `/help` — راهنما
 
@@ -236,6 +243,31 @@ SQLite باعث می‌شود صف، فولدر فعلی، وضعیت دانلو
 دستور `/episodes` جزئیات یک سریال را همراه gapهای Missing نشان می‌دهد و
 `/library_episodes` نمای کلی تمام سریال‌ها را می‌سازد. فولدرهای `_Unsorted` و
 `_Conflicts` در موجودی قطعی اپیزودها محاسبه نمی‌شوند.
+
+## ابزار اختیاری نام‌گذاری IMDb
+
+پروژه مستقل `fuzzy_search` برای جستجوی fuzzy ساخته شده است. ابتدا
+`fuzzy_search\install.bat` را اجرا کنید. سپس:
+
+```text
+/imdb_search dr ston
+```
+
+نتایج دکمه‌ای نمایش داده می‌شوند و انتخاب نتیجه مقصدی مانند زیر می‌سازد:
+
+```text
+Dr. Stone (2019) [imdbid-tt9679542]
+```
+
+برای اصلاح نام فولدر فعلی:
+
+```text
+/imdb_fix_current dr ston
+```
+
+بات این ابزار را فقط با subprocess و timeout اجرا می‌کند. نبودن ابزار، قطع
+بودن IMDb یا خطای شبکه هیچ‌یک مانع دانلود، نام‌گذاری دستی، sorter یا سایر
+فرمان‌های اصلی بات نمی‌شود. جستجوهای موفق cache می‌شوند.
 
 ## تست‌ها
 

@@ -47,6 +47,15 @@ if exist "organizer\.venv\Scripts\python.exe" (
 )
 
 echo.
+echo Checking IMDb fuzzy search tool dependencies...
+if exist "fuzzy_search\.venv\Scripts\python.exe" (
+  "fuzzy_search\.venv\Scripts\python.exe" -m pip install -r "fuzzy_search\requirements.txt"
+  if errorlevel 1 goto failed
+) else (
+  echo IMDb fuzzy search tool is optional. Run fuzzy_search\install.bat to enable it.
+)
+
+echo.
 echo Checking Telegram bot dependencies...
 if exist "telegram_jellyfin_bot\.venv\Scripts\python.exe" (
   "telegram_jellyfin_bot\.venv\Scripts\python.exe" -m pip install -r "telegram_jellyfin_bot\requirements.txt"

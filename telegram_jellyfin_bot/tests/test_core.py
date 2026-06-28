@@ -167,6 +167,60 @@ class EpisodeCatalogTests(unittest.TestCase):
             self.assertEqual(compact_numbers({1, 2, 3, 5}), "01-03, 05")
 
 
+class FolderSuggestionTests(unittest.TestCase):
+    def test_search_proposes_before_commit_and_manual_fallback(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    sent.append((text, reply_markup))
+
+                async def fake_search(query, limit=8):
+                    return ([{
+                        "imdb_id": "tt9679542",
+                        "title": "Dr. Stone",
+                        "year": 2019,
+                        "type": "TV series",
+                        "score": 96.0,
+                        "folder_name": "Dr. Stone (2019) [imdbid-tt9679542]",
+                    }], "online")
+
+                app.send = fake_send
+                app.imdb.search = fake_search
+                try:
+                    await app._run_imdb_search(1, "dr ston", "use")
+                    self.assertEqual(app.store.get_setting("current_folder"), "")
+                    choice = next(iter(app.imdb_choices.values()))
+                    self.assertEqual(
+                        choice["folder_name"],
+                        "Dr. Stone (2019) [imdbid-tt9679542]",
+                    )
+                    await app._commit_folder(1, choice["folder_name"])
+                    self.assertEqual(
+                        app.store.get_setting("current_folder"),
+                        "Dr. Stone (2019) [imdbid-tt9679542]",
+                    )
+                    await app._offer_manual_folder_fallback(
+                        1, "My Typed Name", "use", "offline"
+                    )
+                    self.assertTrue(
+                        any(
+                            item["folder_name"] == "My Typed Name"
+                            and item["source"].startswith("Manual fallback")
+                            for item in app.imdb_choices.values()
+                        )
+                    )
+                finally:
+                    app.store.close()
+        asyncio.run(exercise())
+
+
 class SorterTests(unittest.TestCase):
     def test_sorter_bridge_dry_run(self):
         async def exercise():
