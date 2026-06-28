@@ -24,6 +24,7 @@ except ImportError:  # The regex detector remains fully usable without guessit.
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v"}
 SUBTITLE_EXTENSIONS = {".srt", ".ass", ".vtt"}
 HISTORY_NAME = ".rename_history.json"
+FOLDER_HISTORY_NAME = ".folder_rename_history.json"
 LOG = logging.getLogger("jellyfin-organizer")
 
 
@@ -91,6 +92,180 @@ def append_history(path: Path, record: HistoryRecord) -> bool:
         records = []
     records.append(asdict(record))
     return save_history(path, records)
+
+
+def _safe_folder_component(value: str) -> str:
+    value = value.strip()
+    if (
+        not value
+        or value in {".", ".."}
+        or Path(value).name != value
+        or re.search(r'[<>:"/\\|?*\x00-\x1f]', value)
+        or value.endswith((" ", "."))
+    ):
+        raise ValueError("New series name is not a safe Windows folder name.")
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {
+        f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10)
+    }
+    if value.upper() in reserved:
+        raise ValueError("New series name is reserved by Windows.")
+    return value
+
+
+def _replace_path_prefix(value: str, old_root: Path, new_root: Path) -> str | None:
+    try:
+        relative = Path(value).resolve(strict=False).relative_to(old_root)
+    except (OSError, ValueError):
+        return None
+    return str(new_root / relative)
+
+
+def rename_series_folder(series_folder: Path, new_name: str) -> tuple[Path, int, str]:
+    """Rename a series and transactionally migrate every rollback path."""
+    if not series_folder.is_dir():
+        raise FileNotFoundError(f"Series folder does not exist: {series_folder}")
+    new_name = _safe_folder_component(new_name)
+    old_root = series_folder.resolve()
+    new_root = old_root.parent / new_name
+    if old_root == new_root:
+        raise ValueError("The new folder name is the same as the current name.")
+    if new_root.exists():
+        raise FileExistsError(f"Destination folder already exists: {new_root}")
+
+    migration_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+    plans: list[dict] = []
+    affected = 0
+
+    # Preflight every history file before touching the folder.
+    for history_path in old_root.rglob(HISTORY_NAME):
+        try:
+            records = json.loads(history_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"Invalid history file {history_path}: {exc}") from exc
+        if not isinstance(records, list):
+            raise ValueError(f"History root is not an array: {history_path}")
+        for record in records:
+            if not isinstance(record, dict):
+                raise ValueError(f"Invalid record in history: {history_path}")
+            changed = False
+            for field in ("original_full_path", "new_full_path"):
+                current = record.get(field)
+                if not isinstance(current, str):
+                    continue
+                replacement = _replace_path_prefix(current, old_root, new_root)
+                if replacement is not None and replacement != current:
+                    record.setdefault(f"recorded_{field}", current)
+                    record[field] = replacement
+                    changed = True
+            if changed:
+                path_migrations = record.setdefault("path_migrations", [])
+                if not isinstance(path_migrations, list):
+                    raise ValueError(
+                        f"Invalid path_migrations in history: {history_path}"
+                    )
+                path_migrations.append(
+                    {
+                        "timestamp": now_iso(),
+                        "migration_id": migration_id,
+                        "old_folder": str(old_root),
+                        "new_folder": str(new_root),
+                    }
+                )
+                affected += 1
+        plans.append(
+            {
+                "relative": history_path.relative_to(old_root),
+                "content": json.dumps(records, ensure_ascii=False, indent=2) + "\n",
+                "existed": True,
+            }
+        )
+
+    folder_history = old_root / FOLDER_HISTORY_NAME
+    if folder_history.exists():
+        try:
+            migrations = json.loads(folder_history.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"Invalid folder rename history: {exc}") from exc
+        if not isinstance(migrations, list):
+            raise ValueError("Folder rename history root is not an array.")
+    else:
+        migrations = []
+    migrations.append(
+        {
+            "timestamp": now_iso(),
+            "migration_id": migration_id,
+            "old_folder": str(old_root),
+            "new_folder": str(new_root),
+            "affected_history_records": affected,
+            "status": "done",
+        }
+    )
+    plans.append(
+        {
+            "relative": Path(FOLDER_HISTORY_NAME),
+            "content": json.dumps(migrations, ensure_ascii=False, indent=2) + "\n",
+            "existed": folder_history.exists(),
+        }
+    )
+
+    # Prepare new copies and byte-for-byte backups inside the folder. They move
+    # with the folder, allowing rollback even after the directory rename.
+    try:
+        for plan in plans:
+            final = old_root / plan["relative"]
+            plan["new_suffix"] = f".migrate-new-{migration_id}"
+            plan["backup_suffix"] = f".migrate-backup-{migration_id}"
+            prepared = final.with_name(final.name + plan["new_suffix"])
+            prepared.write_text(plan["content"], encoding="utf-8")
+            if plan["existed"]:
+                shutil.copy2(
+                    final, final.with_name(final.name + plan["backup_suffix"])
+                )
+    except Exception:
+        for plan in plans:
+            if "new_suffix" not in plan:
+                continue
+            final = old_root / plan["relative"]
+            final.with_name(final.name + plan["new_suffix"]).unlink(missing_ok=True)
+            final.with_name(final.name + plan["backup_suffix"]).unlink(missing_ok=True)
+        raise
+
+    renamed = False
+    current_root = old_root
+    try:
+        old_root.rename(new_root)
+        renamed = True
+        current_root = new_root
+        for plan in plans:
+            final = current_root / plan["relative"]
+            prepared = final.with_name(final.name + plan["new_suffix"])
+            prepared.replace(final)
+        for plan in plans:
+            final = current_root / plan["relative"]
+            final.with_name(final.name + plan["backup_suffix"]).unlink(missing_ok=True)
+        LOG.info(
+            "Renamed series folder: %s -> %s; migrated %d history records",
+            old_root, new_root, affected,
+        )
+        return new_root, affected, migration_id
+    except Exception:
+        # Restore original history bytes before restoring the original folder.
+        for plan in plans:
+            final = current_root / plan["relative"]
+            backup = final.with_name(final.name + plan["backup_suffix"])
+            prepared = final.with_name(final.name + plan["new_suffix"])
+            try:
+                if plan["existed"] and backup.exists():
+                    backup.replace(final)
+                elif not plan["existed"]:
+                    final.unlink(missing_ok=True)
+                prepared.unlink(missing_ok=True)
+                backup.unlink(missing_ok=True)
+            except OSError:
+                LOG.critical("Could not restore migration file: %s", final)
+        if renamed and new_root.exists() and not old_root.exists():
+            new_root.rename(old_root)
+        raise
 
 
 def explicit_episode_match(stem: str) -> tuple[int, int] | None:
@@ -535,6 +710,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     folder = subparsers.add_parser("undo-folder", help="undo records in one folder")
     folder.add_argument("folder_path", type=Path)
+
+    rename = subparsers.add_parser(
+        "rename-folder",
+        help="rename one series folder and migrate rollback history paths",
+    )
+    rename.add_argument("folder_path", type=Path)
+    rename.add_argument("new_name")
     return parser
 
 
@@ -554,6 +736,14 @@ def main(argv: list[str] | None = None) -> int:
             return undo_batch(args.library.expanduser(), args.batch_id)
         if args.command == "undo-folder":
             return undo_folder(args.folder_path.expanduser())
+        if args.command == "rename-folder":
+            new_path, affected, migration_id = rename_series_folder(
+                args.folder_path.expanduser(), args.new_name
+            )
+            LOG.info("New folder: %s", new_path)
+            LOG.info("Migrated history records: %d", affected)
+            LOG.info("Folder migration ID: %s", migration_id)
+            return 0
     except KeyboardInterrupt:
         LOG.warning("Cancelled.")
         return 130

@@ -103,6 +103,20 @@ Before restoring, undo verifies that the organized file exists, that the origina
 path is free, and that the file size still matches. Unsafe restores are skipped.
 Successful entries are marked `undone` and retain their audit history.
 
+### Renaming a series folder after sorting
+
+Use the history-aware command instead of renaming a sorted folder manually:
+
+```powershell
+python organizer.py rename-folder "D:\JellyfinLibrary\Wrong Name" "Correct Name (2025) [imdbid-tt1234567]"
+```
+
+It transactionally renames the folder and migrates every rollback path in nested
+`.rename_history.json` files. Original recorded paths are retained in
+`recorded_original_full_path` and `recorded_new_full_path`, while
+`.folder_rename_history.json` audits the folder migration. Existing destination
+folders are never merged or overwritten.
+
 ## Episode detection
 
 Explicit forms such as `S01E02`, `s1e2`, `1x02`, `Season 1 Episode 2`,

@@ -71,6 +71,20 @@ class SorterBridge:
         )
         return self._resolve_program_paths(command)
 
+    def build_rename_command(self, folder: Path, new_name: str) -> list[str]:
+        safe_folder = folder.resolve()
+        library = self.config.jellyfin_library_path.resolve()
+        if safe_folder != library and library not in safe_folder.parents:
+            raise ValueError("فولدر تغییر نام خارج از Library است.")
+        if not self.config.sorter_command or len(self.config.sorter_command) < 2:
+            raise ValueError("sorter_command باید Python و organizer.py را مشخص کند.")
+        command = list(self.config.sorter_command[:2]) + [
+            "rename-folder",
+            str(safe_folder),
+            new_name,
+        ]
+        return self._resolve_program_paths(command)
+
     async def run(self, folder: Path, dry_run: bool = False) -> tuple[bool, str]:
         command = self.build_command(folder, dry_run)
         return await self._execute(folder, command)
@@ -82,6 +96,12 @@ class SorterBridge:
     async def undo_last(self) -> tuple[bool, str]:
         command = self.build_undo_command()
         return await self._execute(self.config.jellyfin_library_path, command)
+
+    async def rename_folder(
+        self, folder: Path, new_name: str
+    ) -> tuple[bool, str]:
+        command = self.build_rename_command(folder, new_name)
+        return await self._execute(folder, command)
 
     async def _execute(self, folder: Path, command: list[str]) -> tuple[bool, str]:
         if self.active:

@@ -243,6 +243,9 @@ class SorterTests(unittest.TestCase):
                 self.assertIn(str(cfg.jellyfin_library_path), undo)
                 with self.assertRaises(ValueError):
                     bridge.build_undo_command("bad id & unsafe")
+                rename = bridge.build_rename_command(folder, "Correct Name")
+                self.assertIn("rename-folder", rename)
+                self.assertIn("Correct Name", rename)
                 ok, output = await bridge.run(folder, dry_run=True)
                 self.assertTrue(ok)
                 self.assertIn("dry sorter", output)

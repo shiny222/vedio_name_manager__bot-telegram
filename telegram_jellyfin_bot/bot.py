@@ -696,16 +696,19 @@ class BotApp:
                 f"تغییر انجام نشد؛ فولدر مقصد از قبل وجود دارد:\n{new_path}",
             )
             return
-        if old_path.exists() and any(old_path.rglob(".rename_history.json")):
-            await self.send(
-                chat_id,
-                "تغییر انجام نشد؛ این فولدر تاریخچه مرتب‌سازی دارد و تغییر نام "
-                "می‌تواند rollback را خراب کند.",
-            )
-            return
         try:
             if old_path.exists():
-                old_path.rename(new_path)
+                await self.send(
+                    chat_id,
+                    "در حال تغییر نام امن فولدر و به‌روزرسانی مسیرهای rollback...",
+                )
+                ok, output = await self.sorter.rename_folder(old_path, new_name)
+                if not ok:
+                    await self.send(
+                        chat_id,
+                        "تغییر نام انجام نشد و state بات تغییر نکرد.\n" + output[-2500:],
+                    )
+                    return
             changed = self.store.rename_target_folder(
                 old_name, new_name, old_path, new_path
             )
@@ -722,9 +725,9 @@ class BotApp:
             await self.send(
                 chat_id,
                 f"نام فولدر اصلاح شد:\n{old_path}\n→ {new_path}\n"
-                f"مقصد {changed} مورد صف نیز به‌روزرسانی شد.",
+                f"مقصد {changed} مورد صف و مسیرهای rollback نیز به‌روزرسانی شدند.",
             )
-        except OSError as exc:
+        except Exception as exc:
             LOG.exception("Folder rename failed")
             await self.send(chat_id, f"تغییر نام فولدر انجام نشد: {exc}")
 
