@@ -98,6 +98,35 @@ class ConfigAndPathTests(unittest.TestCase):
             finally:
                 app.store.close()
 
+    def test_queue_display_number_resets_per_folder(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            path = root / "config.json"
+            path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+            cfg = load_config(path, create_from_example=False)
+            app = BotApp(cfg)
+            try:
+                first = app.queue.add(
+                    message_id=1, chat_id=-1, file_id="f1", file_unique_id="u1",
+                    original_filename="a1.mkv", file_size=10,
+                    target_folder="Anime A",
+                )
+                second = app.queue.add(
+                    message_id=2, chat_id=-1, file_id="f2", file_unique_id="u2",
+                    original_filename="a2.mkv", file_size=10,
+                    target_folder="Anime A",
+                )
+                third = app.queue.add(
+                    message_id=3, chat_id=-1, file_id="f3", file_unique_id="u3",
+                    original_filename="b1.mkv", file_size=10,
+                    target_folder="Anime B",
+                )
+                self.assertEqual(app._queue_display_number(first, "Anime A"), 1)
+                self.assertEqual(app._queue_display_number(second, "Anime A"), 2)
+                self.assertEqual(app._queue_display_number(third, "Anime B"), 1)
+            finally:
+                app.store.close()
+
 
 class QueueTests(unittest.TestCase):
     def test_queue_persists(self):

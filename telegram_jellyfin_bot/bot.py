@@ -521,14 +521,28 @@ class BotApp:
         if pending_id is None:
             await self.send(chat_id, "This video is already in the queue.")
         else:
+            target_folder = self.store.get_setting("current_folder")
+            item_number = self._queue_display_number(pending_id, target_folder)
             notice = self._episode_arrival_notice(
-                filename, self.store.get_setting("current_folder"), pending_id
+                filename, target_folder, pending_id
             )
             await self.send(
                 chat_id,
-                f"Video added to the queue. ID: #{pending_id}"
+                f"Video added to the queue. Item {item_number} for this folder."
+                f"\nQueue ID for commands: #{pending_id}"
                 + (f"\n{notice}" if notice else ""),
             )
+
+    def _queue_display_number(self, pending_id: int, target_folder: str) -> int:
+        """Return a friendly per-folder number while keeping pending_id stable."""
+        same_folder = [
+            item for item in self.queue.pending()
+            if (item.get("target_folder") or "") == (target_folder or "")
+        ]
+        for index, item in enumerate(same_folder, start=1):
+            if int(item["pending_id"]) == pending_id:
+                return index
+        return len(same_folder) + 1
 
     def _episode_arrival_notice(
         self, filename: str, target_folder: str, pending_id: int
@@ -553,7 +567,7 @@ class BotApp:
             if detect_episode(queued["original_filename"]) == detected:
                 return (
                     f"⚠️ S{season:02d}E{episode:02d} is already queued "
-                    f"(#{queued['pending_id']})."
+                    f"(Queue ID #{queued['pending_id']})."
                 )
         return f"🆕 New episode detected: S{season:02d}E{episode:02d}"
 
@@ -798,11 +812,14 @@ class BotApp:
             await self.send(chat_id, "The queue is empty.")
             return
         lines = [f"Queue ({len(items)} file(s)):"]
+        per_folder_counts: dict[str, int] = {}
         for item in items[:30]:
+            folder_label = item["target_folder"] or "(no folder)"
+            per_folder_counts[folder_label] = per_folder_counts.get(folder_label, 0) + 1
             lines.append(
-                f"#{item['pending_id']} [{item['status']}] "
+                f"{folder_label} item {per_folder_counts[folder_label]} "
+                f"(Queue ID #{item['pending_id']}) [{item['status']}] "
                 f"{item['original_filename']} — {format_size(item['file_size'])} "
-                f"→ {item['target_folder'] or '(no folder)'}"
             )
         if len(items) > 30:
             lines.append(f"... and {len(items)-30} more file(s)")
