@@ -11,7 +11,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from telegram_jellyfin_bot.config import load_config
-from telegram_jellyfin_bot.bot import BotApp
+from telegram_jellyfin_bot.bot import (
+    BotApp,
+    CHANNEL_MENU,
+    PERSISTENT_CATEGORY_KEYBOARD,
+    SORTING_MENU,
+)
 from telegram_jellyfin_bot.downloader import DownloadManager
 from telegram_jellyfin_bot.episode_catalog import (
     EpisodeCatalog, compact_numbers, detect_episode, format_series_inventory
@@ -163,6 +168,96 @@ class QueueTests(unittest.TestCase):
             self.assertEqual(changed, 1)
             self.assertEqual(store.get_item(pending_id)["target_folder"], "Correct Name")
             store.close()
+
+
+class MenuNavigationTests(unittest.TestCase):
+    def test_private_menu_installs_persistent_keyboard_and_keeps_quick_menu(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    sent.append((chat_id, text, reply_markup))
+
+                app.send = fake_send
+                app.chat_types[987654321] = "private"
+                try:
+                    await app.cmd_menu(987654321, "")
+                    self.assertEqual(len(sent), 2)
+                    self.assertIs(sent[0][2], PERSISTENT_CATEGORY_KEYBOARD)
+                    self.assertIs(sent[1][2], CHANNEL_MENU)
+                finally:
+                    app.store.close()
+        asyncio.run(exercise())
+
+    def test_channel_menu_keeps_inline_keyboard_without_reply_keyboard(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    sent.append((chat_id, text, reply_markup))
+
+                app.send = fake_send
+                app.chat_types[-100123] = "channel"
+                try:
+                    await app.cmd_menu(-100123, "")
+                    self.assertEqual(len(sent), 1)
+                    self.assertIs(sent[0][2], CHANNEL_MENU)
+                    self.assertTrue(
+                        any(
+                            button.get("callback_data") == "nav:categories"
+                            for row in CHANNEL_MENU["inline_keyboard"]
+                            for button in row
+                        )
+                    )
+                finally:
+                    app.store.close()
+        asyncio.run(exercise())
+
+    def test_reply_keyboard_category_opens_inline_submenu(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    sent.append((chat_id, text, reply_markup))
+
+                app.send = fake_send
+                try:
+                    await app.handle_update(
+                        {
+                            "message": {
+                                "message_id": 1,
+                                "chat": {
+                                    "id": 987654321,
+                                    "type": "private",
+                                },
+                                "text": "🧹 Sorting",
+                            }
+                        }
+                    )
+                    self.assertEqual(len(sent), 1)
+                    self.assertIs(sent[0][2], SORTING_MENU)
+                    self.assertEqual(app.queue.pending(), [])
+                finally:
+                    app.store.close()
+        asyncio.run(exercise())
 
 
 class DownloadSafetyTests(unittest.TestCase):

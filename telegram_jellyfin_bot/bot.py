@@ -168,7 +168,243 @@ CHANNEL_MENU = {
             {"text": "✏️ Set/rename folder", "callback_data": "menu:folder_help"},
             {"text": "❓ Help", "callback_data": "menu:help"},
         ],
+        [
+            {"text": "🗂 Command categories", "callback_data": "nav:categories"},
+        ],
     ]
+}
+
+# This persistent keyboard appears beside the message input in private chats,
+# groups, and supergroups. Telegram does not support reply keyboards in channels,
+# so CHANNEL_MENU links to the same categories with an inline button.
+PERSISTENT_CATEGORY_KEYBOARD = {
+    "keyboard": [
+        [
+            {"text": "📥 Downloads"},
+            {"text": "📁 Folders"},
+        ],
+        [
+            {"text": "🧹 Sorting"},
+            {"text": "↩️ Undo & Recovery"},
+        ],
+        [
+            {"text": "🎬 Jellyfin"},
+            {"text": "🔎 IMDb"},
+        ],
+        [
+            {"text": "📺 Episodes"},
+            {"text": "⚙️ Bot"},
+        ],
+        [
+            {"text": "⚡ Quick Menu"},
+        ],
+    ],
+    "resize_keyboard": True,
+    "is_persistent": True,
+    "input_field_placeholder": "Choose a bot category or send a video…",
+}
+
+CATEGORY_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "📥 Downloads", "callback_data": "nav:downloads"},
+            {"text": "📁 Folders", "callback_data": "nav:folders"},
+        ],
+        [
+            {"text": "🧹 Sorting", "callback_data": "nav:sorting"},
+            {"text": "↩️ Undo & Recovery", "callback_data": "nav:undo"},
+        ],
+        [
+            {"text": "🎬 Jellyfin", "callback_data": "nav:jellyfin"},
+            {"text": "🔎 IMDb", "callback_data": "nav:imdb"},
+        ],
+        [
+            {"text": "📺 Episodes", "callback_data": "nav:episodes"},
+            {"text": "⚙️ Bot", "callback_data": "nav:bot"},
+        ],
+        [
+            {"text": "⚡ Quick menu", "callback_data": "menu:open"},
+        ],
+    ]
+}
+
+SUBMENU_FOOTER = [
+    {"text": "⬅️ Categories", "callback_data": "nav:categories"},
+    {"text": "⚡ Quick menu", "callback_data": "menu:open"},
+]
+
+DOWNLOAD_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "📋 Queue", "callback_data": "menu:queue"},
+            {"text": "⬇️ Download", "callback_data": "menu:download"},
+        ],
+        [
+            {"text": "✅ Confirm", "callback_data": "menu:confirm"},
+            {"text": "📊 Status", "callback_data": "menu:status"},
+        ],
+        [
+            {"text": "🗑 Clear queue", "callback_data": "menu:clearqueue"},
+            {"text": "⛔ Cancel", "callback_data": "menu:cancel"},
+        ],
+        [
+            {"text": "📋 Copy /remove", "copy_text": {"text": "/remove "}},
+            {"text": "📋 Copy /resolve", "copy_text": {"text": "/resolve "}},
+        ],
+        SUBMENU_FOOTER,
+    ]
+}
+
+FOLDER_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "📁 Current folder", "callback_data": "menu:folder"},
+            {"text": "🗂 Pick existing", "callback_data": "menu:folders"},
+        ],
+        [
+            {"text": "Clear selection", "callback_data": "menu:unsetfolder"},
+        ],
+        [
+            {"text": "📋 Copy /setfolder", "copy_text": {"text": "/setfolder "}},
+            {"text": "📋 Copy /usefolder", "copy_text": {"text": "/usefolder "}},
+        ],
+        [
+            {
+                "text": "📋 Copy /renamefolder",
+                "copy_text": {"text": "/renamefolder "},
+            },
+        ],
+        SUBMENU_FOOTER,
+    ]
+}
+
+SORTING_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "Sort new files", "callback_data": "menu:sort_current"},
+            {"text": "Sort latest", "callback_data": "menu:sort_latest"},
+        ],
+        [
+            {"text": "Rename sorted files", "callback_data": "menu:resort_current"},
+            {
+                "text": "Fix episode metadata",
+                "callback_data": "menu:fix_metadata_current",
+            },
+        ],
+        [
+            {"text": "Sorter status", "callback_data": "menu:sort_status"},
+            {
+                "text": "📋 Copy /sort_folder",
+                "copy_text": {"text": "/sort_folder "},
+            },
+        ],
+        SUBMENU_FOOTER,
+    ]
+}
+
+UNDO_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "Sort history", "callback_data": "menu:sort_history"},
+            {"text": "Recover current", "callback_data": "menu:recover_current"},
+        ],
+        [
+            {"text": "One revision back", "callback_data": "menu:sort_back"},
+            {"text": "One revision forward", "callback_data": "menu:sort_forward"},
+        ],
+        [
+            {"text": "Undo latest batch", "callback_data": "menu:undo_sort_last"},
+        ],
+        [
+            {
+                "text": "📋 Copy /undo_sort_batch",
+                "copy_text": {"text": "/undo_sort_batch "},
+            },
+        ],
+        SUBMENU_FOOTER,
+    ]
+}
+
+JELLYFIN_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "🔄 Scan library", "callback_data": "menu:jellyfin_scan"},
+            {"text": "🟢 Connection status", "callback_data": "menu:jellyfin_status"},
+        ],
+        SUBMENU_FOOTER,
+    ]
+}
+
+IMDB_MENU = {
+    "inline_keyboard": [
+        [
+            {
+                "text": "📋 Copy /imdb_search",
+                "copy_text": {"text": "/imdb_search "},
+            },
+        ],
+        [
+            {
+                "text": "📋 Copy /imdb_fix_current",
+                "copy_text": {"text": "/imdb_fix_current"},
+            },
+        ],
+        SUBMENU_FOOTER,
+    ]
+}
+
+EPISODE_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "Current series", "callback_data": "menu:episodes"},
+            {"text": "All series", "callback_data": "menu:library_episodes"},
+        ],
+        [
+            {
+                "text": "📋 Copy /episodes NAME",
+                "copy_text": {"text": "/episodes "},
+            },
+        ],
+        SUBMENU_FOOTER,
+    ]
+}
+
+BOT_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "📊 Status", "callback_data": "menu:status"},
+            {"text": "🆔 Chat ID", "callback_data": "menu:chatid"},
+        ],
+        [
+            {"text": "❓ Help", "callback_data": "menu:help"},
+            {"text": "⚡ Quick menu", "callback_data": "menu:open"},
+        ],
+        [
+            {"text": "⬅️ Categories", "callback_data": "nav:categories"},
+        ],
+    ]
+}
+
+CATEGORY_SUBMENUS = {
+    "nav:downloads": ("Download commands:", DOWNLOAD_MENU),
+    "nav:folders": ("Folder commands:", FOLDER_MENU),
+    "nav:sorting": ("Sorting commands:", SORTING_MENU),
+    "nav:undo": ("Undo and recovery commands:", UNDO_MENU),
+    "nav:jellyfin": ("Jellyfin commands:", JELLYFIN_MENU),
+    "nav:imdb": ("IMDb fuzzy-search commands:", IMDB_MENU),
+    "nav:episodes": ("Episode inventory commands:", EPISODE_MENU),
+    "nav:bot": ("Bot information and help:", BOT_MENU),
+}
+
+REPLY_CATEGORY_ACTIONS = {
+    "📥 Downloads": "nav:downloads",
+    "📁 Folders": "nav:folders",
+    "🧹 Sorting": "nav:sorting",
+    "↩️ Undo & Recovery": "nav:undo",
+    "🎬 Jellyfin": "nav:jellyfin",
+    "🔎 IMDb": "nav:imdb",
+    "📺 Episodes": "nav:episodes",
+    "⚙️ Bot": "nav:bot",
 }
 
 # Telegram immediately sends highlighted slash commands when tapped. In
@@ -278,6 +514,7 @@ class BotApp:
         self.imdb = ImdbFuzzySearchBridge(config)
         self.imdb_choices: dict[str, dict] = {}
         self.background_tasks: set[asyncio.Task] = set()
+        self.chat_types: dict[int, str] = {}
         if not self.store.get_setting("current_folder") and config.default_target_folder:
             self.store.set_setting("current_folder", sanitize_folder_name(config.default_target_folder))
 
@@ -387,12 +624,15 @@ class BotApp:
         if not message:
             return
         chat_id = int(message["chat"]["id"])
+        self.chat_types[chat_id] = str(message["chat"].get("type", ""))
         if not self.allowed(chat_id):
             LOG.warning("Ignored unauthorized chat_id=%s", chat_id)
             return
         text = str(message.get("text", "")).strip()
         if text.startswith("/"):
             await self.handle_command(chat_id, text)
+        elif text in REPLY_CATEGORY_ACTIONS or text == "⚡ Quick Menu":
+            await self.handle_reply_category(chat_id, text)
         else:
             await self.handle_media(chat_id, message)
 
@@ -416,17 +656,22 @@ class BotApp:
             LOG.exception("Could not answer callback query")
         if chat_id is None or not self.allowed(int(chat_id)):
             return
+        self.chat_types[int(chat_id)] = str(chat.get("type", ""))
         action = str(query.get("data", ""))
         handlers = {
             "menu:folder": self.cmd_folder,
             "menu:folders": self.cmd_folders,
+            "menu:unsetfolder": self.cmd_unsetfolder,
             "menu:queue": self.cmd_queue,
+            "menu:clearqueue": self.cmd_clearqueue,
             "menu:download": self.cmd_download,
             "menu:confirm": self.cmd_confirm,
             "menu:status": self.cmd_status,
+            "menu:chatid": self.cmd_chatid,
             "menu:cancel": self.cmd_cancel,
             "menu:sort_current": self.cmd_sort_current,
             "menu:sort_latest": self.cmd_sort_latest,
+            "menu:sort_status": self.cmd_sort_status,
             "menu:resort_current": self.cmd_resort_current,
             "menu:sort_history": self.cmd_sort_history,
             "menu:sort_back": self.cmd_sort_back,
@@ -438,9 +683,21 @@ class BotApp:
             "menu:jellyfin_status": self.cmd_jellyfin_status,
             "menu:episodes": self.cmd_episodes,
             "menu:library_episodes": self.cmd_library_episodes,
-            "menu:open": self.cmd_menu,
+            "menu:open": self.cmd_quick_menu,
             "menu:help": self.cmd_help,
         }
+        if action == "nav:categories":
+            await self.send(
+                int(chat_id),
+                "Choose a command category:",
+                CATEGORY_MENU,
+            )
+            return
+        submenu = CATEGORY_SUBMENUS.get(action)
+        if submenu:
+            title, markup = submenu
+            await self.send(int(chat_id), title, markup)
+            return
         if action == "menu:folder_help":
             await self.send(
                 int(chat_id),
@@ -537,6 +794,17 @@ class BotApp:
         if handler:
             await handler(int(chat_id), "")
 
+    async def handle_reply_category(self, chat_id: int, text: str) -> None:
+        """Open an inline submenu selected from the persistent reply keyboard."""
+        if text == "⚡ Quick Menu":
+            await self.cmd_quick_menu(chat_id, "")
+            return
+        action = REPLY_CATEGORY_ACTIONS.get(text)
+        submenu = CATEGORY_SUBMENUS.get(action or "")
+        if submenu:
+            title, markup = submenu
+            await self.send(chat_id, title, markup)
+
     async def handle_media(self, chat_id: int, message: dict) -> None:
         media = message.get("video") or message.get("document")
         if not media:
@@ -626,7 +894,7 @@ class BotApp:
         command = command.split("@", 1)[0].lower()
         argument = argument.strip()
         handlers = {
-            "/start": self.cmd_help, "/help": self.cmd_help, "/menu": self.cmd_menu,
+            "/start": self.cmd_start, "/help": self.cmd_help, "/menu": self.cmd_menu,
             "/chatid": self.cmd_chatid,
             "/setfolder": self.cmd_setfolder, "/folder": self.cmd_folder,
             "/folders": self.cmd_folders, "/usefolder": self.cmd_usefolder,
@@ -659,6 +927,16 @@ class BotApp:
             return
         await handler(chat_id, argument)
 
+    async def cmd_start(self, chat_id: int, _: str) -> None:
+        if self.chat_types.get(chat_id) != "channel":
+            await self.send(
+                chat_id,
+                "Category keyboard enabled. Choose a category below, or keep "
+                "using slash commands.",
+                PERSISTENT_CATEGORY_KEYBOARD,
+            )
+        await self.cmd_help(chat_id, "")
+
     async def cmd_help(self, chat_id: int, _: str) -> None:
         await self.send(
             chat_id,
@@ -668,6 +946,15 @@ class BotApp:
         )
 
     async def cmd_menu(self, chat_id: int, _: str) -> None:
+        if self.chat_types.get(chat_id) != "channel":
+            await self.send(
+                chat_id,
+                "Persistent category keyboard enabled below the message box.",
+                PERSISTENT_CATEGORY_KEYBOARD,
+            )
+        await self.cmd_quick_menu(chat_id, "")
+
+    async def cmd_quick_menu(self, chat_id: int, _: str) -> None:
         await self.send(
             chat_id,
             "Download and sorting control menu:",

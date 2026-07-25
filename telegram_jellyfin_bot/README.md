@@ -116,6 +116,18 @@ Trigger Jellyfin scan:
 
 Telegram channels cannot pre-fill editable slash commands the same way normal chats can. For commands that need extra text, `/help` shows copy buttons. Tap a button, paste the command, then add the folder name or batch ID.
 
+## Persistent category keyboard
+
+In a private chat, group, or supergroup, send `/menu` once to enable a persistent
+keyboard beside the message box. Its category buttons open smaller inline menus
+for downloads, folders, sorting, undo/recovery, Jellyfin, IMDb, episodes, and
+bot information. The existing quick-access inline menu is still sent and has
+not been replaced.
+
+Telegram does not support persistent reply keyboards in channels. In a channel,
+use the **Command categories** button at the bottom of the existing inline menu;
+it opens the same categorized submenus.
+
 ## Duplicate files
 
 The bot does not overwrite automatically. If a destination file already exists, it asks you to choose:
