@@ -96,6 +96,8 @@ Trigger Jellyfin scan:
 - `/sort_history` — show numbered sorter revisions.
 - `/sort_back` — move one sorter revision back.
 - `/sort_forward` — move one sorter revision forward.
+- `/recover_current` — manually reconcile incomplete operations in only the current folder.
+- `/fix_metadata_current` — manually rename episode NFO/artwork in only the current folder.
 - `/sort_latest` — sort the latest downloaded folder.
 - `/sort_folder NAME` — sort a specific folder in the library.
 - `/sort_status` — show latest sorter run status.
@@ -125,6 +127,23 @@ The bot does not overwrite automatically. If a destination file already exists, 
 ```
 
 `save_with_suffix` creates a name like `Video (1).mkv`.
+When you explicitly choose `overwrite`, the completed `.part` file is installed
+with an atomic replacement. The old destination is not deleted first, so a
+failed replacement leaves the existing file in place.
+Before any completed `.part` file is published, its byte count must match the
+size Telegram reported. A mismatch marks the item as failed, leaves the
+`.part` file for inspection/retry, and does not create or replace the final
+video.
+
+## Manual current-folder maintenance
+
+`/recover_current` is an on-demand safety check. It scans operation journals
+only under the currently selected series folder; it never runs continuously
+and never scans good sibling folders.
+
+`/fix_metadata_current` is also manual. It renames only episode `.nfo` and
+episode `.jpg`, `.jpeg`, `.png`, or `.webp` sidecars that can be matched to one
+video in the same directory. Series/season artwork and NFO files are left alone.
 
 ## Background task tracking
 

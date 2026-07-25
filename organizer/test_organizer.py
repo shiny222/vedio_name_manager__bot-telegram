@@ -167,12 +167,28 @@ class SortRevisionTests(unittest.TestCase):
             )
             self.assertTrue(old_file.exists())
             self.assertFalse(renamed.exists())
+            self.assertEqual(
+                organizer.change_sort_revision(series, "back", revision=1), 1
+            )
 
             self.assertEqual(
                 organizer.change_sort_revision(series, "forward"), 0
             )
             self.assertTrue(renamed.exists())
             self.assertFalse(old_file.exists())
+            self.assertEqual(
+                organizer.change_sort_revision(series, "forward", revision=1),
+                1,
+            )
+
+    def test_undo_missing_batch_reports_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            library = Path(td) / "Library"
+            library.mkdir()
+            self.assertEqual(
+                organizer.undo_batch(library, "does-not-exist"),
+                1,
+            )
 
     def test_normal_sort_does_not_rename_existing_episodes(self):
         with tempfile.TemporaryDirectory() as td:
@@ -285,6 +301,261 @@ class OperationSafetyTests(unittest.TestCase):
                     "undo-history-save-failed",
                     "undo-rolled-back",
                 ],
+            )
+
+    def test_dry_run_reserves_duplicate_destinations_like_a_real_run(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "Show"
+            series.mkdir()
+            (series / "A.S01E01.mkv").write_bytes(b"first")
+            (series / "B.S01E01.mkv").write_bytes(b"second")
+
+            with self.assertLogs(organizer.LOG, level="INFO") as captured:
+                self.assertEqual(
+                    organizer.run_organizer(series, dry_run=True),
+                    0,
+                )
+            output = "\n".join(captured.output)
+            self.assertIn(
+                str(series / "Season 01" / "Show - S01E01.mkv"),
+                output,
+            )
+            self.assertIn(
+                str(series / "_Conflicts" / "B.S01E01.mkv"),
+                output,
+            )
+            self.assertFalse((series / "Season 01").exists())
+            self.assertFalse((series / "_Conflicts").exists())
+
+    def test_dry_run_reports_insufficient_destination_space(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "Show"
+            series.mkdir()
+            source = series / "Show.S01E01.mkv"
+            source.write_bytes(b"episode")
+
+            with (
+                patch.object(
+                    organizer,
+                    "_copy_space_required",
+                    return_value=source.stat().st_size,
+                ),
+                patch.object(
+                    organizer,
+                    "_destination_free_space",
+                    return_value=0,
+                ),
+                self.assertLogs(organizer.LOG, level="ERROR") as captured,
+            ):
+                self.assertEqual(
+                    organizer.run_organizer(series, dry_run=True),
+                    1,
+                )
+            self.assertIn("NOT ENOUGH SPACE", "\n".join(captured.output))
+            self.assertTrue(source.exists())
+            self.assertFalse((series / organizer.HISTORY_NAME).exists())
+
+
+class ManualRecoveryTests(unittest.TestCase):
+    def test_recovers_completed_move_missing_rename_history(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "Show"
+            season = series / "Season 01"
+            season.mkdir(parents=True)
+            original = series / "downloaded.mkv"
+            destination = season / "Show - S01E01.mkv"
+            destination.write_bytes(b"episode")
+            record = organizer.HistoryRecord(
+                timestamp=organizer.now_iso(),
+                original_full_path=str(original.resolve()),
+                new_full_path=str(destination.resolve()),
+                original_filename=original.name,
+                new_filename=destination.name,
+                file_size=destination.stat().st_size,
+                file_type="video",
+                status="done",
+                batch_id="recovery-batch",
+                operation="organize",
+                operation_id="incomplete-operation",
+            )
+            self.assertTrue(
+                organizer.append_journal(
+                    season,
+                    "move-planned",
+                    organizer.asdict(record),
+                )
+            )
+
+            self.assertEqual(organizer.recover_folder(series), 0)
+            history = json.loads(
+                season.joinpath(organizer.HISTORY_NAME).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(len(history), 1)
+            self.assertEqual(
+                history[0]["operation_id"],
+                "incomplete-operation",
+            )
+            phases = [
+                json.loads(line)["phase"]
+                for line in season.joinpath(organizer.JOURNAL_NAME)
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(
+                phases,
+                ["move-planned", "move-recovered-done"],
+            )
+
+    def test_recovers_undo_that_moved_before_history_was_updated(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "Show"
+            season = series / "Season 01"
+            season.mkdir(parents=True)
+            original = series / "downloaded.mkv"
+            current = season / "Show - S01E01.mkv"
+            original.write_bytes(b"episode")
+            history = season / organizer.HISTORY_NAME
+            history.write_text(
+                json.dumps(
+                    [{
+                        "timestamp": organizer.now_iso(),
+                        "original_full_path": str(original.resolve()),
+                        "new_full_path": str(current.resolve()),
+                        "original_filename": original.name,
+                        "new_filename": current.name,
+                        "file_size": original.stat().st_size,
+                        "file_type": "video",
+                        "status": "done",
+                        "batch_id": "undo-recovery-batch",
+                        "operation": "organize",
+                        "operation_id": "original-move",
+                    }]
+                ),
+                encoding="utf-8",
+            )
+            details = {
+                "operation_id": "incomplete-undo",
+                "related_operation_id": "original-move",
+                "history_path": str(history.resolve()),
+                "history_index": 0,
+                "batch_id": "undo-recovery-batch",
+                "original_full_path": str(original.resolve()),
+                "new_full_path": str(current.resolve()),
+                "file_size": original.stat().st_size,
+                "action": "undo",
+            }
+            self.assertTrue(
+                organizer.append_journal(season, "undo-planned", details)
+            )
+
+            self.assertEqual(organizer.recover_folder(series), 0)
+            record = json.loads(history.read_text(encoding="utf-8"))[0]
+            self.assertEqual(record["status"], "undone")
+            self.assertEqual(record["previous_status"], "done")
+            self.assertTrue(original.exists())
+            self.assertFalse(current.exists())
+
+    def test_recovery_does_not_scan_sibling_series(self):
+        with tempfile.TemporaryDirectory() as td:
+            library = Path(td) / "Library"
+            selected = library / "Selected"
+            sibling = library / "Sibling"
+            selected.mkdir(parents=True)
+            sibling.mkdir()
+            sibling_source = sibling / "source.mkv"
+            sibling_source.write_bytes(b"episode")
+            details = {
+                "timestamp": organizer.now_iso(),
+                "operation_id": "sibling-operation",
+                "original_full_path": str(sibling_source.resolve()),
+                "new_full_path": str(
+                    (sibling / "Season 01" / "Sibling - S01E01.mkv").resolve()
+                ),
+                "original_filename": sibling_source.name,
+                "new_filename": "Sibling - S01E01.mkv",
+                "file_size": sibling_source.stat().st_size,
+                "file_type": "video",
+                "status": "done",
+                "batch_id": "sibling-batch",
+                "operation": "organize",
+            }
+            self.assertTrue(
+                organizer.append_journal(sibling, "move-planned", details)
+            )
+
+            self.assertEqual(organizer.recover_folder(selected), 0)
+            sibling_events = sibling.joinpath(
+                organizer.JOURNAL_NAME
+            ).read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(sibling_events), 1)
+            self.assertFalse(
+                sibling.joinpath(organizer.HISTORY_NAME).exists()
+            )
+
+
+class MetadataRenameTests(unittest.TestCase):
+    def test_manual_metadata_fix_renames_only_episode_sidecars(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "Correct Show (2026) [imdbid-tt123]"
+            season = series / "Season 01"
+            season.mkdir(parents=True)
+            video = season / "Correct Show - S01E01.mkv"
+            old_nfo = season / "Old Show - S01E01.nfo"
+            old_image = season / "Old Show - S01E01.png"
+            poster = series / "poster.jpg"
+            season_nfo = season / "season.nfo"
+            video.write_bytes(b"episode")
+            old_nfo.write_text("<episodedetails />", encoding="utf-8")
+            old_image.write_bytes(b"image")
+            poster.write_bytes(b"poster")
+            season_nfo.write_text("<season />", encoding="utf-8")
+
+            self.assertEqual(
+                organizer.fix_episode_metadata(series),
+                0,
+            )
+            self.assertTrue(video.exists())
+            self.assertTrue(
+                season.joinpath("Correct Show - S01E01.nfo").exists()
+            )
+            self.assertTrue(
+                season.joinpath("Correct Show - S01E01-thumb.png").exists()
+            )
+            self.assertTrue(poster.exists())
+            self.assertTrue(season_nfo.exists())
+            history = json.loads(
+                season.joinpath(organizer.HISTORY_NAME).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                {record["file_type"] for record in history},
+                {"metadata", "artwork"},
+            )
+            self.assertTrue(
+                all(record["operation"] == "fix-metadata" for record in history)
+            )
+
+    def test_metadata_dry_run_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "Show"
+            season = series / "Season 01"
+            season.mkdir(parents=True)
+            video = season / "Show - S01E01.mkv"
+            old_nfo = season / "Old - S01E01.nfo"
+            video.write_bytes(b"episode")
+            old_nfo.write_text("<episodedetails />", encoding="utf-8")
+
+            self.assertEqual(
+                organizer.fix_episode_metadata(series, dry_run=True),
+                0,
+            )
+            self.assertTrue(old_nfo.exists())
+            self.assertFalse(season.joinpath("Show - S01E01.nfo").exists())
+            self.assertFalse(
+                season.joinpath(organizer.HISTORY_NAME).exists()
             )
 
 

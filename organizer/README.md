@@ -55,6 +55,11 @@ Preview first—this makes no filesystem changes and writes no history:
 python organizer.py dry-run --series-folder "D:\JellyfinLibrary\Breaking Bad"
 ```
 
+The preview reserves each planned destination in memory, so duplicate episodes
+are shown in `_Conflicts` exactly as they would be during a real run. It also
+checks cumulative free space for moves that cross drives. Moves within one drive
+are filesystem renames and do not require a second full copy of each video.
+
 Run the organization:
 
 ```powershell
@@ -111,6 +116,45 @@ python organizer.py undo-folder "D:\JellyfinLibrary\Breaking Bad\Season 01"
 Before restoring, undo verifies that the organized file exists, that the original
 path is free, and that the file size still matches. Unsafe restores are skipped.
 Successful entries are marked `undone` and retain their audit history.
+Undo and revision commands return an error if a batch is missing, is already in
+the requested state, or is only partially restored. This prevents callers such
+as the Telegram bot from reporting a partial operation as successful.
+
+### Manual recovery after an interruption
+
+Recovery is never run in the background. To inspect and reconcile only one
+series folder, run:
+
+```powershell
+python organizer.py recover-folder "D:\JellyfinLibrary\Breaking Bad"
+```
+
+The command reads operation journals only inside that selected series. If it can
+prove from both paths and the recorded byte count that a move, undo, or redo
+finished before a shutdown, it repairs the matching history state. If it can
+prove the operation never moved the file, it records that no change was needed.
+Ambiguous states (both copies, neither copy, or a size mismatch) are reported
+and left untouched for manual inspection.
+
+### Manual episode metadata rename
+
+After renaming/resorting episode videos, update episode sidecars only when you
+choose:
+
+```powershell
+python organizer.py fix-metadata "D:\JellyfinLibrary\Breaking Bad"
+python organizer.py fix-metadata "D:\JellyfinLibrary\Breaking Bad" --dry-run
+```
+
+The command matches metadata to exactly one episode video in the same directory.
+Episode NFO files become `Series - S01E01.nfo`, and episode images become
+`Series - S01E01-thumb.jpg` (while preserving their actual extension). General
+series/season files such as `poster.jpg`, `season.nfo`, and `tvshow.nfo` are not
+renamed. This follows Jellyfin's
+[NFO naming](https://jellyfin.org/docs/general/server/metadata/nfo/) and
+[episode image naming](https://jellyfin.org/docs/general/server/media/shows/)
+documentation. These moves are recorded as their own undoable sort revision,
+and existing destinations are never overwritten.
 
 ### Renaming a series folder after sorting
 

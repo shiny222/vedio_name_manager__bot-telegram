@@ -8,9 +8,11 @@ import tempfile
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 from telegram_jellyfin_bot.config import load_config
 from telegram_jellyfin_bot.bot import BotApp
+from telegram_jellyfin_bot.downloader import DownloadManager
 from telegram_jellyfin_bot.episode_catalog import (
     EpisodeCatalog, compact_numbers, detect_episode, format_series_inventory
 )
@@ -32,7 +34,6 @@ def config_data(root: Path) -> dict:
         "local_bot_api_base_url": "http://127.0.0.1:8081/bot",
         "local_bot_api_base_file_url": "http://127.0.0.1:8081/file/bot",
         "jellyfin_library_path": str(root / "library"),
-        "temp_download_path": str(root / "temp"),
         "data_path": str(root / "data"),
         "logs_path": str(root / "logs"),
         "sorter_command": [sys.executable, "-c", "print('dry sorter')", "{folder}", "{mode}"],
@@ -41,7 +42,6 @@ def config_data(root: Path) -> dict:
         "max_parallel_downloads": 1,
         "default_target_folder": "",
         "confirm_before_download": True,
-        "keep_original_filenames": True,
         "ask_before_overwrite": True,
         "jellyfin_server_url": "http://127.0.0.1:8096",
         "jellyfin_api_key": "test-api-key",
@@ -163,6 +163,112 @@ class QueueTests(unittest.TestCase):
             self.assertEqual(changed, 1)
             self.assertEqual(store.get_item(pending_id)["target_folder"], "Correct Name")
             store.close()
+
+
+class DownloadSafetyTests(unittest.TestCase):
+    def test_size_mismatch_keeps_partial_file_and_does_not_publish_it(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                store = StateStore(cfg.data_path / "state.db")
+                queue = QueueManager(store)
+                pending_id = queue.add(
+                    message_id=2,
+                    chat_id=-1,
+                    file_id="file-id",
+                    file_unique_id="unique-id",
+                    original_filename="episode.mkv",
+                    file_size=4,
+                    target_folder="Show",
+                )
+                local_source = root / "telegram-source.mkv"
+                local_source.write_bytes(b"new")
+
+                async def fake_api_call(method, **params):
+                    return {"file_path": str(local_source)}
+
+                async def notify(text):
+                    return None
+
+                manager = DownloadManager(cfg, queue, fake_api_call, None)
+                try:
+                    await manager._download_one(
+                        store.get_item(pending_id),
+                        notify,
+                    )
+                    destination = cfg.target_path("Show") / "episode.mkv"
+                    self.assertFalse(destination.exists())
+                    self.assertEqual(
+                        destination.with_name("episode.mkv.part").read_bytes(),
+                        b"new",
+                    )
+                    item = store.get_item(pending_id)
+                    self.assertEqual(item["status"], "failed")
+                    self.assertIn("size mismatch", item["error"].lower())
+                finally:
+                    store.close()
+        asyncio.run(exercise())
+
+    def test_failed_atomic_overwrite_preserves_existing_file(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                store = StateStore(cfg.data_path / "state.db")
+                queue = QueueManager(store)
+                pending_id = queue.add(
+                    message_id=3,
+                    chat_id=-1,
+                    file_id="file-id",
+                    file_unique_id="unique-id",
+                    original_filename="episode.mkv",
+                    file_size=3,
+                    target_folder="Show",
+                )
+                queue.set_status(
+                    pending_id,
+                    "queued",
+                    None,
+                    overwrite_policy="overwrite",
+                )
+                destination = cfg.target_path("Show") / "episode.mkv"
+                destination.parent.mkdir()
+                destination.write_bytes(b"old")
+                local_source = root / "telegram-source.mkv"
+                local_source.write_bytes(b"new")
+
+                async def fake_api_call(method, **params):
+                    return {"file_path": str(local_source)}
+
+                async def notify(text):
+                    return None
+
+                manager = DownloadManager(
+                    cfg,
+                    queue,
+                    fake_api_call,
+                    None,
+                )
+                try:
+                    with patch.object(
+                        Path,
+                        "replace",
+                        side_effect=OSError("simulated replace failure"),
+                    ):
+                        await manager._download_one(
+                            store.get_item(pending_id),
+                            notify,
+                        )
+                    self.assertEqual(destination.read_bytes(), b"old")
+                    self.assertEqual(store.get_item(pending_id)["status"], "failed")
+                finally:
+                    store.close()
+        asyncio.run(exercise())
 
 
 class EpisodeCatalogTests(unittest.TestCase):
@@ -352,6 +458,14 @@ class SorterTests(unittest.TestCase):
                 rename = bridge.build_rename_command(folder, "Correct Name")
                 self.assertIn("rename-folder", rename)
                 self.assertIn("Correct Name", rename)
+                recover = bridge.build_series_action_command(
+                    "recover-folder", folder
+                )
+                self.assertIn("recover-folder", recover)
+                metadata = bridge.build_series_action_command(
+                    "fix-metadata", folder
+                )
+                self.assertIn("fix-metadata", metadata)
                 ok, output = await bridge.run(folder, dry_run=True)
                 self.assertTrue(ok)
                 self.assertIn("dry sorter", output)

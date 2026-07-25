@@ -126,10 +126,23 @@ class DownloadManager:
             if self.cancel_event.is_set():
                 self.queue.set_status(pending_id, "cancelled", "Download cancelled.")
                 return
+            expected_size = item.get("file_size")
+            if (
+                isinstance(expected_size, int)
+                and not isinstance(expected_size, bool)
+                and expected_size >= 0
+            ):
+                actual_size = part.stat().st_size
+                if actual_size != expected_size:
+                    raise IOError(
+                        "Downloaded size mismatch: "
+                        f"expected {expected_size} bytes, found {actual_size} bytes."
+                    )
             if destination.exists() and policy != "overwrite":
                 raise FileExistsError(f"Destination file appeared during download: {destination}")
-            if destination.exists():
-                destination.unlink()
+            # Path.replace uses os.replace: on the same volume it atomically
+            # installs the completed .part file. If replacement fails, the
+            # existing destination remains in place.
             part.replace(destination)
             self.queue.set_status(
                 pending_id, "completed", None, downloaded_path=str(destination)

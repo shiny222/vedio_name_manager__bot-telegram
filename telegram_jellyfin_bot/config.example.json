@@ -8,7 +8,6 @@
   "local_bot_api_base_url": "http://127.0.0.1:8081/bot",
   "local_bot_api_base_file_url": "http://127.0.0.1:8081/file/bot",
   "jellyfin_library_path": "D:\\Media\\Jellyfin\\Shows",
-  "temp_download_path": "temp",
   "data_path": "data",
   "logs_path": "logs",
   "sorter_command": [
@@ -24,9 +23,7 @@
   "max_parallel_downloads": 1,
   "default_target_folder": "",
   "confirm_before_download": true,
-  "keep_original_filenames": true,
   "ask_before_overwrite": true,
-  "auto_sort_after_download": false,
   "jellyfin_server_url": "http://127.0.0.1:8096",
   "jellyfin_api_key": "PUT_JELLYFIN_API_KEY_HERE",
   "jellyfin_request_timeout_seconds": 30,

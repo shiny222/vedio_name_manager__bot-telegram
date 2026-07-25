@@ -97,7 +97,14 @@ class SorterBridge:
         return self._resolve_program_paths(command)
 
     def build_series_action_command(self, action: str, folder: Path) -> list[str]:
-        allowed = {"resort-existing", "sort-history", "sort-back", "sort-forward"}
+        allowed = {
+            "resort-existing",
+            "sort-history",
+            "sort-back",
+            "sort-forward",
+            "recover-folder",
+            "fix-metadata",
+        }
         if action not in allowed:
             raise ValueError("Unsupported sorter action.")
         safe_folder = folder.resolve()

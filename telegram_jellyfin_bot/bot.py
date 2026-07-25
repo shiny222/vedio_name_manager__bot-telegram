@@ -62,6 +62,8 @@ HELP = """Commands:
 /sort_history - Show numbered sort revisions
 /sort_back - Move one sort revision back
 /sort_forward - Move one sort revision forward
+/recover_current - Manually recover incomplete operations in the current folder
+/fix_metadata_current - Rename episode NFO/artwork in the current folder
 /sort_latest - Sort the latest downloaded folder
 /sort_folder NAME - Sort a specific folder
 /sort_status - Show sorter status
@@ -97,6 +99,8 @@ BOT_COMMANDS = [
     {"command": "sort_history", "description": "Show numbered sort history"},
     {"command": "sort_back", "description": "Undo one sort revision"},
     {"command": "sort_forward", "description": "Redo one sort revision"},
+    {"command": "recover_current", "description": "Recover current folder operations"},
+    {"command": "fix_metadata_current", "description": "Fix current episode metadata"},
     {"command": "sort_latest", "description": "Sort latest download"},
     {"command": "sort_folder", "description": "Sort a specific folder"},
     {"command": "sort_status", "description": "Show sorter status"},
@@ -121,6 +125,10 @@ CHANNEL_MENU = {
         [
             {"text": "Sort back", "callback_data": "menu:sort_back"},
             {"text": "Sort forward", "callback_data": "menu:sort_forward"},
+        ],
+        [
+            {"text": "Recover current folder", "callback_data": "menu:recover_current"},
+            {"text": "Fix episode metadata", "callback_data": "menu:fix_metadata_current"},
         ],
         [
             {"text": "📁 Current folder", "callback_data": "menu:folder"},
@@ -423,6 +431,8 @@ class BotApp:
             "menu:sort_history": self.cmd_sort_history,
             "menu:sort_back": self.cmd_sort_back,
             "menu:sort_forward": self.cmd_sort_forward,
+            "menu:recover_current": self.cmd_recover_current,
+            "menu:fix_metadata_current": self.cmd_fix_metadata_current,
             "menu:undo_sort_last": self.cmd_undo_sort_last,
             "menu:jellyfin_scan": self.cmd_jellyfin_scan,
             "menu:jellyfin_status": self.cmd_jellyfin_status,
@@ -632,6 +642,8 @@ class BotApp:
             "/sort_history": self.cmd_sort_history,
             "/sort_back": self.cmd_sort_back,
             "/sort_forward": self.cmd_sort_forward,
+            "/recover_current": self.cmd_recover_current,
+            "/fix_metadata_current": self.cmd_fix_metadata_current,
             "/undo_sort_last": self.cmd_undo_sort_last,
             "/undo_sort_batch": self.cmd_undo_sort_batch,
             "/jellyfin_scan": self.cmd_jellyfin_scan,
@@ -1053,6 +1065,26 @@ class BotApp:
         self.track_task(
             self._run_series_sort_action(chat_id, "sort-forward", "Moving one revision forward"),
             f"sort-forward:{chat_id}",
+        )
+
+    async def cmd_recover_current(self, chat_id: int, _: str) -> None:
+        self.track_task(
+            self._run_series_sort_action(
+                chat_id,
+                "recover-folder",
+                "Checking the current folder for incomplete operations",
+            ),
+            f"recover-current:{chat_id}",
+        )
+
+    async def cmd_fix_metadata_current(self, chat_id: int, _: str) -> None:
+        self.track_task(
+            self._run_series_sort_action(
+                chat_id,
+                "fix-metadata",
+                "Renaming episode metadata in the current folder",
+            ),
+            f"fix-metadata-current:{chat_id}",
         )
 
     async def cmd_sort_latest(self, chat_id: int, _: str) -> None:

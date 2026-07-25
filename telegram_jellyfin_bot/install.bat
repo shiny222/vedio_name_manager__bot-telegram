@@ -37,7 +37,6 @@ if not exist "config.json" (
 
 if not exist "data" mkdir "data"
 if not exist "logs" mkdir "logs"
-if not exist "temp" mkdir "temp"
 if not exist "tools" mkdir "tools"
 
 echo.

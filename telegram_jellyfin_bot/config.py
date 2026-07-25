@@ -27,7 +27,6 @@ class Config:
     local_bot_api_base_url: str
     local_bot_api_base_file_url: str
     jellyfin_library_path: Path
-    temp_download_path: Path
     data_path: Path
     logs_path: Path
     sorter_command: list[str]
@@ -37,9 +36,7 @@ class Config:
     max_parallel_downloads: int
     default_target_folder: str
     confirm_before_download: bool
-    keep_original_filenames: bool
     ask_before_overwrite: bool
-    auto_sort_after_download: bool
     jellyfin_server_url: str
     jellyfin_api_key: str
     jellyfin_request_timeout_seconds: int
@@ -117,7 +114,6 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         local_bot_api_base_url=str(raw.get("local_bot_api_base_url", f"http://{host}:{port}/bot")),
         local_bot_api_base_file_url=str(raw.get("local_bot_api_base_file_url", f"http://{host}:{port}/file/bot")),
         jellyfin_library_path=_path(str(raw["jellyfin_library_path"]), base),
-        temp_download_path=_path(str(raw.get("temp_download_path", "temp")), base),
         data_path=_path(str(raw.get("data_path", "data")), base),
         logs_path=_path(str(raw.get("logs_path", "logs")), base),
         sorter_command=command,
@@ -127,9 +123,7 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         max_parallel_downloads=max(1, int(raw.get("max_parallel_downloads", 1))),
         default_target_folder=default_folder,
         confirm_before_download=bool(raw.get("confirm_before_download", True)),
-        keep_original_filenames=bool(raw.get("keep_original_filenames", True)),
         ask_before_overwrite=bool(raw.get("ask_before_overwrite", True)),
-        auto_sort_after_download=bool(raw.get("auto_sort_after_download", False)),
         jellyfin_server_url=str(raw.get("jellyfin_server_url", "")).strip().rstrip("/"),
         jellyfin_api_key=str(raw.get("jellyfin_api_key", "")).strip(),
         jellyfin_request_timeout_seconds=max(
@@ -146,14 +140,12 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
             ),
         ),
     )
-    if not cfg.keep_original_filenames:
-        raise ValueError("keep_original_filenames must be true.")
     if default_folder:
         cfg.target_path(default_folder)
     if cfg.jellyfin_server_url and not cfg.jellyfin_server_url.lower().startswith(
         ("http://", "https://")
     ):
         raise ValueError("jellyfin_server_url must start with http:// or https://.")
-    for directory in (cfg.jellyfin_library_path, cfg.temp_download_path, cfg.data_path, cfg.logs_path):
+    for directory in (cfg.jellyfin_library_path, cfg.data_path, cfg.logs_path):
         directory.mkdir(parents=True, exist_ok=True)
     return cfg
