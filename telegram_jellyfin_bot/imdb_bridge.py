@@ -7,6 +7,17 @@ from pathlib import Path
 from .config import Config
 
 
+async def _stop_process(process: asyncio.subprocess.Process | None) -> None:
+    """Ensure a timed-out or cancelled search process is fully stopped."""
+    if process is None or process.returncode is not None:
+        return
+    try:
+        process.kill()
+    except ProcessLookupError:
+        pass
+    await process.wait()
+
+
 class ImdbFuzzySearchBridge:
     """Optional subprocess adapter; the main bot never imports the IMDb tool."""
 
@@ -44,6 +55,7 @@ class ImdbFuzzySearchBridge:
             raise RuntimeError("Another IMDb search is already running.")
         command = self.build_command(query, limit)
         self.active = True
+        process: asyncio.subprocess.Process | None = None
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -65,6 +77,13 @@ class ImdbFuzzySearchBridge:
                 raise RuntimeError(payload.get("error", "IMDb search failed"))
             return payload.get("results", []), str(payload.get("source", "unknown"))
         except asyncio.TimeoutError as exc:
+            await _stop_process(process)
             raise RuntimeError("IMDb search timed out; enter the name manually.") from exc
+        except asyncio.CancelledError:
+            await _stop_process(process)
+            raise
+        except Exception:
+            await _stop_process(process)
+            raise
         finally:
             self.active = False

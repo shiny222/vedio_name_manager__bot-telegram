@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import organizer
 
@@ -45,6 +46,21 @@ class EpisodeDetectionTests(unittest.TestCase):
             "Show 1080p.mkv",
             "Show 2026 720p.mkv",
             "Show S2 - 1080p.mkv",
+        ):
+            with self.subTest(filename=filename):
+                self.assertIsNone(organizer.detect_episode(Path(filename)))
+
+    def test_numeric_fallback_rejects_technical_metadata(self):
+        self.assertEqual(
+            organizer.detect_episode(Path("video_001.mkv")),
+            (1, 1),
+        )
+        for filename in (
+            "Show 10bit.mkv",
+            "[Group2] Show.mkv",
+            "Show x264 10bit.mkv",
+            "Show AAC2.mkv",
+            "Show AAC 2.mkv",
         ):
             with self.subTest(filename=filename):
                 self.assertIsNone(organizer.detect_episode(Path(filename)))
@@ -187,6 +203,88 @@ class SortRevisionTests(unittest.TestCase):
                 series.joinpath(
                     "Season 02", "Correct Show - S02E03.mkv"
                 ).exists()
+            )
+
+
+class OperationSafetyTests(unittest.TestCase):
+    def test_failed_moves_make_the_batch_fail(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "Show"
+            series.mkdir()
+            source = series / "Show.S01E01.mkv"
+            source.write_bytes(b"episode")
+
+            with patch.object(organizer, "move_and_record", return_value=False):
+                self.assertEqual(organizer.run_organizer(series), 1)
+            self.assertTrue(source.exists())
+
+    def test_successful_move_has_before_and_after_journal_phases(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "Show"
+            series.mkdir()
+            (series / "Show.S01E01.mkv").write_bytes(b"episode")
+
+            self.assertEqual(organizer.run_organizer(series), 0)
+            journal = series / "Season 01" / organizer.JOURNAL_NAME
+            events = [
+                json.loads(line)
+                for line in journal.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(
+                [event["phase"] for event in events],
+                ["move-planned", "move-verified", "move-done"],
+            )
+            self.assertEqual(
+                len({event["operation_id"] for event in events}),
+                1,
+            )
+
+    def test_undo_history_save_failure_rolls_the_file_back(self):
+        with tempfile.TemporaryDirectory() as td:
+            series = Path(td) / "Show"
+            season = series / "Season 01"
+            season.mkdir(parents=True)
+            current = season / "Show - S01E01.mkv"
+            current.write_bytes(b"episode")
+            original = series / "downloaded.mkv"
+            history = season / organizer.HISTORY_NAME
+            history.write_text(
+                json.dumps(
+                    [{
+                        "timestamp": organizer.now_iso(),
+                        "original_full_path": str(original.resolve()),
+                        "new_full_path": str(current.resolve()),
+                        "original_filename": original.name,
+                        "new_filename": current.name,
+                        "file_size": current.stat().st_size,
+                        "file_type": "video",
+                        "status": "done",
+                        "batch_id": "test-batch",
+                    }]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(organizer, "save_history", return_value=False):
+                restored, skipped = organizer.undo_records([history])
+            self.assertEqual((restored, skipped), (0, 1))
+            self.assertTrue(current.exists())
+            self.assertFalse(original.exists())
+            record = json.loads(history.read_text(encoding="utf-8"))[0]
+            self.assertEqual(record["status"], "done")
+            phases = [
+                json.loads(line)["phase"]
+                for line in season.joinpath(organizer.JOURNAL_NAME)
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(
+                phases,
+                [
+                    "undo-planned",
+                    "undo-history-save-failed",
+                    "undo-rolled-back",
+                ],
             )
 
 

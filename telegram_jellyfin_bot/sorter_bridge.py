@@ -12,6 +12,17 @@ from .state_store import StateStore
 LOG = logging.getLogger(__name__)
 
 
+async def _stop_process(process: asyncio.subprocess.Process | None) -> None:
+    """Ensure a child process cannot outlive a cancelled or failed bot task."""
+    if process is None or process.returncode is not None:
+        return
+    try:
+        process.kill()
+    except ProcessLookupError:
+        pass
+    await process.wait()
+
+
 class SorterBridge:
     def __init__(self, config: Config, store: StateStore):
         self.config = config
@@ -126,6 +137,7 @@ class SorterBridge:
             return False, "A sorter operation is already running."
         self.active = True
         run_id = self.store.create_sorter_run(str(folder), json.dumps(command, ensure_ascii=False))
+        process: asyncio.subprocess.Process | None = None
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -138,8 +150,7 @@ class SorterBridge:
                     process.communicate(), timeout=self.config.sorter_timeout_seconds
                 )
             except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+                await _stop_process(process)
                 output = "Sorter stopped because it reached the timeout."
                 self.store.finish_sorter_run(run_id, "timeout", output)
                 return False, output
@@ -148,5 +159,16 @@ class SorterBridge:
             self.store.finish_sorter_run(run_id, status, output)
             LOG.info("Sorter run %s finished with code %s\n%s", run_id, process.returncode, output)
             return process.returncode == 0, output[-3000:] or "(no output)"
+        except asyncio.CancelledError:
+            await _stop_process(process)
+            output = "Sorter stopped because the bot task was cancelled."
+            self.store.finish_sorter_run(run_id, "cancelled", output)
+            LOG.warning("Sorter run %s was cancelled.", run_id)
+            raise
+        except Exception as exc:
+            await _stop_process(process)
+            output = f"Sorter process failed: {exc}"
+            self.store.finish_sorter_run(run_id, "failed", output)
+            raise
         finally:
             self.active = False

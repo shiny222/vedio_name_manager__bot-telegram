@@ -249,6 +249,58 @@ class FolderSuggestionTests(unittest.TestCase):
                     app.store.close()
         asyncio.run(exercise())
 
+    def test_imdb_confirmation_refuses_to_rename_a_different_current_folder(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+                rename_calls = []
+
+                class FakeApi:
+                    async def call(self, method, **params):
+                        return True
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    sent.append(text)
+
+                async def fake_rename(chat_id, name):
+                    rename_calls.append((chat_id, name))
+
+                app.api = FakeApi()
+                app.send = fake_send
+                app.cmd_renamefolder = fake_rename
+                first = cfg.jellyfin_library_path / "First Show"
+                first.mkdir()
+                app.store.set_setting("current_folder", "First Show")
+                token = "rename-test"
+                app.imdb_choices[token] = {
+                    "folder_name": "Official Show (2026) [imdbid-tt1234567]",
+                    "mode": "rename",
+                    "created_at": 9999999999,
+                    "source": "online",
+                    "source_folder": "First Show",
+                }
+                app.store.set_setting("current_folder", "Second Show")
+                try:
+                    await app.handle_callback(
+                        {
+                            "id": "callback-id",
+                            "data": f"folderconfirm:{token}",
+                            "message": {"chat": {"id": 987654321}},
+                        }
+                    )
+                    self.assertEqual(rename_calls, [])
+                    self.assertTrue(
+                        any("changed after this IMDb search" in text for text in sent)
+                    )
+                finally:
+                    app.store.close()
+        asyncio.run(exercise())
+
     def test_fix_current_uses_current_folder_as_default_query(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
@@ -304,6 +356,60 @@ class SorterTests(unittest.TestCase):
                 self.assertTrue(ok)
                 self.assertIn("dry sorter", output)
                 store.close()
+        asyncio.run(exercise())
+
+    def test_cancelled_sorter_process_is_recorded(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                store = StateStore(cfg.data_path / "state.db")
+                bridge = SorterBridge(cfg, store)
+                task = asyncio.create_task(
+                    bridge._execute(
+                        root,
+                        [sys.executable, "-c", "import time; time.sleep(30)"],
+                    )
+                )
+                await asyncio.sleep(0.2)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                self.assertEqual(store.latest_sorter_run()["status"], "cancelled")
+                self.assertFalse(bridge.active)
+                store.close()
+        asyncio.run(exercise())
+
+
+class PollingRecoveryTests(unittest.TestCase):
+    def test_one_failed_update_does_not_block_the_next(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                handled = []
+
+                async def fake_handle(update):
+                    handled.append(update["update_id"])
+                    if update["update_id"] == 10:
+                        raise RuntimeError("bad update")
+
+                app.handle_update = fake_handle
+                try:
+                    offset = await app._process_update_batch(
+                        [{"update_id": 10}, {"update_id": 11}],
+                        0,
+                    )
+                    self.assertEqual(handled, [10, 11])
+                    self.assertEqual(offset, 12)
+                    self.assertEqual(app.store.get_setting("update_offset"), "12")
+                finally:
+                    app.store.close()
         asyncio.run(exercise())
 
 

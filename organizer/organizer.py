@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import shutil
 import sys
@@ -26,6 +27,7 @@ SUBTITLE_EXTENSIONS = {".srt", ".ass", ".vtt"}
 HISTORY_NAME = ".rename_history.json"
 FOLDER_HISTORY_NAME = ".folder_rename_history.json"
 REVISION_HISTORY_NAME = ".sort_revisions.json"
+JOURNAL_NAME = ".operation_journal.jsonl"
 LOG = logging.getLogger("jellyfin-organizer")
 
 
@@ -41,6 +43,7 @@ class HistoryRecord:
     status: str
     batch_id: str
     operation: str = "organize"
+    operation_id: str = ""
 
 
 def now_iso() -> str:
@@ -109,6 +112,45 @@ def append_history(path: Path, record: HistoryRecord) -> bool:
         records = []
     records.append(asdict(record))
     return save_history(path, records)
+
+
+def append_journal(folder: Path, phase: str, details: dict) -> bool:
+    """Durably append one operation phase without rewriting earlier audit data."""
+    path = folder / JOURNAL_NAME
+    event = {"journal_timestamp": now_iso(), "phase": phase, **details}
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        return True
+    except OSError as exc:
+        LOG.error("Cannot write operation journal %s: %s", path, exc)
+        return False
+
+
+def _move_is_verified(source: Path, destination: Path, expected_size: int) -> bool:
+    """Confirm that one move finished at exactly the expected destination."""
+    if source.exists() or not destination.is_file():
+        return False
+    try:
+        return destination.stat().st_size == expected_size
+    except OSError:
+        return False
+
+
+def _rollback_move(destination: Path, source: Path) -> bool:
+    """Best-effort reversal used when verification or history persistence fails."""
+    try:
+        if source.exists() or not destination.exists():
+            return False
+        source.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(destination), str(source))
+        return source.exists() and not destination.exists()
+    except OSError as exc:
+        LOG.critical("Could not roll back %s -> %s: %s", destination, source, exc)
+        return False
 
 
 def _safe_folder_component(value: str) -> str:
@@ -359,12 +401,33 @@ def normalize_digits(value: str) -> str:
 
 
 def safe_numeric_fallback(stem: str) -> int | None:
-    """Accept one isolated number, rejecting common years and video qualities."""
+    """Accept one isolated episode number while rejecting technical metadata."""
     normalized = normalize_digits(stem)
-    numbers = [int(n) for n in re.findall(r"(?<!\d)(\d{1,4})(?!\d)", normalized)]
+    matches = list(re.finditer(r"(?<!\d)(\d{1,4})(?!\d)", normalized))
     ignored = {360, 480, 720, 1080, 1440, 2160, 264, 265}
-    candidates = [n for n in numbers if n not in ignored and not 1900 <= n <= 2099]
-    if len(candidates) == 1 and 1 <= candidates[0] <= 9999:
+    technical_spans = [
+        match.span()
+        for pattern in (
+            r"(?i)(?<!\d)(?:8|10|12)[ ._-]*bit\b",
+            r"(?i)\b(?:aac|ac3|eac3|dts)[ ._-]*\d{1,2}\b",
+        )
+        for match in re.finditer(pattern, normalized)
+    ]
+    candidates: list[int] = []
+    for match in matches:
+        number = int(match.group(1))
+        start, end = match.span(1)
+        if number in ignored or 1900 <= number <= 2099 or not 1 <= number <= 9999:
+            continue
+        # Reject release/codec labels such as Group2, AAC2, AV1 and 10bit.
+        if (
+            (start > 0 and normalized[start - 1].isalpha())
+            or (end < len(normalized) and normalized[end].isalpha())
+            or any(start < tech_end and end > tech_start for tech_start, tech_end in technical_spans)
+        ):
+            continue
+        candidates.append(number)
+    if len(candidates) == 1:
         return candidates[0]
     return None
 
@@ -393,8 +456,22 @@ def detect_episode(path: Path) -> tuple[int, int] | None:
                 episode = episode[0] if len(episode) == 1 else None
             if isinstance(season, list):
                 season = season[0] if len(season) == 1 else 1
-            if isinstance(episode, int) and isinstance(season, int):
-                return season, episode
+            if (
+                isinstance(episode, int)
+                and not isinstance(episode, bool)
+                and 1 <= episode <= 9999
+            ):
+                # GuessIt interprets names such as video_001 as Season 00 even
+                # though no explicit season exists. Explicit S00E01 was already
+                # handled above, so a non-positive guessed season means Season 01.
+                if (
+                    not isinstance(season, int)
+                    or isinstance(season, bool)
+                    or season <= 0
+                ):
+                    season = 1
+                if season <= 999:
+                    return season, episode
         except Exception as exc:  # Third-party parsing must not stop a batch.
             LOG.debug("guessit failed for %s: %s", path.name, exc)
 
@@ -430,6 +507,7 @@ def move_and_record(
     if dry_run:
         return True
 
+    operation_id = uuid.uuid4().hex
     try:
         # Recheck at the last possible moment. This also protects callers if a
         # destination appeared after planning but before the move.
@@ -438,33 +516,66 @@ def move_and_record(
             return False
         size = source.stat().st_size
         destination.parent.mkdir(parents=True, exist_ok=True)
+        record = HistoryRecord(
+            timestamp=now_iso(),
+            original_full_path=str(source.resolve()),
+            new_full_path=str(destination.resolve()),
+            original_filename=source.name,
+            new_filename=destination.name,
+            file_size=size,
+            file_type=file_type,
+            status=status,
+            batch_id=batch_id,
+            operation=operation,
+            operation_id=operation_id,
+        )
+        journal_details = asdict(record)
+        if not append_journal(history_folder, "move-planned", journal_details):
+            LOG.error("Refusing to move without a durable journal entry: %s", source)
+            return False
         shutil.move(str(source), str(destination))
     except OSError as exc:
         LOG.error("Failed moving %s: %s", source, exc)
+        append_journal(
+            history_folder,
+            "move-failed",
+            {
+                "operation_id": operation_id,
+                "original_full_path": str(source.resolve()),
+                "new_full_path": str(destination.resolve()),
+                "error": str(exc),
+            },
+        )
         return False
 
-    record = HistoryRecord(
-        timestamp=now_iso(),
-        original_full_path=str(source.resolve()),
-        new_full_path=str(destination.resolve()),
-        original_filename=source.name,
-        new_filename=destination.name,
-        file_size=size,
-        file_type=file_type,
-        status=status,
-        batch_id=batch_id,
-        operation=operation,
-    )
+    if not _move_is_verified(source, destination, size):
+        LOG.error("Move verification failed: %s -> %s", source, destination)
+        append_journal(history_folder, "move-verification-failed", journal_details)
+        rolled_back = _rollback_move(destination, source)
+        append_journal(
+            history_folder,
+            "move-rolled-back" if rolled_back else "move-rollback-failed",
+            journal_details,
+        )
+        return False
+    append_journal(history_folder, "move-verified", journal_details)
+
     if not append_history(history_folder / HISTORY_NAME, record):
         LOG.error("Move succeeded but history recording failed for %s", destination)
-        # Best effort immediate rollback keeps an untracked move from lingering.
-        try:
-            source.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(destination), str(source))
+        append_journal(history_folder, "move-history-save-failed", journal_details)
+        rolled_back = _rollback_move(destination, source)
+        if rolled_back:
             LOG.warning("Reverted unrecorded move: %s", source)
-        except OSError as exc:
-            LOG.critical("Could not revert unrecorded move %s: %s", destination, exc)
+        append_journal(
+            history_folder,
+            "move-rolled-back" if rolled_back else "move-rollback-failed",
+            journal_details,
+        )
         return False
+    if not append_journal(history_folder, "move-done", journal_details):
+        # The required rename history is already durable, so the move remains
+        # recoverable even if this optional final journal phase cannot be added.
+        LOG.error("Move history is safe, but final journal phase was not written.")
     return True
 
 
@@ -476,7 +587,7 @@ def organize_video(
     batch_id: str,
     dry_run: bool,
     operation: str = "organize",
-) -> None:
+) -> bool:
     series_folder = library / series_name
     detected = detect_episode(video)
 
@@ -494,6 +605,7 @@ def organize_video(
             video, target, history_folder, "video", status, batch_id, dry_run,
             operation
         )
+        success = moved
         if moved:
             for subtitle in subtitles:
                 subtitle_target = target.with_suffix(subtitle.suffix)
@@ -504,11 +616,12 @@ def organize_video(
                     subtitle_status = "conflict"
                 else:
                     subtitle_status = status
-                move_and_record(
+                subtitle_moved = move_and_record(
                     subtitle, subtitle_target, history_folder, "subtitle",
                     subtitle_status, batch_id, dry_run, operation
                 )
-        return
+                success = subtitle_moved and success
+        return success
 
     season, episode = detected
     season_folder = series_folder / f"Season {season:02d}"
@@ -516,7 +629,7 @@ def organize_video(
     target = season_folder / f"{clean_stem}{video.suffix}"
     if target.resolve(strict=False) == video.resolve(strict=False):
         LOG.info("SKIP (already correctly named): %s", video)
-        return
+        return True
     if target.exists():
         conflict_folder = series_folder / "_Conflicts"
         conflict_target = unique_conflict_path(conflict_folder, video.name)
@@ -524,19 +637,22 @@ def organize_video(
             video, conflict_target, series_folder, "video", "conflict",
             batch_id, dry_run, operation
         )
+        success = moved
         if moved:
             for subtitle in subtitles:
                 sub_target = unique_conflict_path(conflict_folder, subtitle.name)
-                move_and_record(
+                subtitle_moved = move_and_record(
                     subtitle, sub_target, series_folder, "subtitle", "conflict",
                     batch_id, dry_run, operation
                 )
-        return
+                success = subtitle_moved and success
+        return success
 
     moved = move_and_record(
         video, target, season_folder, "video", "done", batch_id, dry_run,
         operation
     )
+    success = moved
     if moved:
         for subtitle in subtitles:
             subtitle_target = season_folder / f"{clean_stem}{subtitle.suffix}"
@@ -544,15 +660,17 @@ def organize_video(
                 subtitle_target = unique_conflict_path(
                     series_folder / "_Conflicts", subtitle.name
                 )
-                move_and_record(
+                subtitle_moved = move_and_record(
                     subtitle, subtitle_target, series_folder, "subtitle", "conflict",
                     batch_id, dry_run, operation
                 )
             else:
-                move_and_record(
+                subtitle_moved = move_and_record(
                     subtitle, subtitle_target, season_folder, "subtitle", "done",
                     batch_id, dry_run, operation
                 )
+            success = subtitle_moved and success
+    return success
 
 
 def _strict_json_list(path: Path) -> list[dict]:
@@ -644,6 +762,7 @@ def resort_existing(series_folder: Path, dry_run: bool = False) -> int:
     batch_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
     LOG.info("Resort Batch ID: %s", batch_id)
     videos_found = 0
+    failures = 0
     candidate_folders = []
     for folder in series_folder.iterdir():
         if not folder.is_dir():
@@ -673,7 +792,7 @@ def resort_existing(series_folder: Path, dry_run: bool = False) -> int:
         for video in videos:
             videos_found += 1
             subtitle_key = f"{video.parent.resolve()}::{video.stem.casefold()}"
-            organize_video(
+            if not organize_video(
                 video,
                 series_folder.name,
                 series_folder.parent,
@@ -681,7 +800,8 @@ def resort_existing(series_folder: Path, dry_run: bool = False) -> int:
                 batch_id,
                 dry_run,
                 operation="resort-existing",
-            )
+            ):
+                failures += 1
     if not videos_found:
         LOG.error(
             "No existing videos found in Season, Sxx, localized season, "
@@ -700,6 +820,9 @@ def resort_existing(series_folder: Path, dry_run: bool = False) -> int:
             LOG.info("Sort revision: #%s", current["revision"])
         else:
             LOG.info("No filenames needed changing; no revision was created.")
+    if failures:
+        LOG.error("Resort completed with %d failed video operation(s).", failures)
+        return 1
     return 0
 
 
@@ -737,12 +860,14 @@ def run_organizer(
         if item.is_file() and item.suffix.lower() in SUBTITLE_EXTENSIONS:
             subtitles_by_stem.setdefault(item.stem.casefold(), []).append(item)
 
+    failures = 0
     for video in videos:
         matching_subtitles = subtitles_by_stem.pop(video.stem.casefold(), [])
-        organize_video(
+        if not organize_video(
             video, series_folder.name, library, matching_subtitles,
             batch_id, dry_run
-        )
+        ):
+            failures += 1
     if not videos:
         LOG.warning("No supported video files found directly inside %s", series_folder)
     elif dry_run:
@@ -758,6 +883,9 @@ def run_organizer(
         if current:
             LOG.info("Sort revision: #%s", current["revision"])
         LOG.info("Batch complete: %s", batch_id)
+    if failures:
+        LOG.error("Batch completed with %d failed video operation(s).", failures)
+        return 1
     return 0
 
 
@@ -784,7 +912,6 @@ def undo_records(files: list[Path], batch_id: str | None = None) -> tuple[int, i
     # Reverse move order, important for paired files and nested paths.
     candidates.sort(key=lambda item: item[0], reverse=True)
     restored = skipped = 0
-    changed: set[Path] = set()
     for _, history_path, index, record in candidates:
         current = Path(record["new_full_path"])
         original = Path(record["original_full_path"])
@@ -810,23 +937,71 @@ def undo_records(files: list[Path], batch_id: str | None = None) -> tuple[int, i
             )
             skipped += 1
             continue
+        action_id = uuid.uuid4().hex
+        journal_details = {
+            "operation_id": action_id,
+            "related_operation_id": record.get("operation_id", ""),
+            "history_path": str(history_path.resolve()),
+            "history_index": index,
+            "batch_id": record.get("batch_id", ""),
+            "original_full_path": str(original.resolve()),
+            "new_full_path": str(current.resolve()),
+            "file_size": actual_size,
+            "action": "undo",
+        }
+        if not append_journal(history_path.parent, "undo-planned", journal_details):
+            LOG.error("Refusing to undo without a durable journal entry: %s", current)
+            skipped += 1
+            continue
         try:
             original.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(current), str(original))
-            histories[history_path][index]["previous_status"] = record.get(
-                "status", "done"
-            )
-            histories[history_path][index]["status"] = "undone"
-            histories[history_path][index]["undone_timestamp"] = now_iso()
-            changed.add(history_path)
-            restored += 1
-            LOG.info("RESTORED: %s -> %s", current, original)
         except OSError as exc:
             LOG.error("Failed restoring %s: %s", current, exc)
+            append_journal(
+                history_path.parent,
+                "undo-move-failed",
+                {**journal_details, "error": str(exc)},
+            )
             skipped += 1
+            continue
+        if not _move_is_verified(current, original, actual_size):
+            LOG.error("Undo verification failed: %s -> %s", current, original)
+            append_journal(
+                history_path.parent, "undo-verification-failed", journal_details
+            )
+            rolled_back = _rollback_move(original, current)
+            append_journal(
+                history_path.parent,
+                "undo-rolled-back" if rolled_back else "undo-rollback-failed",
+                journal_details,
+            )
+            skipped += 1
+            continue
 
-    for history_path in changed:
-        save_history(history_path, histories[history_path])
+        previous_record = dict(histories[history_path][index])
+        histories[history_path][index]["previous_status"] = record.get(
+            "status", "done"
+        )
+        histories[history_path][index]["status"] = "undone"
+        histories[history_path][index]["undone_timestamp"] = now_iso()
+        if not save_history(history_path, histories[history_path]):
+            histories[history_path][index] = previous_record
+            LOG.error("Undo history save failed; restoring organized location.")
+            append_journal(
+                history_path.parent, "undo-history-save-failed", journal_details
+            )
+            rolled_back = _rollback_move(original, current)
+            append_journal(
+                history_path.parent,
+                "undo-rolled-back" if rolled_back else "undo-rollback-failed",
+                journal_details,
+            )
+            skipped += 1
+            continue
+        append_journal(history_path.parent, "undo-done", journal_details)
+        restored += 1
+        LOG.info("RESTORED: %s -> %s", current, original)
     return restored, skipped
 
 
@@ -847,7 +1022,6 @@ def redo_records(files: list[Path], batch_id: str) -> tuple[int, int]:
 
     candidates.sort(key=lambda item: item[0])
     restored = skipped = 0
-    changed: set[Path] = set()
     for _, history_path, index, record in candidates:
         original = Path(record["original_full_path"])
         target = Path(record["new_full_path"])
@@ -870,21 +1044,70 @@ def redo_records(files: list[Path], batch_id: str) -> tuple[int, int]:
             LOG.warning("SKIP (size changed): %s", original)
             skipped += 1
             continue
+        action_id = uuid.uuid4().hex
+        journal_details = {
+            "operation_id": action_id,
+            "related_operation_id": record.get("operation_id", ""),
+            "history_path": str(history_path.resolve()),
+            "history_index": index,
+            "batch_id": batch_id,
+            "original_full_path": str(original.resolve()),
+            "new_full_path": str(target.resolve()),
+            "file_size": actual_size,
+            "action": "redo",
+        }
+        if not append_journal(history_path.parent, "redo-planned", journal_details):
+            LOG.error("Refusing to redo without a durable journal entry: %s", original)
+            skipped += 1
+            continue
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(original), str(target))
-            histories[history_path][index]["status"] = record.get(
-                "previous_status", "done"
-            )
-            histories[history_path][index]["redone_timestamp"] = now_iso()
-            changed.add(history_path)
-            restored += 1
-            LOG.info("REAPPLIED: %s -> %s", original, target)
         except OSError as exc:
             LOG.error("Failed reapplying %s: %s", original, exc)
+            append_journal(
+                history_path.parent,
+                "redo-move-failed",
+                {**journal_details, "error": str(exc)},
+            )
             skipped += 1
-    for history_path in changed:
-        save_history(history_path, histories[history_path])
+            continue
+        if not _move_is_verified(original, target, actual_size):
+            LOG.error("Redo verification failed: %s -> %s", original, target)
+            append_journal(
+                history_path.parent, "redo-verification-failed", journal_details
+            )
+            rolled_back = _rollback_move(target, original)
+            append_journal(
+                history_path.parent,
+                "redo-rolled-back" if rolled_back else "redo-rollback-failed",
+                journal_details,
+            )
+            skipped += 1
+            continue
+
+        previous_record = dict(histories[history_path][index])
+        histories[history_path][index]["status"] = record.get(
+            "previous_status", "done"
+        )
+        histories[history_path][index]["redone_timestamp"] = now_iso()
+        if not save_history(history_path, histories[history_path]):
+            histories[history_path][index] = previous_record
+            LOG.error("Redo history save failed; restoring original location.")
+            append_journal(
+                history_path.parent, "redo-history-save-failed", journal_details
+            )
+            rolled_back = _rollback_move(target, original)
+            append_journal(
+                history_path.parent,
+                "redo-rolled-back" if rolled_back else "redo-rollback-failed",
+                journal_details,
+            )
+            skipped += 1
+            continue
+        append_journal(history_path.parent, "redo-done", journal_details)
+        restored += 1
+        LOG.info("REAPPLIED: %s -> %s", original, target)
     return restored, skipped
 
 

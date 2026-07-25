@@ -334,15 +334,39 @@ class BotApp:
                     timeout="30",
                     allowed_updates='["message","channel_post","callback_query"]',
                 )
-                for update in updates:
-                    await self.handle_update(update)
-                    offset = int(update["update_id"]) + 1
-                    self.store.set_setting("update_offset", str(offset))
+                offset = await self._process_update_batch(updates, offset)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 LOG.exception("Polling error")
                 await asyncio.sleep(3)
+
+    async def _process_update_batch(self, updates: list[dict], offset: int) -> int:
+        """Process each update independently so one bad update cannot block the rest."""
+        for update in updates:
+            try:
+                update_id = int(update["update_id"])
+            except (KeyError, TypeError, ValueError):
+                LOG.error("Ignored a Telegram update without a valid update_id.")
+                continue
+            try:
+                await self.handle_update(update)
+            except asyncio.CancelledError:
+                # Do not acknowledge an update interrupted by bot shutdown.
+                raise
+            except Exception:
+                LOG.exception(
+                    "Update %s failed and was skipped so polling can continue.",
+                    update_id,
+                )
+            offset = max(offset, update_id + 1)
+            try:
+                self.store.set_setting("update_offset", str(offset))
+            except Exception:
+                # The in-memory offset still protects this running process.
+                # A database failure is logged because a restart may replay it.
+                LOG.exception("Could not persist Telegram update offset %s.", offset)
+        return offset
 
     def allowed(self, chat_id: int) -> bool:
         return not self.config.allowed_chat_ids or chat_id in self.config.allowed_chat_ids
@@ -474,6 +498,22 @@ class BotApp:
                 await self.send(int(chat_id), "This confirmation expired. Please try again.")
                 return
             if choice["mode"] == "rename":
+                source_folder = str(choice.get("source_folder", ""))
+                current_folder = self.store.get_setting("current_folder")
+                if not source_folder or current_folder != source_folder:
+                    await self.send(
+                        int(chat_id),
+                        "The selected folder changed after this IMDb search. "
+                        "Nothing was renamed. Run /imdb_fix_current again.",
+                    )
+                    return
+                if not self.config.target_path(source_folder).is_dir():
+                    await self.send(
+                        int(chat_id),
+                        "The folder used for this IMDb search no longer exists. "
+                        "Nothing was renamed.",
+                    )
+                    return
                 await self.cmd_renamefolder(int(chat_id), choice["folder_name"])
             else:
                 await self._commit_folder(int(chat_id), choice["folder_name"])
@@ -1127,12 +1167,19 @@ class BotApp:
             command = "/imdb_fix_current" if mode == "rename" else "/imdb_search"
             await self.send(chat_id, f"Correct format:\n{command} dr ston")
             return
+        source_folder = (
+            self.store.get_setting("current_folder") if mode == "rename" else ""
+        )
         try:
             await self.send(chat_id, f"Searching IMDb for: {query}")
             results, source = await self.imdb.search(query)
             if not results:
                 await self._offer_manual_folder_fallback(
-                    chat_id, query, mode, "IMDb did not return any results."
+                    chat_id,
+                    query,
+                    mode,
+                    "IMDb did not return any results.",
+                    source_folder,
                 )
                 return
             now = time.time()
@@ -1148,6 +1195,7 @@ class BotApp:
                     "mode": mode,
                     "created_at": now,
                     "source": source,
+                    "source_folder": source_folder,
                 }
                 title = str(result["title"])
                 year = result.get("year") or "?"
@@ -1177,6 +1225,7 @@ class BotApp:
                 query,
                 mode,
                 f"Optional IMDb search is not available: {exc}",
+                source_folder,
             )
 
     async def _offer_folder_confirmation(
@@ -1203,7 +1252,12 @@ class BotApp:
         )
 
     async def _offer_manual_folder_fallback(
-        self, chat_id: int, entered_name: str, mode: str, reason: str
+        self,
+        chat_id: int,
+        entered_name: str,
+        mode: str,
+        reason: str,
+        source_folder: str = "",
     ) -> None:
         try:
             manual_name = sanitize_folder_name(entered_name)
@@ -1216,6 +1270,7 @@ class BotApp:
             "mode": mode,
             "created_at": time.time(),
             "source": "Manual fallback (IMDb unavailable)",
+            "source_folder": source_folder,
         }
         self.imdb_choices[token] = choice
         await self.send(

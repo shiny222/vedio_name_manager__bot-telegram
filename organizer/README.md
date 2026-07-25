@@ -9,7 +9,7 @@ organizer.
 
 ## Requirements
 
-- Python 3.9 or newer
+- Python 3.10 or newer
 - Windows (the code is portable, but Windows paths are a primary use case)
 
 The easiest setup is to double-click `install.bat`. It creates an isolated
@@ -80,6 +80,15 @@ Every real move is recorded in `.rename_history.json`. Season moves are recorded
 inside their `Season NN` folder. Unsorted and conflict moves are recorded in the
 series folder. Each entry stores both full paths, both names, size, type, status,
 UTC timestamp, and batch ID.
+
+The organizer also keeps an append-only `.operation_journal.jsonl` beside the
+history. A `move-planned` event is flushed to disk before a file is changed.
+Afterward, the organizer verifies the old/new paths and file size, then records
+`move-verified` and `move-done`. Undo and redo use the same planned/verified
+workflow. If the main history cannot be saved, the file is immediately moved
+back and the journal records both the save failure and rollback result. This
+journal is diagnostic metadata; it does not create extra copies of large video
+files.
 
 Undo the latest batch across the library:
 
