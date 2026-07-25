@@ -1,150 +1,122 @@
-# ربات تلگرام برای دانلود ویدیو و آماده‌سازی Jellyfin
+# Telegram Jellyfin Bot
 
-این پروژه ویدیوهای ارسالی در یک گروه یا کانال تلگرام را ابتدا در صف SQLite
-نگه می‌دارد و فقط پس از دستور و تأیید شما دانلود می‌کند. دانلود از
-**Local Telegram Bot API Server** انجام می‌شود، بنابراین محدودیت دانلود Bot API
-عمومی را ندارد. نام اصلی فایل تغییر نمی‌کند. مرتب‌ساز در پوشه هم‌سطح
-`organizer` مستقل باقی مانده و همچنان با CLI یا فایل BAT خودش قابل استفاده است.
+This bot watches an allowed Telegram group or channel, queues video files, downloads them only after your command/confirmation, and can optionally call the separate Jellyfin organizer and IMDb fuzzy-title tool.
 
-## پیش‌نیازها
+The bot is intentionally separate from the other tools:
 
-- Windows 10/11
-- Python 3.10 یا جدیدتر و فعال بودن گزینه `Add Python to PATH`
-- یک Bot Token از [BotFather](https://t.me/BotFather)
-- `api_id` و `api_hash` از [my.telegram.org](https://my.telegram.org)
-- فایل native ویندوز `telegram-bot-api.exe` (بدون Docker)
+- `telegram_jellyfin_bot` downloads and manages the queue.
+- `organizer` sorts/renames files for Jellyfin.
+- `fuzzy_search` is optional and only helps suggest official folder names.
 
-## چرا Local Bot API؟
+## Requirements
 
-Bot API عمومی محدودیت دانلود دارد. سرور رسمی local در حالت `--local` دانلود
-بدون محدودیت اندازه را فعال می‌کند و `getFile` می‌تواند مسیر کامل فایل محلی را
-برگرداند. این پروژه Local Bot API را فقط روی `127.0.0.1` اجرا می‌کند و آن را
-روی شبکه منتشر نمی‌کند.
+- Windows
+- Python 3.10 or newer
+- A Telegram bot token from [BotFather](https://t.me/BotFather)
+- `api_id` and `api_hash` from [my.telegram.org](https://my.telegram.org)
+- `telegram-bot-api.exe` for Windows if you want large local downloads
 
-هنگام انتقال یک بات از API عمومی به سرور local، یک بار متد `logOut` را روی API
-عمومی اجرا کنید:
+## Quick install
 
-```text
-https://api.telegram.org/botYOUR_TOKEN/logOut
-```
+1. Open the `telegram_jellyfin_bot` folder.
+2. Run `install.bat`.
+3. Put `telegram-bot-api.exe` and its DLL files in the `tools` folder, or set the real path in `config.json`.
+4. Edit `config.json`.
+5. Start `run_local_bot_api.bat`.
+6. Start `run.bat`.
 
-سپس دیگر همان بات را هم‌زمان روی API عمومی و local اجرا نکنید.
+Do not commit or share `config.json`; it contains your token and private settings.
 
-## نصب سریع
+## Important config fields
 
-1. پوشه `telegram_jellyfin_bot` را باز کنید.
-2. روی `install.bat` دوبار کلیک کنید.
-3. نصب‌کننده `.venv` را می‌سازد، وابستگی‌ها را نصب می‌کند و اگر لازم باشد
-   `config.json` را از روی نمونه می‌سازد.
-4. `telegram-bot-api.exe` را داخل پوشه `tools` بگذارید، یا مسیر واقعی آن را در
-   `config.json` بنویسید.
-5. `config.json` را ویرایش کنید.
+- `bot_token`: your BotFather token.
+- `telegram_api_id` and `telegram_api_hash`: values from my.telegram.org.
+- `jellyfin_library_path`: your main Jellyfin shows/anime library folder.
+- `allowed_chat_ids`: the Telegram group/channel IDs that may use the bot.
+- `confirm_before_download`: if `true`, the bot waits for `/confirm_download`.
+- `ask_before_overwrite`: if `true`, the bot asks before handling duplicate files.
+- `sorter_command`: command used to call the independent `organizer` tool.
+- `jellyfin_server_url` and `jellyfin_api_key`: needed for `/jellyfin_scan`.
+- `fuzzy_search_command`: command used to call the optional IMDb fuzzy search tool.
 
-`config.json` حاوی توکن و اطلاعات حساس است و توسط `.gitignore` از Git حذف شده
-است. آن را برای دیگران نفرستید.
+If `allowed_chat_ids` is empty, every chat that can reach the bot is allowed. Use `/chatid` to find your chat ID, then add it to config.
 
-## تنظیم config.json
+## Normal usage
 
-مهم‌ترین فیلدها:
-
-```json
-{
-  "bot_token": "توکن BotFather",
-  "telegram_api_id": 12345678,
-  "telegram_api_hash": "api_hash",
-  "telegram_bot_api_exe_path": "tools\\telegram-bot-api.exe",
-  "jellyfin_library_path": "D:\\Media\\Jellyfin\\Shows",
-  "allowed_chat_ids": [-1001234567890],
-  "max_parallel_downloads": 1
-}
-```
-
-- `jellyfin_library_path`: پوشه اصلی سریال‌ها/انیمه‌ها در Jellyfin.
-- `allowed_chat_ids`: شناسه گروه یا کانال مجاز. برای دیدن شناسه، موقتاً لیست را
-  خالی بگذارید، بات را اجرا کنید و `/chatid` را بفرستید؛ سپس شناسه را در config
-  قرار دهید و بات را از نو اجرا کنید.
-- `max_parallel_downloads`: بهتر است ابتدا `1` باشد.
-- `confirm_before_download`: اگر `true` باشد، `/confirm_download` لازم است.
-- `ask_before_overwrite`: اگر `true` باشد، بات برای فایل تکراری تصمیم می‌خواهد.
-- `sorter_command`: آرایه امن آرگومان‌هاست. به‌طور پیش‌فرض Python و اسکریپت را
-  از پوشه هم‌سطح `organizer` اجرا می‌کند؛ `{folder}` و `{mode}` جایگزین می‌شوند
-  و `shell=True` استفاده نمی‌شود.
-- `auto_sort_after_download`: پیش‌فرض `false` است؛ مرتب‌سازی فقط با دستور شماست.
-- `jellyfin_server_url`: آدرس سرور، مثلاً `http://127.0.0.1:8096`.
-- `jellyfin_api_key`: از Jellyfin Dashboard بخش API Keys ساخته می‌شود.
-- `jellyfin_request_timeout_seconds`: مهلت اتصال بات به Jellyfin.
-
-اگر `allowed_chat_ids` خالی باشد، تمام چت‌هایی که به بات دسترسی دارند مجاز
-خواهند بود. برای امنیت آن را حتماً پر کنید.
-
-## اجرا بدون Docker
-
-در پنجره اول:
-
-1. روی `run_local_bot_api.bat` دوبار کلیک کنید.
-2. این فایل executable را با `--local`، `api_id`، `api_hash`، آدرس
-   `127.0.0.1` و پورت config اجرا می‌کند.
-3. پنجره را باز نگه دارید.
-
-در پنجره دوم روی `run.bat` دوبار کلیک کنید و آن را نیز باز نگه دارید.
-
-اگر Bot API local اجرا نباشد، بات خطای اتصال می‌دهد و هر سه ثانیه دوباره تلاش
-می‌کند. توکن در log نوشته نمی‌شود.
-
-## اضافه کردن بات به گروه یا کانال
-
-- بات را به گروه اضافه کنید.
-- برای کانال، بات را به‌عنوان administrator اضافه کنید تا `channel_post` را
-  دریافت کند و بتواند پیام وضعیت بفرستد.
-- اگر Privacy Mode مانع دریافت فایل‌های گروه است، تنظیم مناسب آن را از
-  BotFather بررسی کنید.
-- هر دو نوع update یعنی `message` و `channel_post` پشتیبانی می‌شوند.
-
-## روش معمول استفاده
-
-ابتدا فقط نام فولدر را بدهید، نه مسیر کامل:
+Set or choose a destination folder:
 
 ```text
-/setfolder My Course
+/setfolder My Anime
+/folders
+/usefolder Existing Anime Folder
 ```
 
-اگر ابزار اختیاری `fuzzy_search` نصب باشد، `/setfolder` ابتدا IMDb را به‌صورت
-fuzzy جستجو می‌کند، نام رسمی، سال و IMDb ID را پیشنهاد می‌دهد و فقط پس از زدن
-**Confirm** مقصد را تغییر می‌دهد. با Library نمونه، مقصد می‌تواند این باشد:
+Send videos to the bot in the allowed group or channel. The bot adds them to the queue but does not download immediately.
+
+Review and start downloads:
 
 ```text
-D:\Media\Jellyfin\Shows\Official Title (2025) [imdbid-tt1234567]
-```
-
-اگر IMDb یا ابزار در دسترس نباشد، همان `My Course` به‌عنوان Manual fallback
-نمایش داده می‌شود و آن نیز بدون Confirm ذخیره نخواهد شد.
-
-حالا ویدیوها را در گروه/کانال بفرستید. بات آن‌ها را **دانلود نمی‌کند** و فقط
-پیام «ویدیو به صف اضافه شد» می‌دهد. هر آیتم فولدر مقصد زمان دریافت خودش را
-نگه می‌دارد.
-
-سپس:
-
-```text
-/queue
 /download
-```
-
-بات مقصد، تعداد، حجم تقریبی و چند نام فایل را نشان می‌دهد. برای شروع:
-
-```text
 /confirm_download
 ```
 
-فایل ابتدا با پسوند `.part` نوشته می‌شود و فقط پس از تکمیل به نام اصلی تبدیل
-می‌شود. اگر برنامه متوقف شود، وضعیت `downloading` در اجرای بعد به صف برمی‌گردد
-و فایل `.part` در `/status` قابل مشاهده است؛ تلاش بعدی دانلود را امن از ابتدا
-شروع می‌کند.
+Sort files after download:
 
-## فایل تکراری
+```text
+/sort_current
+/sort_latest
+/resort_current
+```
 
-هیچ overwrite خودکاری انجام نمی‌شود. در صورت وجود فایل، بات دستوری شبیه موارد
-زیر نشان می‌دهد:
+Trigger Jellyfin scan:
+
+```text
+/jellyfin_scan
+```
+
+## Commands
+
+- `/menu` — show the button menu.
+- `/setfolder NAME` — set a destination folder, using optional IMDb fuzzy search first.
+- `/folders` — choose from existing Jellyfin folders.
+- `/usefolder NAME` — use an existing folder by exact name.
+- `/renamefolder NAME` — safely rename the current folder.
+- `/folder` — show the current folder.
+- `/unsetfolder` — clear the current folder.
+- `/queue` — show queued files.
+- `/remove ID` — remove one queued file.
+- `/clearqueue` — clear active queue items.
+- `/download` — show download summary.
+- `/confirm_download` — start download after confirmation.
+- `/status` — show queue counts, `.part` files, and tracked background tasks.
+- `/cancel` — request cancellation.
+- `/resolve ID skip|overwrite|save_with_suffix` — handle a duplicate destination file.
+- `/sort_current` — sort only new loose files in the current folder.
+- `/resort_current` — rename already sorted files to match the current folder name.
+- `/sort_history` — show numbered sorter revisions.
+- `/sort_back` — move one sorter revision back.
+- `/sort_forward` — move one sorter revision forward.
+- `/sort_latest` — sort the latest downloaded folder.
+- `/sort_folder NAME` — sort a specific folder in the library.
+- `/sort_status` — show latest sorter run status.
+- `/undo_sort_last` — undo the latest sorter batch.
+- `/undo_sort_batch ID` — undo a specific sorter batch.
+- `/jellyfin_scan` — request a full Jellyfin library scan.
+- `/jellyfin_status` — test Jellyfin connection and show scan status.
+- `/episodes [NAME]` — show known and missing episodes for one series.
+- `/library_episodes` — show an episode summary for the whole library.
+- `/imdb_search NAME` — fuzzy-search an official IMDb folder name.
+- `/imdb_fix_current [NAME]` — safely rename the current folder using IMDb results.
+- `/chatid` — show the current chat ID.
+- `/help` — show command help and copy buttons.
+
+## Channel command buttons
+
+Telegram channels cannot pre-fill editable slash commands the same way normal chats can. For commands that need extra text, `/help` shows copy buttons. Tap a button, paste the command, then add the folder name or batch ID.
+
+## Duplicate files
+
+The bot does not overwrite automatically. If a destination file already exists, it asks you to choose:
 
 ```text
 /resolve 12 skip
@@ -152,176 +124,30 @@ D:\Media\Jellyfin\Shows\Official Title (2025) [imdbid-tt1234567]
 /resolve 12 save_with_suffix
 ```
 
-`save_with_suffix` تنها با انتخاب صریح شما نامی مانند `Video (1).mkv` می‌سازد.
-حالت `overwrite` نیز فقط بعد از انتخاب صریح شما اجرا می‌شود.
+`save_with_suffix` creates a name like `Video (1).mkv`.
 
-## دستورهای بات
+## Background task tracking
 
-- `/menu` — نمایش منوی دکمه‌ای؛ داخل کانال نیز قابل استفاده است
-- `/setfolder NAME` — تنظیم مقصد فعلی
-- `/folders` — نمایش فولدرهای موجود به‌شکل دکمه‌ای و انتخاب مقصد
-- `/usefolder NAME` — انتخاب یک فولدر موجود با نام دقیق
-- `/renamefolder NAME` — اصلاح امن نام فولدر فعلی و مقصد موارد صف
-- `/folder` — نمایش مقصد و مسیر کامل
-- `/unsetfolder` — پاک کردن مقصد فعلی
-- `/queue` — نمایش صف
-- `/remove ID` — حذف یک مورد
-- `/clearqueue` — پاک کردن موارد فعال صف
-- `/download` — نمایش خلاصه و درخواست تأیید
-- `/confirm_download` — شروع دانلود
-- `/status` — تعداد وضعیت‌ها و فایل‌های ناقص
-- `/cancel` — درخواست توقف دانلود
-- `/resolve ID ACTION` — تصمیم درباره فایل تکراری
-- `/sort_current` — مرتب‌سازی فولدر فعلی
-- `/resort_current` — تغییر نام فایل‌های داخل Seasonها مطابق نام فعلی فولدر
-- `/sort_history` — نمایش شماره و وضعیت مرحله‌های مرتب‌سازی فولدر فعلی
-- `/sort_back` — یک مرحله مرتب‌سازی به عقب، بدون نیاز به Batch ID
-- `/sort_forward` — یک مرحله مرتب‌سازی به جلو
-- `/sort_latest` — مرتب‌سازی آخرین فولدر دانلود
-- `/sort_folder NAME` — مرتب‌سازی فولدر مشخص داخل Library
-- `/sort_status` — وضعیت آخرین اجرای مرتب‌ساز
-- `/undo_sort_last` — برگرداندن آخرین Batch مرتب‌سازی
-- `/undo_sort_batch ID` — برگرداندن Batch مشخص با شناسه
-- `/jellyfin_scan` — درخواست Scan کامل Library از Jellyfin
-- `/jellyfin_status` — آزمایش اتصال و نمایش آخرین درخواست Scan
-- `/episodes [NAME]` — نمایش اپیزودها و شماره‌های Missing یک سریال
-- `/library_episodes` — خلاصه فصل‌ها و اپیزودهای تمام Library
-- `/imdb_search NAME` — جستجوی fuzzy نام و انتخاب فولدر استاندارد Jellyfin
-- `/imdb_fix_current NAME` — تغییر نام امن فولدر فعلی با نتیجه IMDb
-- `/chatid` — نمایش chat ID
-- `/help` — راهنما
+The bot now tracks background tasks instead of launching silent fire-and-forget jobs. Downloads, sorter runs, IMDb searches, undo actions, and Jellyfin scans are stored in an in-memory task set until they finish.
 
-در کانال، تلگرام با لمس یک command آن را فوراً ارسال می‌کند و امکان قراردادن
-command معمولی در input برای ویرایش را نمی‌دهد. بنابراین `/help` برای
-دستورهای آرگومان‌دار دکمه **Copy** نمایش می‌دهد؛ دکمه را بزنید، متن را Paste
-کنید و نام فولدر یا Batch ID را در انتهای آن بنویسید.
+When a task fails, the error is logged. `/status` also shows the current number of tracked background tasks.
 
-## مرتب‌ساز مستقل
+## Tests
 
-بات پس از دانلود نام فایل را تغییر نمی‌دهد. فقط وقتی `/sort_latest`،
-`/sort_current` یا `/sort_folder` را بفرستید، `organizer.py` با subprocess امن
-و timeout اجرا می‌شود. خروجی کامل در `logs/bot.log` و ۳۰۰۰ کاراکتر آخر در
-تلگرام نمایش داده می‌شود.
+From the project root:
 
-مرتب‌ساز همچنان جداگانه قابل اجراست. ابتدا `organizer\install.bat` را یک بار
-اجرا کنید، سپس از داخل پوشه `organizer`:
-
-```powershell
-.\.venv\Scripts\python.exe organizer.py dry-run --series-folder "D:\Media\Jellyfin\Shows\My Course"
-.\.venv\Scripts\python.exe organizer.py run --series-folder "D:\Media\Jellyfin\Shows\My Course"
+```bat
+telegram_jellyfin_bot\.venv\Scripts\python.exe -m unittest telegram_jellyfin_bot.tests.test_core -v
 ```
 
-## State و مسیرها
+The real `getMe` integration test runs only when local API integration is enabled in the test environment.
 
-- صف و تنظیمات: `data/state.db`
-- log: `logs/bot.log`
-- فایل‌های ناقص: کنار فایل مقصد با پسوند `.part`
-- تنظیمات حساس: `config.json`
+## Troubleshooting
 
-SQLite باعث می‌شود صف، فولدر فعلی، وضعیت دانلودها و اجرای sorter پس از restart
-حفظ شوند.
-
-## اتصال به Jellyfin
-
-در Jellyfin وارد `Dashboard` شوید و از بخش `API Keys` یک کلید مخصوص این بات
-بسازید. سپس در `config.json` قرار دهید:
-
-```json
-"jellyfin_server_url": "http://127.0.0.1:8096",
-"jellyfin_api_key": "YOUR_JELLYFIN_API_KEY",
-"jellyfin_request_timeout_seconds": 30
-```
-
-اگر Jellyfin روی سیستم دیگری است، IP همان سیستم را جایگزین `127.0.0.1` کنید.
-کلید API را در GitHub قرار ندهید. فرمان `/jellyfin_scan` درخواست
-`POST /Library/Refresh` را می‌فرستد. پذیرش این درخواست به معنی شروع Scan است؛
-خود Scan در پس‌زمینه Jellyfin ادامه می‌یابد.
-
-## تشخیص اپیزودهای جدید
-
-هنگام اضافه‌شدن ویدیو به صف، بات شماره فصل و اپیزود را از نام فایل تشخیص
-می‌دهد و فایل‌های موجود در فولدر سریال را بررسی می‌کند. نتیجه مشخص می‌کند که
-اپیزود جدید است، از قبل در Library وجود دارد، یا قبلاً در صف ثبت شده است.
-بات فایل تکراری را خودکار حذف نمی‌کند و تصمیم نهایی با کاربر می‌ماند.
-
-دستور `/episodes` جزئیات یک سریال را همراه gapهای Missing نشان می‌دهد و
-`/library_episodes` نمای کلی تمام سریال‌ها را می‌سازد. فولدرهای `_Unsorted` و
-`_Conflicts` در موجودی قطعی اپیزودها محاسبه نمی‌شوند.
-
-## ابزار اختیاری نام‌گذاری IMDb
-
-پروژه مستقل `fuzzy_search` برای جستجوی fuzzy ساخته شده است. ابتدا
-`fuzzy_search\install.bat` را اجرا کنید. سپس:
-
-```text
-/imdb_search dr ston
-```
-
-نتایج دکمه‌ای نمایش داده می‌شوند و انتخاب نتیجه مقصدی مانند زیر می‌سازد:
-
-```text
-Dr. Stone (2019) [imdbid-tt9679542]
-```
-
-برای اصلاح نام فولدر فعلی، لازم نیست نام را دوباره وارد کنید:
-
-```text
-/imdb_fix_current
-```
-
-بات نام current folder را خودکار برای fuzzy search استفاده می‌کند. اگر خواستید
-عبارت متفاوتی جستجو شود، همچنان می‌توانید بنویسید:
-
-```text
-/imdb_fix_current dr ston
-```
-
-بات این ابزار را فقط با subprocess و timeout اجرا می‌کند. نبودن ابزار، قطع
-بودن IMDb یا خطای شبکه هیچ‌یک مانع دانلود، نام‌گذاری دستی، sorter یا سایر
-فرمان‌های اصلی بات نمی‌شود. جستجوهای موفق cache می‌شوند.
-
-اگر فولدر قبلاً مرتب شده و `.rename_history.json` دارد، تغییر نام دیگر مسدود
-نمی‌شود. بات فرمان history-aware مرتب‌ساز را اجرا می‌کند، مسیرهای rollback را
-به نام جدید مهاجرت می‌دهد، مسیرهای اصلی ثبت‌شده را برای audit نگه می‌دارد و
-سپس state صف را به‌روزرسانی می‌کند. فولدر موجود هرگز merge یا overwrite
-نمی‌شود.
-
-## تست‌ها
-
-از پوشه مادر پروژه اجرا کنید:
-
-```powershell
-python -m unittest discover -s telegram_jellyfin_bot\tests -v
-```
-
-تست واقعی `getMe` فقط وقتی Local API و config آماده‌اند اجرا می‌شود:
-
-```powershell
-set RUN_LOCAL_API_TEST=1
-python -m unittest telegram_jellyfin_bot.tests.test_core.LocalAPIIntegrationTest -v
-```
-
-## انتقال به سیستم دیگر
-
-1. Python را نصب کنید.
-2. پوشه پروژه و `telegram-bot-api.exe` را منتقل کنید.
-3. `install.bat` را اجرا کنید.
-4. `config.json` را تنظیم کنید.
-5. ابتدا `run_local_bot_api.bat` و سپس `run.bat` را اجرا کنید.
-
-فایل `config.json` و دیتابیس state را فقط از مسیر امن منتقل کنید.
-
-## عیب‌یابی
-
-- **Python پیدا نشد:** Python را دوباره با گزینه Add to PATH نصب کنید.
-- **telegram-bot-api.exe پیدا نشد:** مسیر آن را در config اصلاح کنید.
-- **Connection refused:** پنجره `run_local_bot_api.bat` باید باز باشد.
-- **Unauthorized:** توکن اشتباه است یا بات از API عمومی logOut نشده است.
-- **بات پیام کانال را نمی‌بیند:** دسترسی administrator و chat ID را بررسی کنید.
-- **فایل وارد صف نمی‌شود:** پسوند و `allowed_video_extensions` را بررسی کنید.
-- **sorter اجرا نمی‌شود:** مسیر Python و `organizer.py` در `sorter_command` را
-  بررسی کنید.
-- **فایل `.part` باقی مانده:** دانلود قطع شده؛ `/download` را دوباره اجرا کنید.
-
-منابع رسمی: [Telegram Bot API](https://core.telegram.org/bots/api) و
-[telegram-bot-api server](https://github.com/tdlib/telegram-bot-api).
+- `telegram-bot-api.exe was not found`: fix the path in `config.json`.
+- `Connection refused`: keep `run_local_bot_api.bat` open before running the bot.
+- `Unauthorized`: the token is wrong, or the bot still needs to be logged out from the public API before using Local Bot API.
+- The bot does not see channel posts: add it as a channel administrator and check `allowed_chat_ids`.
+- Files do not enter the queue: check the extension and `allowed_video_extensions`.
+- Sorter does not run: check Python and `organizer.py` paths inside `sorter_command`.
+- `.part` file remains: the download was interrupted; run `/download` again.

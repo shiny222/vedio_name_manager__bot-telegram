@@ -57,7 +57,7 @@ class StateStore:
                 """
             )
             self.conn.execute(
-                "UPDATE queue_items SET status='queued', error='بازیابی پس از توقف برنامه' "
+                "UPDATE queue_items SET status='queued', error='Recovered after bot restart' "
                 "WHERE status='downloading'"
             )
 

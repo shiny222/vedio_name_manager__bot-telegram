@@ -136,8 +136,8 @@ def compact_numbers(numbers: set[int]) -> str:
 def format_series_inventory(name: str, entries: list[EpisodeEntry]) -> str:
     grouped = EpisodeCatalog.grouped(entries)
     if not grouped:
-        return f"{name}: هیچ اپیزود قابل‌شناسایی پیدا نشد."
-    lines = [f"🎬 {name}", f"مجموع: {sum(len(x) for x in grouped.values())} اپیزود"]
+        return f"{name}: no recognizable episodes were found."
+    lines = [f"🎬 {name}", f"Total: {sum(len(x) for x in grouped.values())} episode(s)"]
     for season in sorted(grouped):
         episodes = grouped[season]
         missing = set(range(1, max(episodes) + 1)) - episodes

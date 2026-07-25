@@ -65,25 +65,25 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         if create_from_example and example.exists():
             shutil.copy2(example, config_path)
             raise FileNotFoundError(
-                f"{config_path} ساخته شد. اطلاعات آن را کامل کنید و دوباره اجرا کنید."
+                f"{config_path} was created. Fill it in, then run the bot again."
             )
-        raise FileNotFoundError(f"فایل تنظیمات پیدا نشد: {config_path}")
+        raise FileNotFoundError(f"Config file was not found: {config_path}")
     try:
         raw: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"config.json معتبر نیست: {exc}") from exc
+        raise ValueError(f"config.json is not valid: {exc}") from exc
 
     required = ("bot_token", "telegram_api_id", "telegram_api_hash", "jellyfin_library_path")
     missing = [key for key in required if not raw.get(key)]
     if missing:
-        raise ValueError("مقادیر الزامی config خالی هستند: " + ", ".join(missing))
+        raise ValueError("Required config values are empty: " + ", ".join(missing))
     if raw["bot_token"].startswith("PUT_"):
-        raise ValueError("bot_token را در config.json تنظیم کنید.")
+        raise ValueError("Set bot_token in config.json.")
 
     base = config_path.parent
     host = str(raw.get("local_bot_api_host", "127.0.0.1"))
     if host not in {"127.0.0.1", "localhost"}:
-        raise ValueError("Local Bot API برای امنیت باید فقط روی 127.0.0.1 باشد.")
+        raise ValueError("For safety, Local Bot API must run only on 127.0.0.1.")
     port = int(raw.get("local_bot_api_port", 8081))
     extensions = {
         str(ext).lower() if str(ext).startswith(".") else "." + str(ext).lower()
@@ -91,7 +91,7 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
     }
     command = raw.get("sorter_command", [])
     if not isinstance(command, list) or not all(isinstance(x, str) for x in command):
-        raise ValueError("sorter_command باید آرایه‌ای از آرگومان‌ها باشد.")
+        raise ValueError("sorter_command must be a list of arguments.")
     fuzzy_search_command = raw.get(
         "fuzzy_search_command",
         raw.get(
@@ -105,7 +105,7 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
     if not isinstance(fuzzy_search_command, list) or not all(
         isinstance(x, str) for x in fuzzy_search_command
     ):
-        raise ValueError("fuzzy_search_command باید آرایه‌ای از آرگومان‌ها باشد.")
+        raise ValueError("fuzzy_search_command must be a list of arguments.")
     default_folder = str(raw.get("default_target_folder", "")).strip()
     cfg = Config(
         bot_token=str(raw["bot_token"]),
@@ -147,13 +147,13 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         ),
     )
     if not cfg.keep_original_filenames:
-        raise ValueError("keep_original_filenames باید true باشد.")
+        raise ValueError("keep_original_filenames must be true.")
     if default_folder:
         cfg.target_path(default_folder)
     if cfg.jellyfin_server_url and not cfg.jellyfin_server_url.lower().startswith(
         ("http://", "https://")
     ):
-        raise ValueError("jellyfin_server_url باید با http:// یا https:// شروع شود.")
+        raise ValueError("jellyfin_server_url must start with http:// or https://.")
     for directory in (cfg.jellyfin_library_path, cfg.temp_download_path, cfg.data_path, cfg.logs_path):
         directory.mkdir(parents=True, exist_ok=True)
     return cfg

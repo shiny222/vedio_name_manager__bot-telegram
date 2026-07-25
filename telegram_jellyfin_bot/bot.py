@@ -41,74 +41,76 @@ else:
     from .utils import format_size, sanitize_folder_name, setup_logging, validate_original_filename
 
 LOG = logging.getLogger(__name__)
-HELP = """دستورها:
-/menu - نمایش منوی دکمه‌ای
-/setfolder NAME - تنظیم فولدر مقصد
-/folders - انتخاب از فولدرهای موجود
-/usefolder NAME - انتخاب فولدر موجود با نام
-/renamefolder NAME - اصلاح نام فولدر فعلی
-/folder - نمایش فولدر فعلی
-/unsetfolder - پاک کردن فولدر فعلی
-/queue - نمایش صف
-/remove ID - حذف از صف
-/clearqueue - پاک کردن صف
-/download - بررسی و آماده‌سازی دانلود
-/confirm_download - تایید و شروع
-/status - وضعیت
-/cancel - لغو دانلود
-/resolve ID skip|overwrite|save_with_suffix - تصمیم فایل تکراری
-/sort_current - مرتب‌سازی فولدر فعلی
-/sort_latest - مرتب‌سازی آخرین فولدر دانلود
-/sort_folder NAME - مرتب‌سازی یک فولدر
-/sort_status - وضعیت sorter
-/undo_sort_last - برگرداندن آخرین مرتب‌سازی
-/undo_sort_batch ID - برگرداندن Batch مشخص
-/jellyfin_scan - شروع Scan کتابخانه Jellyfin
-/jellyfin_status - وضعیت اتصال Jellyfin
-/episodes [NAME] - نمایش اپیزودهای یک سریال
-/library_episodes - خلاصه تمام سریال‌ها
-/imdb_search NAME - جستجوی نام درست در IMDb
-/imdb_fix_current [NAME] - اصلاح فولدر فعلی با نتیجه IMDb
-/chatid - نمایش شناسه چت
-/help - راهنما"""
+HELP = """Commands:
+/menu - Show the button menu
+/setfolder NAME - Set the target folder
+/folders - Pick from existing folders
+/usefolder NAME - Use an existing folder by name
+/renamefolder NAME - Rename the current folder safely
+/folder - Show the current folder
+/unsetfolder - Clear the current folder
+/queue - Show the download queue
+/remove ID - Remove one item from the queue
+/clearqueue - Clear the queue
+/download - Review and prepare downloads
+/confirm_download - Confirm and start downloading
+/status - Show bot/download status
+/cancel - Cancel the current operation
+/resolve ID skip|overwrite|save_with_suffix - Resolve an existing-file conflict
+/sort_current - Sort new loose files in the current folder
+/resort_current - Rename already sorted files to match the current folder name
+/sort_history - Show numbered sort revisions
+/sort_back - Move one sort revision back
+/sort_forward - Move one sort revision forward
+/sort_latest - Sort the latest downloaded folder
+/sort_folder NAME - Sort a specific folder
+/sort_status - Show sorter status
+/undo_sort_last - Undo the latest sorter batch
+/undo_sort_batch ID - Undo a specific sorter batch
+/jellyfin_scan - Trigger a Jellyfin library scan
+/jellyfin_status - Check Jellyfin connection
+/episodes [NAME] - Show episodes for one series
+/library_episodes - Show a summary of all series
+/imdb_search NAME - Fuzzy-search the correct IMDb title
+/imdb_fix_current [NAME] - Rename the current folder using IMDb search
+/chatid - Show this chat ID
+/help - Show this help"""
 
 BOT_COMMANDS = [
-    {"command": "menu", "description": "نمایش منوی دکمه‌ای"},
-    {"command": "setfolder", "description": "تنظیم فولدر مقصد"},
-    {"command": "folders", "description": "انتخاب از فولدرهای موجود"},
-    {"command": "usefolder", "description": "انتخاب فولدر موجود با نام"},
-    {"command": "renamefolder", "description": "اصلاح نام فولدر فعلی"},
-    {"command": "folder", "description": "نمایش فولدر فعلی"},
-    {"command": "unsetfolder", "description": "پاک کردن فولدر فعلی"},
-    {"command": "queue", "description": "نمایش صف دانلود"},
-    {"command": "remove", "description": "حذف یک فایل از صف"},
-    {"command": "clearqueue", "description": "پاک کردن صف"},
-    {"command": "download", "description": "آماده‌سازی دانلود"},
-    {"command": "confirm_download", "description": "تأیید و شروع دانلود"},
-    {"command": "status", "description": "نمایش وضعیت"},
-    {"command": "cancel", "description": "لغو عملیات فعلی"},
-    {"command": "sort_current", "description": "مرتب‌سازی فولدر فعلی"},
-    {"command": "sort_latest", "description": "مرتب‌سازی آخرین دانلود"},
-    {"command": "sort_folder", "description": "مرتب‌سازی فولدر مشخص"},
-    {"command": "sort_status", "description": "وضعیت مرتب‌ساز"},
-    {"command": "undo_sort_last", "description": "برگرداندن آخرین مرتب‌سازی"},
-    {"command": "undo_sort_batch", "description": "برگرداندن Batch مشخص"},
-    {"command": "jellyfin_scan", "description": "شروع Scan کتابخانه Jellyfin"},
-    {"command": "jellyfin_status", "description": "وضعیت اتصال Jellyfin"},
-    {"command": "episodes", "description": "نمایش اپیزودهای یک سریال"},
-    {"command": "library_episodes", "description": "خلاصه اپیزودهای Library"},
-    {"command": "imdb_search", "description": "جستجوی نام درست در IMDb"},
-    {"command": "imdb_fix_current", "description": "اصلاح فولدر فعلی با IMDb"},
-    {"command": "chatid", "description": "نمایش شناسه چت"},
-    {"command": "help", "description": "نمایش راهنما"},
-]
-
-BOT_COMMANDS.extend([
+    {"command": "menu", "description": "Show the button menu"},
+    {"command": "setfolder", "description": "Set the target folder"},
+    {"command": "folders", "description": "Pick from existing folders"},
+    {"command": "usefolder", "description": "Use an existing folder"},
+    {"command": "renamefolder", "description": "Rename the current folder"},
+    {"command": "folder", "description": "Show the current folder"},
+    {"command": "unsetfolder", "description": "Clear the current folder"},
+    {"command": "queue", "description": "Show the download queue"},
+    {"command": "remove", "description": "Remove one queued file"},
+    {"command": "clearqueue", "description": "Clear the queue"},
+    {"command": "download", "description": "Prepare downloads"},
+    {"command": "confirm_download", "description": "Confirm and start download"},
+    {"command": "status", "description": "Show status"},
+    {"command": "cancel", "description": "Cancel the current operation"},
+    {"command": "resolve", "description": "Resolve an existing-file conflict"},
+    {"command": "sort_current", "description": "Sort current folder"},
     {"command": "resort_current", "description": "Rename existing sorted episodes"},
     {"command": "sort_history", "description": "Show numbered sort history"},
     {"command": "sort_back", "description": "Undo one sort revision"},
     {"command": "sort_forward", "description": "Redo one sort revision"},
-])
+    {"command": "sort_latest", "description": "Sort latest download"},
+    {"command": "sort_folder", "description": "Sort a specific folder"},
+    {"command": "sort_status", "description": "Show sorter status"},
+    {"command": "undo_sort_last", "description": "Undo latest sorter batch"},
+    {"command": "undo_sort_batch", "description": "Undo a specific sorter batch"},
+    {"command": "jellyfin_scan", "description": "Start Jellyfin library scan"},
+    {"command": "jellyfin_status", "description": "Check Jellyfin connection"},
+    {"command": "episodes", "description": "Show episodes for one series"},
+    {"command": "library_episodes", "description": "Show all series summary"},
+    {"command": "imdb_search", "description": "Fuzzy-search IMDb title"},
+    {"command": "imdb_fix_current", "description": "Fix current folder with IMDb"},
+    {"command": "chatid", "description": "Show this chat ID"},
+    {"command": "help", "description": "Show help"},
+]
 
 CHANNEL_MENU = {
     "inline_keyboard": [
@@ -121,27 +123,27 @@ CHANNEL_MENU = {
             {"text": "Sort forward", "callback_data": "menu:sort_forward"},
         ],
         [
-            {"text": "📁 فولدر فعلی", "callback_data": "menu:folder"},
-            {"text": "📋 صف", "callback_data": "menu:queue"},
+            {"text": "📁 Current folder", "callback_data": "menu:folder"},
+            {"text": "📋 Queue", "callback_data": "menu:queue"},
         ],
         [
-            {"text": "🗂 انتخاب فولدر موجود", "callback_data": "menu:folders"},
+            {"text": "🗂 Pick existing folder", "callback_data": "menu:folders"},
         ],
         [
-            {"text": "⬇️ دانلود", "callback_data": "menu:download"},
-            {"text": "✅ تأیید دانلود", "callback_data": "menu:confirm"},
+            {"text": "⬇️ Download", "callback_data": "menu:download"},
+            {"text": "✅ Confirm download", "callback_data": "menu:confirm"},
         ],
         [
-            {"text": "📊 وضعیت", "callback_data": "menu:status"},
-            {"text": "⛔ لغو", "callback_data": "menu:cancel"},
+            {"text": "📊 Status", "callback_data": "menu:status"},
+            {"text": "⛔ Cancel", "callback_data": "menu:cancel"},
         ],
         [
-            {"text": "🧹 مرتب‌سازی فعلی", "callback_data": "menu:sort_current"},
-            {"text": "🧹 مرتب‌سازی آخرین", "callback_data": "menu:sort_latest"},
+            {"text": "🧹 Sort current", "callback_data": "menu:sort_current"},
+            {"text": "🧹 Sort latest", "callback_data": "menu:sort_latest"},
         ],
         [
-            {"text": "↩️ Undo آخرین Sort", "callback_data": "menu:undo_sort_last"},
-            {"text": "🔢 Undo با Batch ID", "callback_data": "menu:undo_batch_help"},
+            {"text": "↩️ Undo latest sort", "callback_data": "menu:undo_sort_last"},
+            {"text": "🔢 Undo by batch ID", "callback_data": "menu:undo_batch_help"},
         ],
         [
             {"text": "🔄 Scan Jellyfin", "callback_data": "menu:jellyfin_scan"},
@@ -155,8 +157,8 @@ CHANNEL_MENU = {
             {"text": "🔎 IMDb title search", "callback_data": "menu:imdb_help"},
         ],
         [
-            {"text": "✏️ تنظیم/اصلاح فولدر", "callback_data": "menu:folder_help"},
-            {"text": "❓ راهنما", "callback_data": "menu:help"},
+            {"text": "✏️ Set/rename folder", "callback_data": "menu:folder_help"},
+            {"text": "❓ Help", "callback_data": "menu:help"},
         ],
     ]
 }
@@ -240,7 +242,7 @@ class TelegramAPI:
                 payload = await response.json()
             except Exception as exc:
                 text = await response.text()
-                raise RuntimeError(f"پاسخ نامعتبر Local Bot API: {text[:300]}") from exc
+                raise RuntimeError(f"Invalid Local Bot API response: {text[:300]}") from exc
         if not payload.get("ok"):
             raise RuntimeError(payload.get("description", f"Bot API error: {method}"))
         return payload.get("result")
@@ -267,8 +269,35 @@ class BotApp:
         self.catalog = EpisodeCatalog(config.allowed_video_extensions)
         self.imdb = ImdbFuzzySearchBridge(config)
         self.imdb_choices: dict[str, dict] = {}
+        self.background_tasks: set[asyncio.Task] = set()
         if not self.store.get_setting("current_folder") and config.default_target_folder:
             self.store.set_setting("current_folder", sanitize_folder_name(config.default_target_folder))
+
+    def track_task(self, awaitable: Any, name: str) -> asyncio.Task:
+        """Start a background task and keep it visible until it finishes."""
+        task = asyncio.create_task(awaitable, name=name)
+        self.background_tasks.add(task)
+
+        def _done_callback(done_task: asyncio.Task) -> None:
+            self.background_tasks.discard(done_task)
+            try:
+                done_task.result()
+            except asyncio.CancelledError:
+                LOG.info("Background task cancelled: %s", done_task.get_name())
+            except Exception:
+                LOG.exception("Background task failed: %s", done_task.get_name())
+
+        task.add_done_callback(_done_callback)
+        return task
+
+    async def shutdown(self) -> None:
+        """Cancel tracked background tasks before closing the state database."""
+        if not self.background_tasks:
+            return
+        for task in list(self.background_tasks):
+            task.cancel()
+        await asyncio.gather(*self.background_tasks, return_exceptions=True)
+        self.background_tasks.clear()
 
     async def run(self) -> None:
         timeout = aiohttp.ClientTimeout(total=None, connect=15, sock_read=60)
@@ -381,27 +410,27 @@ class BotApp:
         if action == "menu:folder_help":
             await self.send(
                 int(chat_id),
-                "برای تنظیم نام:\n/setfolder My Anime\n\n"
-                "برای اصلاح نام فعلی:\n/renamefolder Correct Anime Name\n\n"
-                "دکمه زیر فرمان را کپی می‌کند؛ سپس آن را Paste کن و نام را بنویس.",
+                "To set a folder:\n/setfolder My Anime\n\n"
+                "To rename the current folder:\n/renamefolder Correct Anime Name\n\n"
+                "The buttons below copy editable command templates. Paste one, then add the name.",
                 HELP_COMMAND_TEMPLATES,
             )
             return
         if action == "menu:undo_batch_help":
             await self.send(
                 int(chat_id),
-                "برای برگرداندن یک Batch مشخص:\n"
+                "To undo a specific sorter batch:\n"
                 "/undo_sort_batch BATCH_ID\n\n"
-                "مثال:\n/undo_sort_batch 20260628-024900-a1b2c3d4",
+                "Example:\n/undo_sort_batch 20260628-024900-a1b2c3d4",
                 CHANNEL_MENU,
             )
             return
         if action == "menu:imdb_help":
             await self.send(
                 int(chat_id),
-                "برای پیدا کردن نام درست و ساخت مقصد:\n/imdb_search dr ston\n\n"
-                "برای جستجو و تغییر نام امن فولدر فعلی:\n/imdb_fix_current\n\n"
-                "در صورت نیاز می‌توانی عبارت جستجو را هم مشخص کنی:\n"
+                "To find the official name and create a Jellyfin folder:\n/imdb_search dr ston\n\n"
+                "To search and safely rename the current folder:\n/imdb_fix_current\n\n"
+                "You can also provide a different search phrase:\n"
                 "/imdb_fix_current dr ston",
                 HELP_COMMAND_TEMPLATES,
             )
@@ -422,7 +451,7 @@ class BotApp:
             if len(matches) != 1:
                 await self.send(
                     int(chat_id),
-                    "این انتخاب دیگر معتبر نیست. دوباره /folders را بفرست.",
+                    "This folder choice is no longer valid. Send /folders again.",
                 )
                 return
             await self._select_existing_folder(int(chat_id), matches[0])
@@ -433,7 +462,7 @@ class BotApp:
             if not choice or time.time() - choice["created_at"] > 600:
                 await self.send(
                     int(chat_id),
-                    "این نتیجه منقضی شده است. دوباره /imdb_search را اجرا کن.",
+                    "This IMDb result expired. Run /imdb_search again.",
                 )
                 return
             await self._offer_folder_confirmation(int(chat_id), token, choice)
@@ -442,7 +471,7 @@ class BotApp:
             token = action.partition(":")[2]
             choice = self.imdb_choices.pop(token, None)
             if not choice or time.time() - choice["created_at"] > 600:
-                await self.send(int(chat_id), "این تأیید منقضی شده است؛ دوباره تلاش کن.")
+                await self.send(int(chat_id), "This confirmation expired. Please try again.")
                 return
             if choice["mode"] == "rename":
                 await self.cmd_renamefolder(int(chat_id), choice["folder_name"])
@@ -452,7 +481,7 @@ class BotApp:
         if action.startswith("foldercancel:"):
             token = action.partition(":")[2]
             self.imdb_choices.pop(token, None)
-            await self.send(int(chat_id), "تغییر فولدر لغو شد.", CHANNEL_MENU)
+            await self.send(int(chat_id), "Folder change cancelled.", CHANNEL_MENU)
             return
         handler = handlers.get(action)
         if handler:
@@ -469,15 +498,15 @@ class BotApp:
             filename = f"telegram_video_{media.get('file_unique_id', media['file_id'])}{extension}"
         extension = Path(filename or "").suffix.lower()
         if extension not in self.config.allowed_video_extensions and not mime.startswith("video/"):
-            await self.send(chat_id, "این فایل ویدیویی پشتیبانی نمی‌شود و به صف اضافه نشد.")
+            await self.send(chat_id, "This video file is not supported and was not added to the queue.")
             return
         if extension not in self.config.allowed_video_extensions:
-            await self.send(chat_id, "پسوند فایل در allowed_video_extensions مجاز نیست.")
+            await self.send(chat_id, "This file extension is not allowed in allowed_video_extensions.")
             return
         try:
             filename = validate_original_filename(filename)
         except ValueError as exc:
-            await self.send(chat_id, f"فایل به صف اضافه نشد: {exc}")
+            await self.send(chat_id, f"The file was not added to the queue: {exc}")
             return
         pending_id = self.queue.add(
             message_id=int(message["message_id"]),
@@ -490,14 +519,14 @@ class BotApp:
             target_folder=self.store.get_setting("current_folder"),
         )
         if pending_id is None:
-            await self.send(chat_id, "این ویدیو قبلاً در صف ثبت شده است.")
+            await self.send(chat_id, "This video is already in the queue.")
         else:
             notice = self._episode_arrival_notice(
                 filename, self.store.get_setting("current_folder"), pending_id
             )
             await self.send(
                 chat_id,
-                f"ویدیو به صف اضافه شد. شناسه: #{pending_id}"
+                f"Video added to the queue. ID: #{pending_id}"
                 + (f"\n{notice}" if notice else ""),
             )
 
@@ -513,7 +542,7 @@ class BotApp:
         )
         if existing:
             return (
-                f"⚠️ S{season:02d}E{episode:02d} از قبل در Library وجود دارد:\n"
+                f"⚠️ S{season:02d}E{episode:02d} already exists in the library:\n"
                 f"{existing.path.name}"
             )
         for queued in self.queue.pending():
@@ -523,10 +552,10 @@ class BotApp:
                 continue
             if detect_episode(queued["original_filename"]) == detected:
                 return (
-                    f"⚠️ S{season:02d}E{episode:02d} قبلاً در صف ثبت شده "
+                    f"⚠️ S{season:02d}E{episode:02d} is already queued "
                     f"(#{queued['pending_id']})."
                 )
-        return f"🆕 اپیزود جدید تشخیص داده شد: S{season:02d}E{episode:02d}"
+        return f"🆕 New episode detected: S{season:02d}E{episode:02d}"
 
     async def handle_command(self, chat_id: int, text: str) -> None:
         command, _, argument = text.partition(" ")
@@ -560,33 +589,36 @@ class BotApp:
         }
         handler = handlers.get(command)
         if not handler:
-            await self.send(chat_id, "دستور شناخته نشد. /help را بفرست.")
+            await self.send(chat_id, "Unknown command. Send /help.")
             return
         await handler(chat_id, argument)
 
     async def cmd_help(self, chat_id: int, _: str) -> None:
         await self.send(
             chat_id,
-            HELP + "\n\nدکمه‌های زیر فرمان قابل‌ویرایش را کپی می‌کنند. "
-            "بعد از زدن دکمه، فرمان را Paste کن و مقدارش را بنویس.",
+            HELP + "\n\nThe buttons below copy editable command templates. "
+            "After tapping a button, paste the command and add the value.",
             HELP_COMMAND_TEMPLATES,
         )
 
     async def cmd_menu(self, chat_id: int, _: str) -> None:
         await self.send(
             chat_id,
-            "منوی مدیریت دانلود و مرتب‌سازی:",
+            "Download and sorting control menu:",
             CHANNEL_MENU,
         )
 
     async def cmd_chatid(self, chat_id: int, _: str) -> None:
-        await self.send(chat_id, f"chat_id این گفتگو:\n{chat_id}")
+        await self.send(chat_id, f"chat_id for this chat:\n{chat_id}")
 
     async def cmd_setfolder(self, chat_id: int, argument: str) -> None:
         if not argument.strip():
-            await self.send(chat_id, "فرمت درست:\n/setfolder dr ston")
+            await self.send(chat_id, "Correct format:\n/setfolder dr ston")
             return
-        asyncio.create_task(self._run_imdb_search(chat_id, argument, "use"))
+        self.track_task(
+            self._run_imdb_search(chat_id, argument, "use"),
+            f"imdb-search:{chat_id}",
+        )
 
     async def _commit_folder(self, chat_id: int, folder_name: str) -> None:
         try:
@@ -595,7 +627,7 @@ class BotApp:
             self.store.set_setting("current_folder", folder)
             await self.send(
                 chat_id,
-                f"فولدر مقصد پس از تأیید تنظیم شد:\n{path}",
+                f"Target folder set after confirmation:\n{path}",
                 CHANNEL_MENU,
             )
         except ValueError as exc:
@@ -651,13 +683,13 @@ class BotApp:
         if len(markup["inline_keyboard"]) == 1:
             await self.send(
                 chat_id,
-                "هیچ فولدر سریالی داخل Jellyfin Library پیدا نشد.",
+                "No series folders were found inside the Jellyfin library.",
                 CHANNEL_MENU,
             )
             return
         await self.send(
             chat_id,
-            f"یک فولدر موجود را انتخاب کن (صفحه {page + 1}/{pages}):",
+            f"Choose an existing folder (page {page + 1}/{pages}):",
             markup,
         )
 
@@ -665,8 +697,8 @@ class BotApp:
         self.store.set_setting("current_folder", folder.name)
         await self.send(
             chat_id,
-            "فولدر موجود به‌عنوان مقصد قسمت‌های جدید انتخاب شد:\n"
-            f"{folder}\n\nفایل‌های جدیدی که بعد از این وارد صف شوند به این مقصد می‌روند.",
+            "Existing folder selected as the target for new episodes:\n"
+            f"{folder}\n\nNew files added to the queue after this will go to this folder.",
             CHANNEL_MENU,
         )
 
@@ -683,8 +715,8 @@ class BotApp:
         if not folder.is_dir():
             await self.send(
                 chat_id,
-                f"این فولدر موجود نیست:\n{folder}\n"
-                "برای دیدن فولدرهای موجود /folders را بفرست.",
+                f"This folder does not exist:\n{folder}\n"
+                "Send /folders to see existing folders.",
             )
             return
         await self._select_existing_folder(chat_id, folder)
@@ -692,18 +724,18 @@ class BotApp:
     async def cmd_folder(self, chat_id: int, _: str) -> None:
         folder = self.store.get_setting("current_folder")
         if not folder:
-            await self.send(chat_id, "فولدر مقصد تنظیم نشده است. /setfolder NAME")
+            await self.send(chat_id, "No target folder is set. Use /setfolder NAME")
         else:
-            await self.send(chat_id, f"فولدر فعلی:\n{self.config.target_path(folder)}")
+            await self.send(chat_id, f"Current folder:\n{self.config.target_path(folder)}")
 
     async def cmd_renamefolder(self, chat_id: int, argument: str) -> None:
         assert self.downloader
         old_name = self.store.get_setting("current_folder")
         if not old_name:
-            await self.send(chat_id, "فولدر فعلی تنظیم نشده است. ابتدا /setfolder را بزن.")
+            await self.send(chat_id, "No current folder is set. Use /setfolder first.")
             return
         if self.downloader.running or self.sorter.active:
-            await self.send(chat_id, "هنگام دانلود یا مرتب‌سازی نمی‌توان نام فولدر را تغییر داد.")
+            await self.send(chat_id, "You cannot rename the folder while a download or sort is running.")
             return
         try:
             new_name = sanitize_folder_name(argument)
@@ -713,25 +745,25 @@ class BotApp:
             await self.send(chat_id, str(exc))
             return
         if new_name == old_name:
-            await self.send(chat_id, "نام جدید با نام فعلی یکسان است.")
+            await self.send(chat_id, "The new name is the same as the current name.")
             return
         if new_path.exists():
             await self.send(
                 chat_id,
-                f"تغییر انجام نشد؛ فولدر مقصد از قبل وجود دارد:\n{new_path}",
+                f"Rename was not done because the destination folder already exists:\n{new_path}",
             )
             return
         try:
             if old_path.exists():
                 await self.send(
                     chat_id,
-                    "در حال تغییر نام امن فولدر و به‌روزرسانی مسیرهای rollback...",
+                    "Safely renaming the folder and updating rollback paths...",
                 )
                 ok, output = await self.sorter.rename_folder(old_path, new_name)
                 if not ok:
                     await self.send(
                         chat_id,
-                        "تغییر نام انجام نشد و state بات تغییر نکرد.\n" + output[-2500:],
+                        "Rename failed and the bot state was not changed.\n" + output[-2500:],
                     )
                     return
             changed = self.store.rename_target_folder(
@@ -749,46 +781,46 @@ class BotApp:
                 )
             await self.send(
                 chat_id,
-                f"نام فولدر اصلاح شد:\n{old_path}\n→ {new_path}\n"
-                f"مقصد {changed} مورد صف و مسیرهای rollback نیز به‌روزرسانی شدند.",
+                f"Folder renamed:\n{old_path}\n→ {new_path}\n"
+                f"Updated {changed} queued target(s) and rollback paths too.",
             )
         except Exception as exc:
             LOG.exception("Folder rename failed")
-            await self.send(chat_id, f"تغییر نام فولدر انجام نشد: {exc}")
+            await self.send(chat_id, f"Folder rename failed: {exc}")
 
     async def cmd_unsetfolder(self, chat_id: int, _: str) -> None:
         self.store.set_setting("current_folder", "")
-        await self.send(chat_id, "فولدر مقصد پاک شد.")
+        await self.send(chat_id, "Target folder cleared.")
 
     async def cmd_queue(self, chat_id: int, _: str) -> None:
         items = self.queue.pending()
         if not items:
-            await self.send(chat_id, "صف خالی است.")
+            await self.send(chat_id, "The queue is empty.")
             return
-        lines = [f"صف ({len(items)} فایل):"]
+        lines = [f"Queue ({len(items)} file(s)):"]
         for item in items[:30]:
             lines.append(
                 f"#{item['pending_id']} [{item['status']}] "
                 f"{item['original_filename']} — {format_size(item['file_size'])} "
-                f"→ {item['target_folder'] or '(بدون فولدر)'}"
+                f"→ {item['target_folder'] or '(no folder)'}"
             )
         if len(items) > 30:
-            lines.append(f"... و {len(items)-30} فایل دیگر")
+            lines.append(f"... and {len(items)-30} more file(s)")
         await self.send(chat_id, "\n".join(lines))
 
     async def cmd_clearqueue(self, chat_id: int, _: str) -> None:
         count = self.queue.clear()
-        await self.send(chat_id, f"{count} مورد از صف پاک شد.")
+        await self.send(chat_id, f"Removed {count} item(s) from the queue.")
 
     async def cmd_remove(self, chat_id: int, argument: str) -> None:
         try:
             pending_id = int(argument)
         except ValueError:
-            await self.send(chat_id, "فرمت درست: /remove 12")
+            await self.send(chat_id, "Correct format: /remove 12")
             return
         await self.send(
             chat_id,
-            "از صف حذف شد." if self.queue.remove(pending_id) else "مورد قابل حذفی پیدا نشد.",
+            "Removed from the queue." if self.queue.remove(pending_id) else "No removable item was found.",
         )
 
     def _prepare_download_items(self) -> list[dict]:
@@ -805,45 +837,51 @@ class BotApp:
     async def cmd_download(self, chat_id: int, _: str) -> None:
         assert self.downloader
         if self.downloader.running:
-            await self.send(chat_id, "دانلود در حال اجرا است.")
+            await self.send(chat_id, "A download is already running.")
             return
         items = self._prepare_download_items()
         if not items:
-            await self.send(chat_id, "فایل آماده‌ای در صف نیست.")
+            await self.send(chat_id, "There are no ready files in the queue.")
             return
         missing = [str(x["pending_id"]) for x in items if not x.get("target_folder")]
         if missing:
             await self.send(
-                chat_id, "برای این فایل‌ها مقصد مشخص نیست: " + ", ".join(missing)
-                + "\nابتدا /setfolder NAME را بفرست."
+                chat_id, "These files do not have a target folder: " + ", ".join(missing)
+                + "\nSend /setfolder NAME first."
             )
             return
         destinations = sorted({str(self.config.target_path(x["target_folder"])) for x in items})
         total = sum(int(x.get("file_size") or 0) for x in items)
         names = "\n".join(f"• {x['original_filename']}" for x in items[:10])
         summary = (
-            "مسیر نهایی دانلود:\n" + "\n".join(destinations)
-            + f"\n\nتعداد: {len(items)}\nحجم تقریبی: {format_size(total)}\n{names}"
+            "Final download destination:\n" + "\n".join(destinations)
+            + f"\n\nCount: {len(items)}\nApprox size: {format_size(total)}\n{names}"
         )
         if len(items) > 10:
-            summary += f"\n... و {len(items)-10} فایل دیگر"
+            summary += f"\n... and {len(items)-10} more file(s)"
         if self.config.confirm_before_download:
             self.store.set_setting("download_confirmation_chat", str(chat_id))
-            await self.send(chat_id, summary + "\n\nبرای شروع /confirm_download را بفرست یا /cancel.")
+            await self.send(chat_id, summary + "\n\nSend /confirm_download to start, or /cancel.")
         else:
-            asyncio.create_task(self.downloader.run(items, lambda text: self.send(chat_id, text)))
+            self.track_task(
+                self.downloader.run(items, lambda text: self.send(chat_id, text)),
+                f"download:{chat_id}",
+            )
 
     async def cmd_confirm(self, chat_id: int, _: str) -> None:
         assert self.downloader
         if self.store.get_setting("download_confirmation_chat") != str(chat_id):
-            await self.send(chat_id, "درخواست دانلود تاییدنشده‌ای برای این چت وجود ندارد.")
+            await self.send(chat_id, "There is no unconfirmed download request for this chat.")
             return
         self.store.set_setting("download_confirmation_chat", "")
         items = self._prepare_download_items()
         if not items:
-            await self.send(chat_id, "فایل آماده‌ای برای دانلود نیست.")
+            await self.send(chat_id, "There are no ready files to download.")
             return
-        asyncio.create_task(self.downloader.run(items, lambda text: self.send(chat_id, text)))
+        self.track_task(
+            self.downloader.run(items, lambda text: self.send(chat_id, text)),
+            f"download:{chat_id}",
+        )
 
     async def cmd_status(self, chat_id: int, _: str) -> None:
         all_items = self.store.list_items()
@@ -852,57 +890,63 @@ class BotApp:
             counts[item["status"]] = counts.get(item["status"], 0) + 1
         part_count = sum(1 for _ in self.config.jellyfin_library_path.rglob("*.part"))
         text = "\n".join(f"{key}: {value}" for key, value in sorted(counts.items()))
-        await self.send(chat_id, (text or "هنوز فایلی ثبت نشده است.") + f"\nفایل ناقص .part: {part_count}")
+        active = len(self.background_tasks)
+        await self.send(
+            chat_id,
+            (text or "No files have been registered yet.")
+            + f"\nIncomplete .part files: {part_count}"
+            + f"\nTracked background tasks: {active}",
+        )
 
     async def cmd_cancel(self, chat_id: int, _: str) -> None:
         self.store.set_setting("download_confirmation_chat", "")
         cancelled = bool(self.downloader and self.downloader.cancel())
-        await self.send(chat_id, "درخواست لغو ثبت شد." if cancelled else "عملیات فعالی وجود ندارد.")
+        await self.send(chat_id, "Cancel request registered." if cancelled else "There is no active operation.")
 
     async def cmd_resolve(self, chat_id: int, argument: str) -> None:
         parts = argument.split()
         if len(parts) != 2 or parts[1] not in {"skip", "overwrite", "save_with_suffix"}:
-            await self.send(chat_id, "فرمت: /resolve ID skip|overwrite|save_with_suffix")
+            await self.send(chat_id, "Format: /resolve ID skip|overwrite|save_with_suffix")
             return
         try:
             pending_id = int(parts[0])
         except ValueError:
-            await self.send(chat_id, "شناسه باید عدد باشد.")
+            await self.send(chat_id, "The ID must be a number.")
             return
         item = self.store.get_item(pending_id)
         if not item or item["status"] != "waiting_overwrite":
-            await self.send(chat_id, "این فایل منتظر تصمیم overwrite نیست.")
+            await self.send(chat_id, "This file is not waiting for an overwrite decision.")
             return
         if parts[1] == "skip":
-            self.queue.set_status(pending_id, "skipped", "با تصمیم کاربر رد شد.")
+            self.queue.set_status(pending_id, "skipped", "Skipped by user decision.")
         else:
             self.queue.set_status(
                 pending_id, "queued", None, overwrite_policy=parts[1]
             )
-        await self.send(chat_id, "تصمیم ذخیره شد. برای ادامه /download را بفرست.")
+        await self.send(chat_id, "Decision saved. Send /download to continue.")
 
     async def _run_sorter(self, chat_id: int, folder_name: str) -> None:
         try:
             folder = self.config.target_path(folder_name)
             if not folder.is_dir():
-                await self.send(chat_id, f"فولدر پیدا نشد:\n{folder}")
+                await self.send(chat_id, f"Folder not found:\n{folder}")
                 return
-            await self.send(chat_id, f"مرتب‌سازی شروع شد:\n{folder}")
+            await self.send(chat_id, f"Sorting started:\n{folder}")
             ok, output = await self.sorter.run(folder)
             await self.send(
                 chat_id,
-                ("مرتب‌سازی موفق بود.\n" if ok else "مرتب‌سازی خطا داشت.\n") + output[-3000:],
+                ("Sorting completed successfully.\n" if ok else "Sorting finished with errors.\n") + output[-3000:],
             )
         except Exception as exc:
             LOG.exception("Sorter error")
-            await self.send(chat_id, f"خطای sorter: {exc}")
+            await self.send(chat_id, f"Sorter error: {exc}")
 
     async def cmd_sort_current(self, chat_id: int, _: str) -> None:
         folder = self.store.get_setting("current_folder")
         if not folder:
-            await self.send(chat_id, "فولدر فعلی تنظیم نشده است.")
+            await self.send(chat_id, "No current folder is selected.")
             return
-        asyncio.create_task(self._run_sorter(chat_id, folder))
+        self.track_task(self._run_sorter(chat_id, folder), f"sort-current:{chat_id}")
 
     async def _run_series_sort_action(
         self, chat_id: int, action: str, label: str
@@ -931,31 +975,35 @@ class BotApp:
             await self.send(chat_id, f"Sorter error: {exc}")
 
     async def cmd_resort_current(self, chat_id: int, _: str) -> None:
-        asyncio.create_task(self._run_series_sort_action(
-            chat_id, "resort-existing", "Renaming existing sorted episodes"
-        ))
+        self.track_task(
+            self._run_series_sort_action(chat_id, "resort-existing", "Renaming existing sorted episodes"),
+            f"resort-current:{chat_id}",
+        )
 
     async def cmd_sort_history(self, chat_id: int, _: str) -> None:
-        asyncio.create_task(self._run_series_sort_action(
-            chat_id, "sort-history", "Reading sort history"
-        ))
+        self.track_task(
+            self._run_series_sort_action(chat_id, "sort-history", "Reading sort history"),
+            f"sort-history:{chat_id}",
+        )
 
     async def cmd_sort_back(self, chat_id: int, _: str) -> None:
-        asyncio.create_task(self._run_series_sort_action(
-            chat_id, "sort-back", "Moving one revision back"
-        ))
+        self.track_task(
+            self._run_series_sort_action(chat_id, "sort-back", "Moving one revision back"),
+            f"sort-back:{chat_id}",
+        )
 
     async def cmd_sort_forward(self, chat_id: int, _: str) -> None:
-        asyncio.create_task(self._run_series_sort_action(
-            chat_id, "sort-forward", "Moving one revision forward"
-        ))
+        self.track_task(
+            self._run_series_sort_action(chat_id, "sort-forward", "Moving one revision forward"),
+            f"sort-forward:{chat_id}",
+        )
 
     async def cmd_sort_latest(self, chat_id: int, _: str) -> None:
         folder = self.store.get_setting("latest_downloaded_folder")
         if not folder:
-            await self.send(chat_id, "هنوز دانلود کاملی ثبت نشده است.")
+            await self.send(chat_id, "No completed download has been recorded yet.")
             return
-        asyncio.create_task(self._run_sorter(chat_id, folder))
+        self.track_task(self._run_sorter(chat_id, folder), f"sort-latest:{chat_id}")
 
     async def cmd_sort_folder(self, chat_id: int, argument: str) -> None:
         try:
@@ -963,17 +1011,17 @@ class BotApp:
         except ValueError as exc:
             await self.send(chat_id, str(exc))
             return
-        asyncio.create_task(self._run_sorter(chat_id, folder))
+        self.track_task(self._run_sorter(chat_id, folder), f"sort-folder:{chat_id}")
 
     async def cmd_sort_status(self, chat_id: int, _: str) -> None:
         run = self.store.latest_sorter_run()
         if not run:
-            await self.send(chat_id, "هنوز sorter اجرا نشده است.")
+            await self.send(chat_id, "The sorter has not run yet.")
         else:
             await self.send(
                 chat_id,
-                f"آخرین اجرا #{run['id']}\nوضعیت: {run['status']}\n"
-                f"فولدر: {run['folder']}\nزمان: {run['started_at']}",
+                f"Latest run #{run['id']}\nStatus: {run['status']}\n"
+                f"Folder: {run['folder']}\nTime: {run['started_at']}",
             )
 
     async def _run_sort_undo(
@@ -982,76 +1030,76 @@ class BotApp:
         if self.downloader and self.downloader.running:
             await self.send(
                 chat_id,
-                "هنگام دانلود نمی‌توان فایل‌ها را به محل قبلی برگرداند.",
+                "Files cannot be restored while a download is running.",
             )
             return
         try:
-            label = f"Batch {batch_id}" if batch_id else "آخرین Batch"
-            await self.send(chat_id, f"Undo مرتب‌سازی شروع شد: {label}")
+            label = f"Batch {batch_id}" if batch_id else "latest batch"
+            await self.send(chat_id, f"Sort undo started: {label}")
             if batch_id:
                 ok, output = await self.sorter.undo_batch(batch_id)
             else:
                 ok, output = await self.sorter.undo_last()
             await self.send(
                 chat_id,
-                ("Undo موفق بود.\n" if ok else "Undo کامل نشد یا خطا داشت.\n")
+                ("Undo completed successfully.\n" if ok else "Undo was incomplete or had errors.\n")
                 + output[-3000:],
             )
         except Exception as exc:
             LOG.exception("Sort undo error")
-            await self.send(chat_id, f"خطای Undo مرتب‌سازی: {exc}")
+            await self.send(chat_id, f"Sort undo error: {exc}")
 
     async def cmd_undo_sort_last(self, chat_id: int, _: str) -> None:
-        asyncio.create_task(self._run_sort_undo(chat_id))
+        self.track_task(self._run_sort_undo(chat_id), f"undo-sort-last:{chat_id}")
 
     async def cmd_undo_sort_batch(self, chat_id: int, argument: str) -> None:
         batch_id = argument.strip()
         if not batch_id:
             await self.send(
                 chat_id,
-                "فرمت درست:\n/undo_sort_batch 20260628-024900-a1b2c3d4",
+                "Correct format:\n/undo_sort_batch 20260628-024900-a1b2c3d4",
             )
             return
-        asyncio.create_task(self._run_sort_undo(chat_id, batch_id))
+        self.track_task(self._run_sort_undo(chat_id, batch_id), f"undo-sort-batch:{chat_id}")
 
     async def _run_jellyfin_scan(self, chat_id: int) -> None:
         if not self.jellyfin:
-            await self.send(chat_id, "اتصال Jellyfin هنوز آماده نیست.")
+            await self.send(chat_id, "Jellyfin connection is not ready yet.")
             return
         try:
-            await self.send(chat_id, "درخواست Scan کتابخانه به Jellyfin ارسال شد...")
+            await self.send(chat_id, "Sending Jellyfin library scan request...")
             requested_at = await self.jellyfin.scan_library()
             await self.send(
                 chat_id,
-                "Jellyfin درخواست Scan را پذیرفت.\n"
-                f"زمان درخواست: {requested_at}\n"
-                "توجه: Scan در پس‌زمینه Jellyfin ادامه پیدا می‌کند.",
+                "Jellyfin accepted the scan request.\n"
+                f"Requested at: {requested_at}\n"
+                "Note: the scan continues in the Jellyfin background.",
             )
         except Exception as exc:
             LOG.exception("Jellyfin scan request failed")
-            await self.send(chat_id, f"خطای Jellyfin Scan: {exc}")
+            await self.send(chat_id, f"Jellyfin scan error: {exc}")
 
     async def cmd_jellyfin_scan(self, chat_id: int, _: str) -> None:
-        asyncio.create_task(self._run_jellyfin_scan(chat_id))
+        self.track_task(self._run_jellyfin_scan(chat_id), f"jellyfin-scan:{chat_id}")
 
     async def cmd_jellyfin_status(self, chat_id: int, _: str) -> None:
         if not self.jellyfin:
-            await self.send(chat_id, "اتصال Jellyfin هنوز آماده نیست.")
+            await self.send(chat_id, "Jellyfin connection is not ready yet.")
             return
         try:
             info = await self.jellyfin.server_status()
             await self.send(
                 chat_id,
-                "اتصال Jellyfin برقرار است.\n"
-                f"Server: {info.get('ServerName', 'نامشخص')}\n"
-                f"Version: {info.get('Version', 'نامشخص')}\n"
+                "Jellyfin connection is working.\n"
+                f"Server: {info.get('ServerName', 'unknown')}\n"
+                f"Version: {info.get('Version', 'unknown')}\n"
                 f"{self.jellyfin.last_scan_summary()}",
             )
         except Exception as exc:
             LOG.exception("Jellyfin status failed")
             await self.send(
                 chat_id,
-                f"اتصال Jellyfin ناموفق بود: {exc}\n"
+                f"Jellyfin connection failed: {exc}\n"
                 f"{self.jellyfin.last_scan_summary()}",
             )
 
@@ -1060,14 +1108,14 @@ class BotApp:
     ) -> None:
         if not query.strip():
             command = "/imdb_fix_current" if mode == "rename" else "/imdb_search"
-            await self.send(chat_id, f"فرمت درست:\n{command} dr ston")
+            await self.send(chat_id, f"Correct format:\n{command} dr ston")
             return
         try:
-            await self.send(chat_id, f"در حال جستجوی IMDb برای: {query}")
+            await self.send(chat_id, f"Searching IMDb for: {query}")
             results, source = await self.imdb.search(query)
             if not results:
                 await self._offer_manual_folder_fallback(
-                    chat_id, query, mode, "IMDb نتیجه‌ای پیدا نکرد."
+                    chat_id, query, mode, "IMDb did not return any results."
                 )
                 return
             now = time.time()
@@ -1095,14 +1143,14 @@ class BotApp:
                 )
             rows.append([{"text": "🎛 Main menu", "callback_data": "menu:open"}])
             action_text = (
-                "نتیجه درست را برای تغییر نام فولدر فعلی انتخاب کن:"
+                "Choose the correct result to rename the current folder:"
                 if mode == "rename"
-                else "نتیجه درست را برای مقصد Jellyfin انتخاب کن:"
+                else "Choose the correct result for the Jellyfin destination:"
             )
             await self.send(
                 chat_id,
                 f"{action_text}\nSource: {source}\n"
-                "فرمت نهایی: Title (Year) [imdbid-ID]",
+                "Final folder format: Title (Year) [imdbid-ID]",
                 {"inline_keyboard": rows},
             )
         except Exception as exc:
@@ -1111,18 +1159,18 @@ class BotApp:
                 chat_id,
                 query,
                 mode,
-                f"جستجوی اختیاری IMDb در دسترس نیست: {exc}",
+                f"Optional IMDb search is not available: {exc}",
             )
 
     async def _offer_folder_confirmation(
         self, chat_id: int, token: str, choice: dict
     ) -> None:
         source = choice.get("source", "IMDb fuzzy search")
-        action = "تغییر نام فولدر فعلی" if choice["mode"] == "rename" else "تنظیم مقصد"
+        action = "Rename current folder" if choice["mode"] == "rename" else "Set destination"
         await self.send(
             chat_id,
-            f"نام پیشنهادی:\n{choice['folder_name']}\n\n"
-            f"Source: {source}\nAction: {action}\nآیا تأیید می‌کنی؟",
+            f"Suggested folder name:\n{choice['folder_name']}\n\n"
+            f"Source: {source}\nAction: {action}\nDo you confirm?",
             {
                 "inline_keyboard": [[
                     {
@@ -1143,7 +1191,7 @@ class BotApp:
         try:
             manual_name = sanitize_folder_name(entered_name)
         except ValueError as exc:
-            await self.send(chat_id, f"{reason}\nنام دستی نیز معتبر نیست: {exc}")
+            await self.send(chat_id, f"{reason}\nThe manual name is not valid either: {exc}")
             return
         token = uuid.uuid4().hex[:16]
         choice = {
@@ -1155,29 +1203,35 @@ class BotApp:
         self.imdb_choices[token] = choice
         await self.send(
             chat_id,
-            f"{reason}\n\nنام واردشده خودت به‌عنوان fallback پیشنهاد می‌شود.",
+            f"{reason}\n\nYour entered name will be offered as the fallback.",
         )
         await self._offer_folder_confirmation(chat_id, token, choice)
 
     async def cmd_imdb_search(self, chat_id: int, argument: str) -> None:
-        asyncio.create_task(self._run_imdb_search(chat_id, argument, "use"))
+        self.track_task(
+            self._run_imdb_search(chat_id, argument, "use"),
+            f"imdb-search:{chat_id}",
+        )
 
     async def cmd_imdb_fix_current(self, chat_id: int, argument: str) -> None:
         query = argument.strip() or self.store.get_setting("current_folder")
         if not query:
             await self.send(
                 chat_id,
-                "فولدر فعلی تنظیم نشده است. ابتدا /folders یا /setfolder را استفاده کن.",
+                "No current folder is selected. Use /folders or /setfolder first.",
             )
             return
-        asyncio.create_task(self._run_imdb_search(chat_id, query, "rename"))
+        self.track_task(
+            self._run_imdb_search(chat_id, query, "rename"),
+            f"imdb-fix-current:{chat_id}",
+        )
 
     async def cmd_episodes(self, chat_id: int, argument: str) -> None:
         folder_name = argument.strip() or self.store.get_setting("current_folder")
         if not folder_name:
             await self.send(
                 chat_id,
-                "فولدر مشخص نیست.\n/episodes Anime Name\nیا ابتدا /setfolder را بزن.",
+                "No folder was specified.\nUse /episodes Anime Name\nor select one first with /setfolder.",
             )
             return
         try:
@@ -1187,13 +1241,13 @@ class BotApp:
             await self.send(chat_id, str(exc))
             return
         if not folder.is_dir():
-            await self.send(chat_id, f"فولدر پیدا نشد:\n{folder}")
+            await self.send(chat_id, f"Folder not found:\n{folder}")
             return
         entries = await asyncio.to_thread(self.catalog.scan_series, folder)
         await self.send(chat_id, format_series_inventory(folder_name, entries))
 
     def _library_episode_summary(self) -> str:
-        lines = ["📚 خلاصه اپیزودهای Jellyfin Library"]
+        lines = ["📚 Jellyfin library episode summary"]
         series_count = 0
         for folder in sorted(
             (p for p in self.config.jellyfin_library_path.iterdir() if p.is_dir()),
@@ -1209,14 +1263,14 @@ class BotApp:
             )
             lines.append(f"• {folder.name} — {seasons}")
             if len(lines) >= 60:
-                lines.append("... نتیجه کوتاه شد؛ برای جزئیات /episodes NAME")
+                lines.append("... result shortened; use /episodes NAME for details")
                 break
         if not series_count:
-            return "هیچ اپیزود قابل‌شناسایی در Library پیدا نشد."
+            return "No recognizable episodes were found in the library."
         return "\n".join(lines)
 
     async def cmd_library_episodes(self, chat_id: int, _: str) -> None:
-        await self.send(chat_id, "در حال بررسی فایل‌های Library...")
+        await self.send(chat_id, "Scanning library files...")
         summary = await asyncio.to_thread(self._library_episode_summary)
         await self.send(chat_id, summary)
 
@@ -1228,6 +1282,7 @@ async def async_main() -> None:
     try:
         await app.run()
     finally:
+        await app.shutdown()
         app.store.close()
 
 

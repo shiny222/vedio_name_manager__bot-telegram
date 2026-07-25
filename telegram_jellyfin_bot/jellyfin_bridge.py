@@ -37,11 +37,11 @@ class JellyfinBridge:
     async def scan_library(self) -> str:
         if not self.configured:
             raise ValueError(
-                "Jellyfin تنظیم نشده است. jellyfin_server_url و "
-                "jellyfin_api_key را در config.json وارد کنید."
+                "Jellyfin is not configured. Set jellyfin_server_url and "
+                "jellyfin_api_key in config.json."
             )
         if self.active:
-            raise RuntimeError("یک درخواست Jellyfin در حال اجرا است.")
+            raise RuntimeError("Another Jellyfin request is already running.")
         self.active = True
         try:
             timeout = aiohttp.ClientTimeout(
@@ -70,8 +70,8 @@ class JellyfinBridge:
     async def server_status(self) -> dict:
         if not self.configured:
             raise ValueError(
-                "Jellyfin تنظیم نشده است. jellyfin_server_url و "
-                "jellyfin_api_key را در config.json وارد کنید."
+                "Jellyfin is not configured. Set jellyfin_server_url and "
+                "jellyfin_api_key in config.json."
             )
         timeout = aiohttp.ClientTimeout(
             total=self.config.jellyfin_request_timeout_seconds
@@ -86,13 +86,13 @@ class JellyfinBridge:
             try:
                 return await response.json(content_type=None)
             except Exception as exc:
-                raise RuntimeError("پاسخ وضعیت Jellyfin معتبر نیست.") from exc
+                raise RuntimeError("Jellyfin status response is not valid.") from exc
 
     def last_scan_summary(self) -> str:
         requested = self.store.get_setting(
-            "latest_jellyfin_scan_request", "هنوز ثبت نشده"
+            "latest_jellyfin_scan_request", "not recorded yet"
         )
         result = self.store.get_setting(
-            "latest_jellyfin_scan_result", "هنوز ثبت نشده"
+            "latest_jellyfin_scan_result", "not recorded yet"
         )
-        return f"آخرین درخواست Scan: {requested}\nنتیجه درخواست: {result}"
+        return f"Latest scan request: {requested}\nRequest result: {result}"

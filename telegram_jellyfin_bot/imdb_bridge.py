@@ -16,11 +16,11 @@ class ImdbFuzzySearchBridge:
 
     def build_command(self, query: str, limit: int = 8) -> list[str]:
         if len(query.strip()) < 2:
-            raise ValueError("حداقل دو حرف برای جستجو وارد کنید.")
+            raise ValueError("Enter at least two letters to search.")
         if len(query) > 200:
-            raise ValueError("عبارت جستجو بیش از حد طولانی است.")
+            raise ValueError("Search text is too long.")
         if len(self.config.fuzzy_search_command) < 2:
-            raise ValueError("fuzzy_search_command در config.json معتبر نیست.")
+            raise ValueError("fuzzy_search_command is not valid in config.json.")
         root = Path(__file__).resolve().parent.parent
         command = list(self.config.fuzzy_search_command[:2])
         for index in (0, 1):
@@ -41,7 +41,7 @@ class ImdbFuzzySearchBridge:
 
     async def search(self, query: str, limit: int = 8) -> tuple[list[dict], str]:
         if self.active:
-            raise RuntimeError("یک جستجوی IMDb دیگر در حال اجرا است.")
+            raise RuntimeError("Another IMDb search is already running.")
         command = self.build_command(query, limit)
         self.active = True
         try:
@@ -60,11 +60,11 @@ class ImdbFuzzySearchBridge:
                 payload = json.loads(text)
             except json.JSONDecodeError as exc:
                 detail = stderr.decode("utf-8", errors="replace")[-500:]
-                raise RuntimeError(f"پاسخ ابزار IMDb معتبر نیست: {detail}") from exc
+                raise RuntimeError(f"IMDb tool returned an invalid response: {detail}") from exc
             if process.returncode not in {0, 1} or not payload.get("ok"):
                 raise RuntimeError(payload.get("error", "IMDb search failed"))
             return payload.get("results", []), str(payload.get("source", "unknown"))
         except asyncio.TimeoutError as exc:
-            raise RuntimeError("مهلت جستجوی IMDb تمام شد؛ نام را دستی وارد کنید.") from exc
+            raise RuntimeError("IMDb search timed out; enter the name manually.") from exc
         finally:
             self.active = False

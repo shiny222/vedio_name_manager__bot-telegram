@@ -17,8 +17,8 @@ def main() -> int:
         executable = config.telegram_bot_api_exe_path
         if not executable.is_file():
             raise FileNotFoundError(
-                f"telegram-bot-api.exe پیدا نشد:\n{executable}\n"
-                "مسیر را در config.json اصلاح کنید."
+                f"telegram-bot-api.exe was not found:\n{executable}\n"
+                "Fix the path in config.json."
             )
         command = [
             str(executable),
@@ -29,8 +29,8 @@ def main() -> int:
             f"--http-port={config.local_bot_api_port}",
         ]
         print(
-            f"Local Bot API روی http://{config.local_bot_api_host}:"
-            f"{config.local_bot_api_port} اجرا می‌شود."
+            f"Local Bot API is running at http://{config.local_bot_api_host}:"
+            f"{config.local_bot_api_port}."
         )
         # The data directory is the working directory, keeping server state portable.
         return subprocess.run(command, cwd=config.data_path, check=False).returncode

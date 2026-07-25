@@ -40,7 +40,7 @@ class DownloadManager:
 
     async def run(self, items: list[dict], notify: Notify) -> None:
         if self.running:
-            await notify("یک دانلود دیگر در حال اجرا است.")
+            await notify("Another download is already running.")
             return
         self.running = True
         self.cancel_event.clear()
@@ -52,18 +52,18 @@ class DownloadManager:
                     await self._download_one(item, notify)
 
         try:
-            await notify("دانلود شروع شد.")
+            await notify("Download started.")
             await asyncio.gather(*(guarded(item) for item in items))
             completed = sum(
                 1 for item in items
                 if (self.queue.store.get_item(item["pending_id"]) or {}).get("status") == "completed"
             )
             if self.cancel_event.is_set():
-                await notify(f"عملیات لغو شد. {completed} فایل کامل شده است.")
+                await notify(f"Operation cancelled. {completed} file(s) completed.")
             else:
                 await notify(
-                    f"دانلودها پایان یافت. {completed} از {len(items)} فایل کامل شد.\n"
-                    "برای مرتب‌سازی از /sort_latest استفاده کن."
+                    f"Downloads finished. {completed} of {len(items)} file(s) completed.\n"
+                    "Use /sort_latest to organize the latest downloaded folder."
                 )
         finally:
             self.running = False
@@ -81,7 +81,7 @@ class DownloadManager:
         try:
             result = self._destination(item)
             if result is None:
-                self.queue.set_status(pending_id, "failed", "فولدر مقصد مشخص نیست.")
+                self.queue.set_status(pending_id, "failed", "Target folder is not set.")
                 return
             destination, folder_name = result
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -94,25 +94,25 @@ class DownloadManager:
                 elif self.config.ask_before_overwrite:
                     self.queue.set_status(
                         pending_id, "waiting_overwrite",
-                        "فایل مقصد وجود دارد؛ منتظر تصمیم کاربر.",
+                        "Destination file exists; waiting for user decision.",
                     )
                     await notify(
-                        f"فایل #{pending_id} از قبل وجود دارد:\n{destination.name}\n"
-                        f"یکی را بفرست:\n/resolve {pending_id} skip\n"
+                        f"File #{pending_id} already exists:\n{destination.name}\n"
+                        f"Send one of these:\n/resolve {pending_id} skip\n"
                         f"/resolve {pending_id} overwrite\n"
                         f"/resolve {pending_id} save_with_suffix"
                     )
                     return
                 else:
-                    self.queue.set_status(pending_id, "skipped", "فایل از قبل وجود دارد.")
-                    await notify(f"فایل #{pending_id} رد شد؛ از قبل وجود دارد.")
+                    self.queue.set_status(pending_id, "skipped", "File already exists.")
+                    await notify(f"File #{pending_id} skipped; it already exists.")
                     return
 
             self.queue.set_status(pending_id, "downloading", None)
             file_info = await self.api_call("getFile", file_id=item["file_id"])
             file_path = str(file_info.get("file_path", ""))
             if not file_path:
-                raise RuntimeError("Local Bot API مسیر فایل را برنگرداند.")
+                raise RuntimeError("Local Bot API did not return a file path.")
             part = destination.with_name(destination.name + ".part")
             if part.exists():
                 LOG.warning("Restarting incomplete download: %s", part)
@@ -124,10 +124,10 @@ class DownloadManager:
             else:
                 await self._download_http(file_path, part)
             if self.cancel_event.is_set():
-                self.queue.set_status(pending_id, "cancelled", "دانلود لغو شد.")
+                self.queue.set_status(pending_id, "cancelled", "Download cancelled.")
                 return
             if destination.exists() and policy != "overwrite":
-                raise FileExistsError(f"فایل مقصد هنگام دانلود ایجاد شد: {destination}")
+                raise FileExistsError(f"Destination file appeared during download: {destination}")
             if destination.exists():
                 destination.unlink()
             part.replace(destination)
@@ -136,14 +136,14 @@ class DownloadManager:
             )
             self.queue.store.set_setting("latest_downloaded_folder", folder_name)
             self.queue.store.set_setting("latest_downloaded_file", str(destination))
-            await notify(f"دانلود کامل شد: {destination.name}")
+            await notify(f"Download completed: {destination.name}")
         except asyncio.CancelledError:
-            self.queue.set_status(pending_id, "cancelled", "دانلود لغو شد.")
+            self.queue.set_status(pending_id, "cancelled", "Download cancelled.")
             raise
         except Exception as exc:
             LOG.exception("Download failed for pending_id=%s", pending_id)
             self.queue.set_status(pending_id, "failed", str(exc))
-            await notify(f"خطا در دانلود فایل #{pending_id}: {exc}")
+            await notify(f"Download error for file #{pending_id}: {exc}")
 
     def _copy_local(self, source: Path, destination: Path) -> None:
         with source.open("rb") as src, destination.open("wb") as dst:

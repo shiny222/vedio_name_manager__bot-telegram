@@ -20,11 +20,11 @@ class SorterBridge:
 
     def build_command(self, folder: Path, dry_run: bool = False) -> list[str]:
         if not self.config.sorter_command:
-            raise ValueError("sorter_command در config.json تنظیم نشده است.")
+            raise ValueError("sorter_command is not configured in config.json.")
         safe_folder = folder.resolve()
         library = self.config.jellyfin_library_path.resolve()
         if safe_folder != library and library not in safe_folder.parents:
-            raise ValueError("فولدر sorter خارج از Library است.")
+            raise ValueError("Sorter folder is outside the library.")
         command = [
             part.replace("{folder}", str(safe_folder)).replace(
                 "{mode}", "dry-run" if dry_run else "run"
@@ -56,14 +56,14 @@ class SorterBridge:
 
     def build_undo_command(self, batch_id: str | None = None) -> list[str]:
         if not self.config.sorter_command:
-            raise ValueError("sorter_command در config.json تنظیم نشده است.")
+            raise ValueError("sorter_command is not configured in config.json.")
         # Telegram command names cannot inject arguments because subprocess is
         # invoked without a shell; validation also prevents accidental garbage.
         if batch_id is not None and not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", batch_id):
-            raise ValueError("Batch ID نامعتبر است.")
+            raise ValueError("Invalid Batch ID.")
         prefix = list(self.config.sorter_command[:2])
         if len(prefix) < 2:
-            raise ValueError("sorter_command باید Python و organizer.py را مشخص کند.")
+            raise ValueError("sorter_command must specify Python and organizer.py.")
         command = prefix + (
             ["undo-batch", batch_id, "--library", str(self.config.jellyfin_library_path)]
             if batch_id is not None
@@ -75,9 +75,9 @@ class SorterBridge:
         safe_folder = folder.resolve()
         library = self.config.jellyfin_library_path.resolve()
         if safe_folder != library and library not in safe_folder.parents:
-            raise ValueError("فولدر تغییر نام خارج از Library است.")
+            raise ValueError("Rename folder is outside the library.")
         if not self.config.sorter_command or len(self.config.sorter_command) < 2:
-            raise ValueError("sorter_command باید Python و organizer.py را مشخص کند.")
+            raise ValueError("sorter_command must specify Python and organizer.py.")
         command = list(self.config.sorter_command[:2]) + [
             "rename-folder",
             str(safe_folder),
@@ -123,7 +123,7 @@ class SorterBridge:
 
     async def _execute(self, folder: Path, command: list[str]) -> tuple[bool, str]:
         if self.active:
-            return False, "یک عملیات مرتب‌سازی در حال اجرا است."
+            return False, "A sorter operation is already running."
         self.active = True
         run_id = self.store.create_sorter_run(str(folder), json.dumps(command, ensure_ascii=False))
         try:
@@ -140,13 +140,13 @@ class SorterBridge:
             except asyncio.TimeoutError:
                 process.kill()
                 await process.wait()
-                output = "Sorter به‌علت پایان زمان مجاز متوقف شد."
+                output = "Sorter stopped because it reached the timeout."
                 self.store.finish_sorter_run(run_id, "timeout", output)
                 return False, output
             output = output_bytes.decode("utf-8", errors="replace")
             status = "completed" if process.returncode == 0 else "failed"
             self.store.finish_sorter_run(run_id, status, output)
             LOG.info("Sorter run %s finished with code %s\n%s", run_id, process.returncode, output)
-            return process.returncode == 0, output[-3000:] or "(بدون خروجی)"
+            return process.returncode == 0, output[-3000:] or "(no output)"
         finally:
             self.active = False

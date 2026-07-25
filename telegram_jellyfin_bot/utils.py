@@ -16,23 +16,23 @@ def sanitize_folder_name(value: str) -> str:
     """Return one safe relative folder component or raise ValueError."""
     value = value.strip()
     if not value or value in {".", ".."}:
-        raise ValueError("نام فولدر خالی یا نامعتبر است.")
+        raise ValueError("Folder name is empty or invalid.")
     if Path(value).is_absolute() or "/" in value or "\\" in value:
-        raise ValueError("فقط نام فولدر را بفرستید، نه مسیر کامل.")
+        raise ValueError("Send only the folder name, not a full path.")
     cleaned = INVALID_WINDOWS_CHARS.sub("_", value).rstrip(" .")
     if not cleaned or cleaned.upper() in WINDOWS_RESERVED:
-        raise ValueError("این نام فولدر در ویندوز مجاز نیست.")
+        raise ValueError("This folder name is not valid on Windows.")
     return cleaned
 
 
 def validate_original_filename(value: str) -> str:
     """Keep Telegram's filename exactly; reject names unsafe on Windows."""
     if not value or value in {".", ".."}:
-        raise ValueError("نام اصلی فایل موجود نیست.")
+        raise ValueError("Original filename is missing.")
     if Path(value).name != value or INVALID_WINDOWS_CHARS.search(value):
-        raise ValueError("نام اصلی فایل برای ذخیره امن در ویندوز معتبر نیست.")
+        raise ValueError("Original filename is not safe to save on Windows.")
     if value.endswith((" ", ".")) or Path(value).stem.upper() in WINDOWS_RESERVED:
-        raise ValueError("نام اصلی فایل در ویندوز مجاز نیست.")
+        raise ValueError("Original filename is not valid on Windows.")
     return value
 
 
@@ -40,13 +40,13 @@ def safe_child(base: Path, folder_name: str) -> Path:
     base = base.resolve()
     target = (base / sanitize_folder_name(folder_name)).resolve()
     if target.parent != base:
-        raise ValueError("مسیر مقصد خارج از Library است.")
+        raise ValueError("Target path is outside the library.")
     return target
 
 
 def format_size(size: int | None) -> str:
     if not size:
-        return "نامشخص"
+        return "unknown"
     value = float(size)
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if value < 1024 or unit == "TB":
