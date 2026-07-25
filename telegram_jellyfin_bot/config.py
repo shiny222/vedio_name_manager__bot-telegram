@@ -40,6 +40,8 @@ class Config:
     jellyfin_server_url: str
     jellyfin_api_key: str
     jellyfin_request_timeout_seconds: int
+    jellyfin_scan_poll_interval_seconds: int
+    jellyfin_scan_monitor_timeout_seconds: int
     fuzzy_search_command: list[str]
     fuzzy_search_timeout_seconds: int
 
@@ -128,6 +130,12 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         jellyfin_api_key=str(raw.get("jellyfin_api_key", "")).strip(),
         jellyfin_request_timeout_seconds=max(
             1, int(raw.get("jellyfin_request_timeout_seconds", 30))
+        ),
+        jellyfin_scan_poll_interval_seconds=max(
+            1, int(raw.get("jellyfin_scan_poll_interval_seconds", 5))
+        ),
+        jellyfin_scan_monitor_timeout_seconds=max(
+            30, int(raw.get("jellyfin_scan_monitor_timeout_seconds", 3600))
         ),
         fuzzy_search_command=fuzzy_search_command,
         fuzzy_search_timeout_seconds=max(

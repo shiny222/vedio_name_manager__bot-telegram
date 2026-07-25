@@ -27,6 +27,10 @@ The bot is intentionally separate from the other tools:
 
 Do not commit or share `config.json`; it contains your token and private settings.
 
+For a complete bilingual walkthrough, see
+[HOW_TO_USE.md](HOW_TO_USE.md), or send `/guide` to the running bot and choose
+English or فارسی.
+
 ## Important config fields
 
 - `bot_token`: your BotFather token.
@@ -37,6 +41,11 @@ Do not commit or share `config.json`; it contains your token and private setting
 - `ask_before_overwrite`: if `true`, the bot asks before handling duplicate files.
 - `sorter_command`: command used to call the independent `organizer` tool.
 - `jellyfin_server_url` and `jellyfin_api_key`: needed for `/jellyfin_scan`.
+- `jellyfin_scan_poll_interval_seconds`: how often an explicitly requested scan
+  is checked (default `5` seconds).
+- `jellyfin_scan_monitor_timeout_seconds`: how long the bot waits for completion
+  before it stops monitoring (default `3600` seconds). It does not cancel the
+  Jellyfin scan.
 - `fuzzy_search_command`: command used to call the optional IMDb fuzzy search tool.
 
 If `allowed_chat_ids` is empty, every chat that can reach the bot is allowed. Use `/chatid` to find your chat ID, then add it to config.
@@ -77,6 +86,7 @@ Trigger Jellyfin scan:
 ## Commands
 
 - `/menu` — show the button menu.
+- `/guide` — choose the English or Persian step-by-step usage guide.
 - `/setfolder NAME` — set a destination folder, using optional IMDb fuzzy search first.
 - `/folders` — choose from existing Jellyfin folders.
 - `/usefolder NAME` — use an existing folder by exact name.
@@ -103,8 +113,8 @@ Trigger Jellyfin scan:
 - `/sort_status` — show latest sorter run status.
 - `/undo_sort_last` — undo the latest sorter batch.
 - `/undo_sort_batch ID` — undo a specific sorter batch.
-- `/jellyfin_scan` — request a full Jellyfin library scan.
-- `/jellyfin_status` — test Jellyfin connection and show scan status.
+- `/jellyfin_scan` — request a full scan, monitor it, and report when it finishes.
+- `/jellyfin_status` — test Jellyfin and show live scan state/progress.
 - `/episodes [NAME]` — show known and missing episodes for one series.
 - `/library_episodes` — show an episode summary for the whole library.
 - `/imdb_search NAME` — fuzzy-search an official IMDb folder name.
@@ -156,6 +166,17 @@ and never scans good sibling folders.
 `/fix_metadata_current` is also manual. It renames only episode `.nfo` and
 episode `.jpg`, `.jpeg`, `.png`, or `.webp` sidecars that can be matched to one
 video in the same directory. Series/season artwork and NFO files are left alone.
+
+## Jellyfin scan completion
+
+`/jellyfin_scan` triggers the scan and then checks Jellyfin's `RefreshLibrary`
+scheduled task only for that requested operation. The bot reports when Jellyfin
+accepts the request, when the task starts, progress milestones when available,
+and the final `Completed`, `Failed`, or cancelled result.
+
+If the monitoring timeout is reached, the scan is not cancelled. Use
+`/jellyfin_status` to see Jellyfin's live task state and progress. No continuous
+background polling happens unless a scan command is actively being monitored.
 
 ## Background task tracking
 

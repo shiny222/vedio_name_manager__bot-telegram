@@ -27,6 +27,8 @@
   "jellyfin_server_url": "http://127.0.0.1:8096",
   "jellyfin_api_key": "PUT_JELLYFIN_API_KEY_HERE",
   "jellyfin_request_timeout_seconds": 30,
+  "jellyfin_scan_poll_interval_seconds": 5,
+  "jellyfin_scan_monitor_timeout_seconds": 3600,
   "fuzzy_search_command": [
     "fuzzy_search\\.venv\\Scripts\\python.exe",
     "fuzzy_search\\imdb_tool.py"

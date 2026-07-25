@@ -76,44 +76,192 @@ HELP = """Commands:
 /imdb_search NAME - Fuzzy-search the correct IMDb title
 /imdb_fix_current [NAME] - Rename the current folder using IMDb search
 /chatid - Show this chat ID
+/guide - Show the English/Persian usage guide
 /help - Show this help"""
 
+GUIDE_EN = """How to use the Telegram Jellyfin Bot
+
+1. Start the bot on the computer
+• Run run_local_bot_api.bat and leave it open.
+• Run run.bat and leave it open.
+
+2. Open the controls
+• Send /menu.
+• Private chats and groups get the persistent category keyboard.
+• In a channel, press Command categories in the inline menu.
+
+3. Select the series folder before sending videos
+• Existing series: /folders, then press its folder.
+• New series: /setfolder SERIES NAME
+• Confirm the IMDb suggestion, or choose the manual name.
+• Check the selection with /folder.
+
+Important: the current folder is shared by the authorized chats. A queued video
+keeps the folder that was selected when that video was received.
+
+4. Send episodes
+Send supported video files to the authorized bot chat or channel. The bot adds
+them to the queue; it does not download immediately.
+
+5. Download
+• /queue — review queued files.
+• /download — prepare the download.
+• /confirm_download — start it.
+• If a file exists, use /resolve ID skip, overwrite, or save_with_suffix.
+
+6. Organize the current series
+• /sort_current — sort only new loose files.
+• /resort_current — rename previously sorted episodes after correcting the
+  series folder name.
+• /fix_metadata_current — manually align episode NFO/artwork names.
+• /sort_history — review revisions before undoing anything.
+
+7. Update Jellyfin
+Use /jellyfin_scan after downloading and sorting. The bot monitors Jellyfin and
+sends another message when the scan completes and the latest library state is
+ready. Use /jellyfin_status to check live progress or diagnose an HTTP error.
+
+8. Check owned episodes
+• /episodes — current series.
+• /episodes NAME — another series.
+• /library_episodes — the whole library.
+
+9. Undo and recovery
+• /sort_back — undo the latest applied revision in the current series.
+• /sort_forward — reapply an undone revision.
+• /undo_sort_batch ID — undo a known technical batch.
+• /recover_current — manually reconcile an operation interrupted by a crash or
+  power loss. It checks only the current series folder.
+
+Safety reminders
+• Check /folder before sending or sorting.
+• The organizer never intentionally overwrites an existing destination.
+• Do not delete .rename_history.json files while you need rollback.
+• Use /renamefolder or /imdb_fix_current instead of renaming a sorted series
+  directly in Windows Explorer."""
+
+GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
+
+۱. اجرای ربات روی کامپیوتر
+• ابتدا run_local_bot_api.bat را اجرا کنید و پنجره آن را باز نگه دارید.
+• سپس run.bat را اجرا کنید و آن را نیز باز نگه دارید.
+
+۲. باز کردن کنترل‌ها
+• دستور /menu را ارسال کنید.
+• در گفت‌وگوی خصوصی و گروه، صفحه‌کلید دائمی دسته‌بندی‌ها نمایش داده می‌شود.
+• در کانال، دکمه Command categories را در منوی شیشه‌ای انتخاب کنید.
+
+۳. قبل از فرستادن ویدیو، پوشه سریال را انتخاب کنید
+• سریال موجود: دستور /folders را بفرستید و پوشه را انتخاب کنید.
+• سریال جدید: /setfolder SERIES NAME
+• پیشنهاد IMDb را تأیید کنید یا نام دستی را انتخاب کنید.
+• با دستور /folder پوشه انتخاب‌شده را بررسی کنید.
+
+مهم: پوشه فعلی بین چت‌های مجاز مشترک است. هر ویدیوی واردشده، پوشه‌ای را که
+در زمان دریافت آن انتخاب شده بود در صف خود نگه می‌دارد.
+
+۴. فرستادن قسمت‌ها
+فایل‌های ویدیویی پشتیبانی‌شده را در چت یا کانال مجاز بفرستید. ربات آن‌ها را
+وارد صف می‌کند و دانلود به‌صورت خودکار شروع نمی‌شود.
+
+۵. دانلود
+• /queue — مشاهده فایل‌های صف.
+• /download — آماده‌سازی دانلود.
+• /confirm_download — شروع دانلود.
+• اگر فایل از قبل وجود داشت، از /resolve ID همراه با skip یا overwrite یا
+  save_with_suffix استفاده کنید.
+
+۶. مرتب‌سازی سریال فعلی
+• /sort_current — فقط فایل‌های جدید و مرتب‌نشده را مرتب می‌کند.
+• /resort_current — پس از اصلاح نام پوشه سریال، نام قسمت‌های قبلی را اصلاح
+  می‌کند.
+• /fix_metadata_current — نام NFO و تصویرهای مربوط به قسمت‌ها را به‌صورت دستی
+  هماهنگ می‌کند.
+• /sort_history — قبل از بازگردانی، تاریخچه نسخه‌ها را نشان می‌دهد.
+
+۷. به‌روزرسانی Jellyfin
+بعد از دانلود و مرتب‌سازی از /jellyfin_scan استفاده کنید. ربات وضعیت Jellyfin
+را بررسی می‌کند و پس از پایان اسکن و آماده شدن آخرین وضعیت کتابخانه پیام
+دیگری می‌فرستد. برای مشاهده پیشرفت زنده یا بررسی خطای HTTP، دستور
+/jellyfin_status را اجرا کنید.
+
+۸. بررسی قسمت‌های موجود
+• /episodes — قسمت‌های سریال فعلی.
+• /episodes NAME — قسمت‌های یک سریال دیگر.
+• /library_episodes — خلاصه تمام کتابخانه.
+
+۹. بازگردانی و بازیابی
+• /sort_back — آخرین نسخه اعمال‌شده در سریال فعلی را برمی‌گرداند.
+• /sort_forward — نسخه بازگردانده‌شده را دوباره اعمال می‌کند.
+• /undo_sort_batch ID — یک Batch ID مشخص را برمی‌گرداند.
+• /recover_current — عملیات ناقص پس از خاموشی یا توقف ناگهانی را به‌صورت دستی
+  بررسی می‌کند و فقط پوشه سریال فعلی را می‌گردد.
+
+نکات ایمنی
+• پیش از ارسال یا مرتب‌سازی همیشه /folder را بررسی کنید.
+• ابزار مرتب‌سازی عمداً هیچ فایل مقصدی را بازنویسی نمی‌کند.
+• تا زمانی که به بازگردانی نیاز دارید فایل‌های .rename_history.json را حذف
+  نکنید.
+• برای تغییر نام سریال مرتب‌شده از /renamefolder یا /imdb_fix_current استفاده
+  کنید و نام پوشه را مستقیماً در Windows Explorer عوض نکنید."""
+
+GUIDE_LANGUAGE_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "🇬🇧 English", "callback_data": "guide:en"},
+            {"text": "🇮🇷 فارسی", "callback_data": "guide:fa"},
+        ],
+        [
+            {"text": "⚡ Quick menu", "callback_data": "menu:open"},
+        ],
+    ]
+}
+
 BOT_COMMANDS = [
-    {"command": "menu", "description": "Show the button menu"},
-    {"command": "setfolder", "description": "Set the target folder"},
-    {"command": "folders", "description": "Pick from existing folders"},
-    {"command": "usefolder", "description": "Use an existing folder"},
-    {"command": "renamefolder", "description": "Rename the current folder"},
-    {"command": "folder", "description": "Show the current folder"},
-    {"command": "unsetfolder", "description": "Clear the current folder"},
-    {"command": "queue", "description": "Show the download queue"},
-    {"command": "remove", "description": "Remove one queued file"},
-    {"command": "clearqueue", "description": "Clear the queue"},
-    {"command": "download", "description": "Prepare downloads"},
-    {"command": "confirm_download", "description": "Confirm and start download"},
-    {"command": "status", "description": "Show status"},
-    {"command": "cancel", "description": "Cancel the current operation"},
-    {"command": "resolve", "description": "Resolve an existing-file conflict"},
-    {"command": "sort_current", "description": "Sort current folder"},
-    {"command": "resort_current", "description": "Rename existing sorted episodes"},
-    {"command": "sort_history", "description": "Show numbered sort history"},
-    {"command": "sort_back", "description": "Undo one sort revision"},
-    {"command": "sort_forward", "description": "Redo one sort revision"},
-    {"command": "recover_current", "description": "Recover current folder operations"},
-    {"command": "fix_metadata_current", "description": "Fix current episode metadata"},
-    {"command": "sort_latest", "description": "Sort latest download"},
-    {"command": "sort_folder", "description": "Sort a specific folder"},
-    {"command": "sort_status", "description": "Show sorter status"},
-    {"command": "undo_sort_last", "description": "Undo latest sorter batch"},
-    {"command": "undo_sort_batch", "description": "Undo a specific sorter batch"},
-    {"command": "jellyfin_scan", "description": "Start Jellyfin library scan"},
-    {"command": "jellyfin_status", "description": "Check Jellyfin connection"},
-    {"command": "episodes", "description": "Show episodes for one series"},
-    {"command": "library_episodes", "description": "Show all series summary"},
-    {"command": "imdb_search", "description": "Fuzzy-search IMDb title"},
-    {"command": "imdb_fix_current", "description": "Fix current folder with IMDb"},
-    {"command": "chatid", "description": "Show this chat ID"},
-    {"command": "help", "description": "Show help"},
+    # General and quick access
+    {"command": "menu", "description": "General: Show quick-access buttons"},
+    {"command": "help", "description": "General: Show command help"},
+    {"command": "guide", "description": "General: How to use the bot (EN/FA)"},
+    {"command": "status", "description": "General: Show bot and download status"},
+    {"command": "chatid", "description": "General: Show this chat ID"},
+    # Folder selection and naming
+    {"command": "folder", "description": "Folders: Show the current folder"},
+    {"command": "folders", "description": "Folders: Pick an existing folder"},
+    {"command": "setfolder", "description": "Folders: Set or create a target folder"},
+    {"command": "usefolder", "description": "Folders: Use an existing folder by name"},
+    {"command": "renamefolder", "description": "Folders: Rename the current folder"},
+    {"command": "unsetfolder", "description": "Folders: Clear the current folder"},
+    # Queue and downloads
+    {"command": "queue", "description": "Downloads: Show the queue"},
+    {"command": "download", "description": "Downloads: Prepare queued files"},
+    {"command": "confirm_download", "description": "Downloads: Confirm and start"},
+    {"command": "remove", "description": "Downloads: Remove one queued file"},
+    {"command": "clearqueue", "description": "Downloads: Clear the queue"},
+    {"command": "resolve", "description": "Downloads: Resolve an existing-file conflict"},
+    {"command": "cancel", "description": "Downloads: Cancel the current operation"},
+    # File organization
+    {"command": "sort_current", "description": "Sorting: Sort the current folder"},
+    {"command": "sort_latest", "description": "Sorting: Sort the latest download"},
+    {"command": "sort_folder", "description": "Sorting: Sort a specific folder"},
+    {"command": "resort_current", "description": "Sorting: Rename organized episodes"},
+    {"command": "fix_metadata_current", "description": "Sorting: Fix episode metadata names"},
+    {"command": "sort_status", "description": "Sorting: Show the latest sorter run"},
+    # Rollback and recovery
+    {"command": "sort_history", "description": "History: Show current-folder revisions"},
+    {"command": "sort_back", "description": "History: Move one revision back"},
+    {"command": "sort_forward", "description": "History: Move one revision forward"},
+    {"command": "recover_current", "description": "History: Recover the current folder"},
+    {"command": "undo_sort_last", "description": "History: Undo the latest library batch"},
+    {"command": "undo_sort_batch", "description": "History: Undo a batch by ID"},
+    # Jellyfin
+    {"command": "jellyfin_scan", "description": "Jellyfin: Start a library scan"},
+    {"command": "jellyfin_status", "description": "Jellyfin: Check the connection"},
+    # Episode inventory
+    {"command": "episodes", "description": "Episodes: Show one series"},
+    {"command": "library_episodes", "description": "Episodes: Show the library summary"},
+    # Optional IMDb title tools
+    {"command": "imdb_search", "description": "IMDb: Search for an official title"},
+    {"command": "imdb_fix_current", "description": "IMDb: Fix the current folder name"},
 ]
 
 CHANNEL_MENU = {
@@ -167,6 +315,9 @@ CHANNEL_MENU = {
         [
             {"text": "✏️ Set/rename folder", "callback_data": "menu:folder_help"},
             {"text": "❓ Help", "callback_data": "menu:help"},
+        ],
+        [
+            {"text": "📖 How to use (English / فارسی)", "callback_data": "menu:guide"},
         ],
         [
             {"text": "🗂 Command categories", "callback_data": "nav:categories"},
@@ -376,7 +527,10 @@ BOT_MENU = {
             {"text": "🆔 Chat ID", "callback_data": "menu:chatid"},
         ],
         [
-            {"text": "❓ Help", "callback_data": "menu:help"},
+            {"text": "📖 How to use", "callback_data": "menu:guide"},
+            {"text": "❓ Command list", "callback_data": "menu:help"},
+        ],
+        [
             {"text": "⚡ Quick menu", "callback_data": "menu:open"},
         ],
         [
@@ -684,8 +838,15 @@ class BotApp:
             "menu:episodes": self.cmd_episodes,
             "menu:library_episodes": self.cmd_library_episodes,
             "menu:open": self.cmd_quick_menu,
+            "menu:guide": self.cmd_guide,
             "menu:help": self.cmd_help,
         }
+        if action == "guide:en":
+            await self.send(int(chat_id), GUIDE_EN, GUIDE_LANGUAGE_MENU)
+            return
+        if action == "guide:fa":
+            await self.send(int(chat_id), GUIDE_FA, GUIDE_LANGUAGE_MENU)
+            return
         if action == "nav:categories":
             await self.send(
                 int(chat_id),
@@ -895,6 +1056,7 @@ class BotApp:
         argument = argument.strip()
         handlers = {
             "/start": self.cmd_start, "/help": self.cmd_help, "/menu": self.cmd_menu,
+            "/guide": self.cmd_guide,
             "/chatid": self.cmd_chatid,
             "/setfolder": self.cmd_setfolder, "/folder": self.cmd_folder,
             "/folders": self.cmd_folders, "/usefolder": self.cmd_usefolder,
@@ -943,6 +1105,13 @@ class BotApp:
             HELP + "\n\nThe buttons below copy editable command templates. "
             "After tapping a button, paste the command and add the value.",
             HELP_COMMAND_TEMPLATES,
+        )
+
+    async def cmd_guide(self, chat_id: int, _: str) -> None:
+        await self.send(
+            chat_id,
+            "Choose the guide language:\nزبان راهنما را انتخاب کنید:",
+            GUIDE_LANGUAGE_MENU,
         )
 
     async def cmd_menu(self, chat_id: int, _: str) -> None:
@@ -1442,14 +1611,69 @@ class BotApp:
         if not self.jellyfin:
             await self.send(chat_id, "Jellyfin connection is not ready yet.")
             return
+
+        async def report_scan_update(update: dict) -> None:
+            phase = update.get("phase")
+            progress = update.get("progress")
+            progress_text = (
+                f" ({float(progress):.0f}%)"
+                if isinstance(progress, (int, float))
+                else ""
+            )
+            if phase == "accepted":
+                await self.send(
+                    chat_id,
+                    "Jellyfin accepted the scan request. I will notify you "
+                    "when the library scan finishes.",
+                )
+            elif phase == "already-running":
+                await self.send(
+                    chat_id,
+                    "A Jellyfin library scan is already running. I will monitor "
+                    "it and notify you when it finishes.",
+                )
+            elif phase == "running":
+                await self.send(
+                    chat_id,
+                    f"Jellyfin library scan is running{progress_text}.",
+                )
+            elif phase == "progress":
+                await self.send(
+                    chat_id,
+                    f"Jellyfin scan progress: {float(progress):.0f}%",
+                )
+
         try:
             await self.send(chat_id, "Sending Jellyfin library scan request...")
-            requested_at = await self.jellyfin.scan_library()
+            result = await self.jellyfin.scan_library_and_wait(
+                report_scan_update
+            )
+            status = str(result.get("status", "unknown"))
+            completed_at = result.get("completed_at") or "unknown"
+            if status.casefold() == "completed":
+                await self.send(
+                    chat_id,
+                    "✅ Jellyfin library scan completed.\n"
+                    "The latest library state is ready.\n"
+                    f"Completed at: {completed_at}",
+                )
+            else:
+                await self.send(
+                    chat_id,
+                    "⚠️ Jellyfin stopped scanning, but it did not report a "
+                    "successful completion.\n"
+                    f"Result: {status}\n"
+                    f"Stopped at: {completed_at}\n"
+                    "Check the Jellyfin dashboard or server logs.",
+                )
+        except TimeoutError as exc:
+            LOG.warning("Jellyfin scan monitoring timed out: %s", exc)
             await self.send(
                 chat_id,
-                "Jellyfin accepted the scan request.\n"
-                f"Requested at: {requested_at}\n"
-                "Note: the scan continues in the Jellyfin background.",
+                "Jellyfin accepted the scan, but the bot stopped waiting before "
+                "Jellyfin reported completion.\n"
+                f"{exc}\n"
+                "The scan was not cancelled. Use /jellyfin_status to check it.",
             )
         except Exception as exc:
             LOG.exception("Jellyfin scan request failed")
@@ -1464,11 +1688,34 @@ class BotApp:
             return
         try:
             info = await self.jellyfin.server_status()
+            try:
+                scan_task = await self.jellyfin.library_scan_status()
+                scan_state = str(scan_task.get("State", "unknown"))
+                progress = scan_task.get("CurrentProgressPercentage")
+                progress_text = (
+                    f"{float(progress):.0f}%"
+                    if isinstance(progress, (int, float))
+                    else "not reported"
+                )
+                execution = scan_task.get("LastExecutionResult") or {}
+                last_result = (
+                    str(execution.get("Status", "not recorded"))
+                    if isinstance(execution, dict)
+                    else "not recorded"
+                )
+                live_scan = (
+                    f"Live scan state: {scan_state}\n"
+                    f"Live progress: {progress_text}\n"
+                    f"Last Jellyfin task result: {last_result}\n"
+                )
+            except Exception as scan_exc:
+                live_scan = f"Live scan state unavailable: {scan_exc}\n"
             await self.send(
                 chat_id,
                 "Jellyfin connection is working.\n"
                 f"Server: {info.get('ServerName', 'unknown')}\n"
                 f"Version: {info.get('Version', 'unknown')}\n"
+                f"{live_scan}"
                 f"{self.jellyfin.last_scan_summary()}",
             )
         except Exception as exc:

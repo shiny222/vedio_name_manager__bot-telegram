@@ -12,8 +12,12 @@ from unittest.mock import patch
 
 from telegram_jellyfin_bot.config import load_config
 from telegram_jellyfin_bot.bot import (
+    BOT_COMMANDS,
     BotApp,
     CHANNEL_MENU,
+    GUIDE_EN,
+    GUIDE_FA,
+    GUIDE_LANGUAGE_MENU,
     PERSISTENT_CATEGORY_KEYBOARD,
     SORTING_MENU,
 )
@@ -50,6 +54,8 @@ def config_data(root: Path) -> dict:
         "ask_before_overwrite": True,
         "jellyfin_server_url": "http://127.0.0.1:8096",
         "jellyfin_api_key": "test-api-key",
+        "jellyfin_scan_poll_interval_seconds": 1,
+        "jellyfin_scan_monitor_timeout_seconds": 60,
     }
 
 
@@ -171,6 +177,78 @@ class QueueTests(unittest.TestCase):
 
 
 class MenuNavigationTests(unittest.TestCase):
+    def test_native_command_menu_is_grouped_by_related_function(self):
+        labels = [
+            item["description"].partition(":")[0]
+            for item in BOT_COMMANDS
+        ]
+        grouped_labels = []
+        for label in labels:
+            if not grouped_labels or grouped_labels[-1] != label:
+                grouped_labels.append(label)
+        self.assertEqual(
+            grouped_labels,
+            [
+                "General",
+                "Folders",
+                "Downloads",
+                "Sorting",
+                "History",
+                "Jellyfin",
+                "Episodes",
+                "IMDb",
+            ],
+        )
+        commands = [item["command"] for item in BOT_COMMANDS]
+        self.assertEqual(len(commands), 36)
+        self.assertEqual(len(commands), len(set(commands)))
+
+    def test_bilingual_guide_fits_telegram_and_language_callback_opens_it(self):
+        self.assertLessEqual(len(GUIDE_EN), 4000)
+        self.assertLessEqual(len(GUIDE_FA), 4000)
+        self.assertIn("How to use", GUIDE_EN)
+        self.assertIn("راهنمای استفاده", GUIDE_FA)
+
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                class FakeApi:
+                    async def call(self, method, **params):
+                        return True
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    sent.append((chat_id, text, reply_markup))
+
+                app.api = FakeApi()
+                app.send = fake_send
+                try:
+                    await app.cmd_guide(987654321, "")
+                    self.assertIs(sent[-1][2], GUIDE_LANGUAGE_MENU)
+                    await app.handle_callback(
+                        {
+                            "id": "guide-callback",
+                            "data": "guide:fa",
+                            "message": {
+                                "chat": {
+                                    "id": 987654321,
+                                    "type": "private",
+                                }
+                            },
+                        }
+                    )
+                    self.assertEqual(sent[-1][1], GUIDE_FA)
+                    self.assertIs(sent[-1][2], GUIDE_LANGUAGE_MENU)
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
     def test_private_menu_installs_persistent_keyboard_and_keeps_quick_menu(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
@@ -625,7 +703,7 @@ class PollingRecoveryTests(unittest.TestCase):
 class _FakeResponse:
     def __init__(self, status=204, data=None):
         self.status = status
-        self.data = data or {}
+        self.data = {} if data is None else data
 
     async def __aenter__(self):
         return self
@@ -641,9 +719,11 @@ class _FakeResponse:
 
 
 class _FakeJellyfinSession:
-    def __init__(self):
+    def __init__(self, scheduled_tasks=None):
         self.posts = []
         self.gets = []
+        self.scheduled_tasks = list(scheduled_tasks or [])
+        self.last_scheduled_tasks = []
 
     def post(self, url, **kwargs):
         self.posts.append((url, kwargs))
@@ -651,10 +731,35 @@ class _FakeJellyfinSession:
 
     def get(self, url, **kwargs):
         self.gets.append((url, kwargs))
+        if url.endswith("/ScheduledTasks"):
+            if self.scheduled_tasks:
+                self.last_scheduled_tasks = self.scheduled_tasks.pop(0)
+            return _FakeResponse(200, self.last_scheduled_tasks)
         return _FakeResponse(200, {"ServerName": "Test", "Version": "10.x"})
 
 
 class JellyfinBridgeTests(unittest.TestCase):
+    @staticmethod
+    def scan_task(
+        state,
+        *,
+        status="Completed",
+        started="2026-07-25T12:00:00Z",
+        ended="2026-07-25T12:00:05Z",
+        progress=None,
+    ):
+        return [{
+            "Name": "Scan Media Library",
+            "Key": "RefreshLibrary",
+            "State": state,
+            "CurrentProgressPercentage": progress,
+            "LastExecutionResult": {
+                "StartTimeUtc": started,
+                "EndTimeUtc": ended,
+                "Status": status,
+            },
+        }]
+
     def test_scan_and_status(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
@@ -676,6 +781,113 @@ class JellyfinBridgeTests(unittest.TestCase):
                 )
                 self.assertIn("accepted", bridge.last_scan_summary())
                 store.close()
+        asyncio.run(exercise())
+
+    def test_scan_monitor_waits_until_jellyfin_reports_completion(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                store = StateStore(cfg.data_path / "state.db")
+                old = self.scan_task(
+                    "Idle",
+                    started="2026-07-24T10:00:00Z",
+                    ended="2026-07-24T10:00:05Z",
+                )
+                running = self.scan_task(
+                    "Running",
+                    started="2026-07-25T12:00:00Z",
+                    ended="",
+                    progress=42,
+                )
+                completed = self.scan_task(
+                    "Idle",
+                    started="2026-07-25T12:00:00Z",
+                    ended="2026-07-25T12:00:05Z",
+                    progress=None,
+                )
+                session = _FakeJellyfinSession([old, running, completed])
+                bridge = JellyfinBridge(cfg, store, session)
+                updates = []
+
+                async def on_update(update):
+                    updates.append(update)
+
+                try:
+                    result = await bridge.scan_library_and_wait(
+                        on_update,
+                        poll_interval_seconds=0,
+                        timeout_seconds=1,
+                    )
+                    self.assertEqual(result["status"], "Completed")
+                    self.assertEqual(
+                        store.get_setting("latest_jellyfin_scan_result"),
+                        "completed",
+                    )
+                    self.assertIn(
+                        "accepted",
+                        [update["phase"] for update in updates],
+                    )
+                    self.assertIn(
+                        "running",
+                        [update["phase"] for update in updates],
+                    )
+                    self.assertFalse(bridge.active)
+                    self.assertTrue(
+                        all(
+                            call[1]["params"] == {"IsEnabled": "true"}
+                            for call in session.gets
+                        )
+                    )
+                finally:
+                    store.close()
+        asyncio.run(exercise())
+
+    def test_bot_announces_when_jellyfin_scan_is_ready(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                class FakeJellyfin:
+                    async def scan_library_and_wait(self, on_update):
+                        await on_update(
+                            {
+                                "phase": "accepted",
+                                "requested_at": "2026-07-25T12:00:00Z",
+                            }
+                        )
+                        await on_update({"phase": "running", "progress": 50.0})
+                        return {
+                            "status": "Completed",
+                            "completed_at": "2026-07-25T12:00:05Z",
+                        }
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    sent.append(text)
+
+                app.jellyfin = FakeJellyfin()
+                app.send = fake_send
+                try:
+                    await app._run_jellyfin_scan(987654321)
+                    self.assertTrue(
+                        any("accepted the scan" in text for text in sent)
+                    )
+                    self.assertTrue(
+                        any(
+                            "library scan completed" in text
+                            and "ready" in text
+                            for text in sent
+                        )
+                    )
+                finally:
+                    app.store.close()
         asyncio.run(exercise())
 
 
