@@ -27,6 +27,9 @@ ALLOWED_TYPES = {
     "feature", "movie", "TV movie", "TV series", "TV mini-series",
     "TV special", "video", "short", "TV short",
 }
+MOVIE_TYPES = {
+    "feature", "movie", "tv movie", "tv special", "video", "short", "tv short"
+}
 
 
 def normalized(value: str) -> str:
@@ -75,15 +78,26 @@ def fetch_suggestions(query: str, timeout: int) -> list[dict]:
     return payload.get("d", []) if isinstance(payload, dict) else []
 
 
-def parse_results(query: str, raw: list[dict], limit: int) -> list[dict]:
+def _matches_media_type(media_type: str, wanted: str) -> bool:
+    normalized_type = media_type.casefold()
+    if wanted == "movie":
+        return normalized_type in MOVIE_TYPES
+    if wanted == "series":
+        return "series" in normalized_type or "mini-series" in normalized_type
+    return normalized_type in {item.casefold() for item in ALLOWED_TYPES} or "series" in normalized_type
+
+
+def parse_results(
+    query: str, raw: list[dict], limit: int, media_type: str = "any"
+) -> list[dict]:
     results = []
     for index, item in enumerate(raw):
         imdb_id = str(item.get("id", ""))
         title = str(item.get("l", "")).strip()
-        media_type = str(item.get("q") or item.get("qid") or "title")
+        result_type = str(item.get("q") or item.get("qid") or "title")
         if not re.fullmatch(r"tt\d{5,12}", imdb_id) or not title:
             continue
-        if media_type not in ALLOWED_TYPES and "series" not in media_type.lower():
+        if not _matches_media_type(result_type, wanted=media_type):
             continue
         year = item.get("y")
         year = int(year) if isinstance(year, (int, float)) else None
@@ -96,7 +110,7 @@ def parse_results(query: str, raw: list[dict], limit: int) -> list[dict]:
                 "imdb_id": imdb_id,
                 "title": title,
                 "year": year,
-                "type": media_type,
+                "type": result_type,
                 "score": round(fuzzy, 1),
                 "folder_name": jellyfin_folder(title, year, imdb_id),
                 "_combined": combined,
@@ -108,14 +122,23 @@ def parse_results(query: str, raw: list[dict], limit: int) -> list[dict]:
     return results[:limit]
 
 
-def search(query: str, limit: int = 8, timeout: int = 12) -> tuple[list[dict], str]:
+def search(
+    query: str,
+    limit: int = 8,
+    timeout: int = 12,
+    media_type: str = "any",
+) -> tuple[list[dict], str]:
     query = query.strip()
     if len(query) < 2:
         raise ValueError("Search query must contain at least two characters.")
-    key = normalized(query)
+    if media_type not in {"any", "movie", "series"}:
+        raise ValueError("media_type must be any, movie, or series.")
+    key = f"{media_type}:{normalized(query)}"
     cache = load_cache()
     try:
-        results = parse_results(query, fetch_suggestions(query, timeout), limit)
+        results = parse_results(
+            query, fetch_suggestions(query, timeout), limit, media_type
+        )
         if results:
             cache[key] = {"saved_at": int(time.time()), "results": results}
             save_cache(cache)
@@ -134,6 +157,9 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("query")
     search_parser.add_argument("--limit", type=int, default=8)
     search_parser.add_argument("--timeout", type=int, default=12)
+    search_parser.add_argument(
+        "--media-type", choices=("any", "movie", "series"), default="any"
+    )
     search_parser.add_argument("--json", action="store_true")
     format_parser = sub.add_parser("format")
     format_parser.add_argument("--title", required=True)
@@ -151,7 +177,10 @@ def main(argv: list[str] | None = None) -> int:
             print(jellyfin_folder(args.title, args.year, args.imdb_id))
             return 0
         results, source = search(
-            args.query, max(1, min(args.limit, 20)), max(2, args.timeout)
+            args.query,
+            max(1, min(args.limit, 20)),
+            max(2, args.timeout),
+            args.media_type,
         )
         if args.json:
             print(json.dumps({"ok": True, "source": source, "results": results}, ensure_ascii=False))

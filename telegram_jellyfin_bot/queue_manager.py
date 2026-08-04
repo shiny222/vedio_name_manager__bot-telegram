@@ -4,7 +4,13 @@ from .state_store import StateStore
 
 
 class QueueManager:
-    ACTIVE = ("queued", "failed", "waiting_overwrite")
+    ACTIVE = (
+        "queued",
+        "failed",
+        "waiting_overwrite",
+        "awaiting_identification",
+        "movie_import_failed",
+    )
 
     def __init__(self, store: StateStore):
         self.store = store

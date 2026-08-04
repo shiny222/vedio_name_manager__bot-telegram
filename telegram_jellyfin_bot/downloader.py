@@ -61,9 +61,17 @@ class DownloadManager:
             if self.cancel_event.is_set():
                 await notify(f"Operation cancelled. {completed} file(s) completed.")
             else:
+                series_count = sum(
+                    1 for item in items if item.get("media_kind", "series") == "series"
+                )
+                suffix = (
+                    "\nUse /sort_latest to organize the latest downloaded series folder."
+                    if series_count
+                    else "\nDownloaded movies will now be imported automatically."
+                )
                 await notify(
-                    f"Downloads finished. {completed} of {len(items)} file(s) completed.\n"
-                    "Use /sort_latest to organize the latest downloaded folder."
+                    f"Downloads finished. {completed} of {len(items)} file(s) completed."
+                    + suffix
                 )
         finally:
             self.running = False
@@ -72,7 +80,10 @@ class DownloadManager:
         folder_name = item.get("target_folder")
         if not folder_name:
             return None
-        folder = self.config.target_path(folder_name)
+        if item.get("media_kind", "series") == "movie":
+            folder = self.config.movie_staging_job_path(int(item["pending_id"]))
+        else:
+            folder = self.config.target_path(folder_name)
         filename = validate_original_filename(item["original_filename"])
         return folder / filename, folder_name
 
@@ -147,8 +158,12 @@ class DownloadManager:
             self.queue.set_status(
                 pending_id, "completed", None, downloaded_path=str(destination)
             )
-            self.queue.store.set_setting("latest_downloaded_folder", folder_name)
-            self.queue.store.set_setting("latest_downloaded_file", str(destination))
+            if item.get("media_kind", "series") == "movie":
+                self.queue.store.set_setting("latest_downloaded_movie_id", str(pending_id))
+                self.queue.store.set_setting("latest_downloaded_movie_file", str(destination))
+            else:
+                self.queue.store.set_setting("latest_downloaded_folder", folder_name)
+                self.queue.store.set_setting("latest_downloaded_file", str(destination))
             await notify(f"Download completed: {destination.name}")
         except asyncio.CancelledError:
             self.queue.set_status(pending_id, "cancelled", "Download cancelled.")

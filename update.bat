@@ -56,6 +56,15 @@ if exist "fuzzy_search\.venv\Scripts\python.exe" (
 )
 
 echo.
+echo Checking movie organizer dependencies...
+if exist "movie_organizer\.venv\Scripts\python.exe" (
+  "movie_organizer\.venv\Scripts\python.exe" -m pip install -r "movie_organizer\requirements.txt"
+  if errorlevel 1 goto failed
+) else (
+  echo Movie mode is optional. Run movie_organizer\install.bat once to enable it.
+)
+
+echo.
 echo Checking Telegram bot dependencies...
 if exist "telegram_jellyfin_bot\.venv\Scripts\python.exe" (
   "telegram_jellyfin_bot\.venv\Scripts\python.exe" -m pip install -r "telegram_jellyfin_bot\requirements.txt"

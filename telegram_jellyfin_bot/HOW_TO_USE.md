@@ -75,6 +75,23 @@ Always check `/folder` first. Do not delete `.rename_history.json` files while
 you need rollback, and use `/renamefolder` or `/imdb_fix_current` instead of
 renaming an organized series directly in Windows Explorer.
 
+### 8. Import a movie
+
+Movie mode uses a separate Jellyfin Movies library and does not use the current
+series folder.
+
+1. Send `/movie_mode`, then send one movie video.
+2. Choose filename search or manual search.
+3. Select the correct IMDb result and confirm the preview. If IMDb is
+   unavailable during manual search, you can confirm your manual title.
+4. Send `/download`, then `/confirm_download`.
+5. The bot downloads to staging, verifies the import plan, moves the movie with
+   no overwrite, and can scan Jellyfin automatically.
+
+Use `/movie_current` for its status, `/movie_import ID` to retry a staged file,
+and `/movie_undo_last` to return the latest import to staging. Send
+`/series_mode` before sending episodes again.
+
 ---
 
 ## فارسی
@@ -152,3 +169,21 @@ renaming an organized series directly in Windows Explorer.
 دارید، فایل‌های `.rename_history.json` را حذف نکنید. برای تغییر نام سریال
 مرتب‌شده از `/renamefolder` یا `/imdb_fix_current` استفاده کنید و پوشه را
 مستقیماً در Windows Explorer تغییر نام ندهید.
+
+### ۸. وارد کردن فیلم
+
+حالت فیلم از کتابخانه جداگانه Movies استفاده می‌کند و به پوشه سریال فعلی
+وابسته نیست.
+
+1. دستور `/movie_mode` را بفرستید و سپس یک فایل فیلم ارسال کنید.
+2. جستجو با نام فایل یا جستجوی دستی را انتخاب کنید.
+3. نتیجه صحیح IMDb را انتخاب و پیش‌نمایش نام را تأیید کنید. اگر IMDb هنگام
+   جستجوی دستی در دسترس نبود، می‌توانید همان نام دستی را تأیید کنید.
+4. ابتدا `/download` و سپس `/confirm_download` را ارسال کنید.
+5. ربات فیلم را ابتدا در staging دانلود می‌کند، برنامه انتقال را بررسی می‌کند،
+   بدون بازنویسی وارد کتابخانه می‌کند و در صورت تنظیم بودن Jellyfin را اسکن
+   می‌کند.
+
+برای دیدن وضعیت از `/movie_current`، برای تلاش دوباره فایل staging از
+`/movie_import ID` و برای برگرداندن آخرین انتقال از `/movie_undo_last` استفاده
+کنید. پیش از فرستادن قسمت‌های سریال دوباره `/series_mode` را بفرستید.

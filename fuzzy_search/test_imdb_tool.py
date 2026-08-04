@@ -22,6 +22,16 @@ class ImdbToolTests(unittest.TestCase):
         results = imdb_tool.parse_results("dr ston", raw, 5)
         self.assertEqual([row["imdb_id"] for row in results], ["tt9679542"])
 
+    def test_media_type_filter_separates_movies_and_series(self):
+        raw = [
+            {"id": "tt0816692", "l": "Interstellar", "q": "feature", "y": 2014},
+            {"id": "tt9990001", "l": "Interstellar Files", "q": "TV series", "y": 2022},
+        ]
+        movies = imdb_tool.parse_results("interstellar", raw, 5, "movie")
+        series = imdb_tool.parse_results("interstellar", raw, 5, "series")
+        self.assertEqual([row["imdb_id"] for row in movies], ["tt0816692"])
+        self.assertEqual([row["imdb_id"] for row in series], ["tt9990001"])
+
 
 if __name__ == "__main__":
     unittest.main()

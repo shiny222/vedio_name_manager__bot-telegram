@@ -1,11 +1,12 @@
 # Jellyfin Video Manager
 
-This main folder contains two independent projects:
+This main folder contains four independent projects:
 
 ```text
 video-manager/
 |-- organizer/                 # Filename and season organizer
 |-- fuzzy_search/              # Optional fuzzy IMDb naming tool
+|-- movie_organizer/           # Safe one-movie Jellyfin importer
 `-- telegram_jellyfin_bot/     # Telegram queue and download bot
 ```
 
@@ -23,6 +24,11 @@ Jellyfin-compatible folder names. Run its `install.bat` once to enable the
 bot's `/imdb_search` and `/imdb_fix_current` commands. The main bot continues
 working if this tool or IMDb is unavailable.
 
+The optional `movie_organizer` project imports a confirmed movie from a staging
+folder into a separate Jellyfin Movies library. Run its `install.bat` once to
+enable the bot's movie mode. The movie organizer can also be used directly and
+does not import bot code or contact IMDb.
+
 ## Updating on another PC
 
 Clone the repository once instead of downloading a ZIP:
@@ -31,7 +37,7 @@ Clone the repository once instead of downloading a ZIP:
 git clone https://github.com/shiny222/vedio_name_manager__bot-telegram.git
 ```
 
-Run each project's `install.bat` only for the first setup. For later updates,
+Run each enabled project's `install.bat` only for the first setup. For later updates,
 close the bot and Local Bot API windows and double-click the root `update.bat`.
 It runs a safe fast-forward `git pull`, checks dependencies, and preserves
 ignored local files such as `config.json`, SQLite state, logs, and `.venv`.

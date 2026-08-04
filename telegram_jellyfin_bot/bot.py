@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import mimetypes
+import re
 import sys
 import time
 import uuid
@@ -22,7 +23,10 @@ if __package__ in {None, ""}:
         EpisodeCatalog, detect_episode, format_series_inventory
     )
     from telegram_jellyfin_bot.jellyfin_bridge import JellyfinBridge
-    from telegram_jellyfin_bot.imdb_bridge import ImdbFuzzySearchBridge
+    from telegram_jellyfin_bot.imdb_bridge import (
+        ImdbFuzzySearchBridge, movie_query_from_filename
+    )
+    from telegram_jellyfin_bot.movie_sorter_bridge import MovieSorterBridge
     from telegram_jellyfin_bot.queue_manager import QueueManager
     from telegram_jellyfin_bot.sorter_bridge import SorterBridge
     from telegram_jellyfin_bot.state_store import StateStore
@@ -34,7 +38,8 @@ else:
     from .downloader import DownloadManager
     from .episode_catalog import EpisodeCatalog, detect_episode, format_series_inventory
     from .jellyfin_bridge import JellyfinBridge
-    from .imdb_bridge import ImdbFuzzySearchBridge
+    from .imdb_bridge import ImdbFuzzySearchBridge, movie_query_from_filename
+    from .movie_sorter_bridge import MovieSorterBridge
     from .queue_manager import QueueManager
     from .sorter_bridge import SorterBridge
     from .state_store import StateStore
@@ -75,6 +80,13 @@ HELP = """Commands:
 /library_episodes - Show a summary of all series
 /imdb_search NAME - Fuzzy-search the correct IMDb title
 /imdb_fix_current [NAME] - Rename the current folder using IMDb search
+/movie_mode - Send new files as independent movie jobs
+/series_mode - Return to TV-series episode mode
+/movie_current - Show the latest movie job
+/movie_cancel - Cancel the current unprocessed movie
+/movie_import [ID] - Retry a downloaded movie import
+/movie_undo_last - Undo the latest movie import batch
+/movie_undo_batch ID - Undo a specific movie import batch
 /chatid - Show this chat ID
 /guide - Show the English/Persian usage guide
 /help - Show this help"""
@@ -132,6 +144,15 @@ ready. Use /jellyfin_status to check live progress or diagnose an HTTP error.
 • /undo_sort_batch ID — undo a known technical batch.
 • /recover_current — manually reconcile an operation interrupted by a crash or
   power loss. It checks only the current series folder.
+
+10. Import an independent movie
+• /movie_mode — new videos become movie jobs, not episodes.
+• Send one movie, choose filename or manual search, select the IMDb result, and
+  confirm the exact name.
+• /download then /confirm_download — download to staging and safely import it.
+• /movie_current — show status; /movie_import ID — retry a staged movie.
+• /movie_undo_last — restore the latest import to staging.
+• /series_mode — return to episode mode.
 
 Safety reminders
 • Check /folder before sending or sorting.
@@ -197,6 +218,16 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
 • /recover_current — عملیات ناقص پس از خاموشی یا توقف ناگهانی را به‌صورت دستی
   بررسی می‌کند و فقط پوشه سریال فعلی را می‌گردد.
 
+۱۰. وارد کردن فیلم مستقل
+• با /movie_mode ویدیوهای جدید به‌عنوان فیلم دریافت می‌شوند، نه قسمت سریال.
+• یک فیلم بفرستید، جستجو با نام فایل یا نام دستی را انتخاب کنید، نتیجه IMDb را
+  انتخاب و نام نهایی را تأیید کنید.
+• با /download و سپس /confirm_download فیلم ابتدا در staging دانلود و بعد
+  به‌صورت امن وارد کتابخانه می‌شود.
+• /movie_current وضعیت را نشان می‌دهد و /movie_import ID انتقال را تکرار می‌کند.
+• /movie_undo_last آخرین انتقال را به staging برمی‌گرداند.
+• برای بازگشت به حالت قسمت‌های سریال از /series_mode استفاده کنید.
+
 نکات ایمنی
 • پیش از ارسال یا مرتب‌سازی همیشه /folder را بررسی کنید.
 • ابزار مرتب‌سازی عمداً هیچ فایل مقصدی را بازنویسی نمی‌کند.
@@ -253,6 +284,14 @@ BOT_COMMANDS = [
     {"command": "recover_current", "description": "History: Recover the current folder"},
     {"command": "undo_sort_last", "description": "History: Undo the latest library batch"},
     {"command": "undo_sort_batch", "description": "History: Undo a batch by ID"},
+    # Independent movie workflow
+    {"command": "movie_mode", "description": "Movies: Enter movie mode"},
+    {"command": "series_mode", "description": "Movies: Return to series mode"},
+    {"command": "movie_current", "description": "Movies: Show the latest movie job"},
+    {"command": "movie_cancel", "description": "Movies: Cancel the current movie job"},
+    {"command": "movie_import", "description": "Movies: Retry a staged movie import"},
+    {"command": "movie_undo_last", "description": "Movies: Undo the latest movie import"},
+    {"command": "movie_undo_batch", "description": "Movies: Undo a movie batch by ID"},
     # Jellyfin
     {"command": "jellyfin_scan", "description": "Jellyfin: Start a library scan"},
     {"command": "jellyfin_status", "description": "Jellyfin: Check the connection"},
@@ -313,6 +352,10 @@ CHANNEL_MENU = {
             {"text": "🔎 IMDb title search", "callback_data": "menu:imdb_help"},
         ],
         [
+            {"text": "Movies", "callback_data": "nav:movies"},
+            {"text": "Movie mode", "callback_data": "menu:movie_mode"},
+        ],
+        [
             {"text": "✏️ Set/rename folder", "callback_data": "menu:folder_help"},
             {"text": "❓ Help", "callback_data": "menu:help"},
         ],
@@ -347,6 +390,9 @@ PERSISTENT_CATEGORY_KEYBOARD = {
             {"text": "⚙️ Bot"},
         ],
         [
+            {"text": "Movies"},
+        ],
+        [
             {"text": "⚡ Quick Menu"},
         ],
     ],
@@ -372,6 +418,9 @@ CATEGORY_MENU = {
         [
             {"text": "📺 Episodes", "callback_data": "nav:episodes"},
             {"text": "⚙️ Bot", "callback_data": "nav:bot"},
+        ],
+        [
+            {"text": "Movies", "callback_data": "nav:movies"},
         ],
         [
             {"text": "⚡ Quick menu", "callback_data": "menu:open"},
@@ -486,6 +535,36 @@ JELLYFIN_MENU = {
     ]
 }
 
+MOVIE_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "Enter movie mode", "callback_data": "menu:movie_mode"},
+            {"text": "Series mode", "callback_data": "menu:series_mode"},
+        ],
+        [
+            {"text": "Latest movie job", "callback_data": "menu:movie_current"},
+            {"text": "Retry import", "callback_data": "menu:movie_import"},
+        ],
+        [
+            {"text": "Cancel unprocessed movie", "callback_data": "menu:movie_cancel"},
+        ],
+        [
+            {"text": "Undo latest movie", "callback_data": "menu:movie_undo_last"},
+        ],
+        [
+            {
+                "text": "Copy /movie_import",
+                "copy_text": {"text": "/movie_import "},
+            },
+            {
+                "text": "Copy /movie_undo_batch",
+                "copy_text": {"text": "/movie_undo_batch "},
+            },
+        ],
+        SUBMENU_FOOTER,
+    ]
+}
+
 IMDB_MENU = {
     "inline_keyboard": [
         [
@@ -544,6 +623,7 @@ CATEGORY_SUBMENUS = {
     "nav:folders": ("Folder commands:", FOLDER_MENU),
     "nav:sorting": ("Sorting commands:", SORTING_MENU),
     "nav:undo": ("Undo and recovery commands:", UNDO_MENU),
+    "nav:movies": ("Independent movie workflow:", MOVIE_MENU),
     "nav:jellyfin": ("Jellyfin commands:", JELLYFIN_MENU),
     "nav:imdb": ("IMDb fuzzy-search commands:", IMDB_MENU),
     "nav:episodes": ("Episode inventory commands:", EPISODE_MENU),
@@ -559,6 +639,7 @@ REPLY_CATEGORY_ACTIONS = {
     "🔎 IMDb": "nav:imdb",
     "📺 Episodes": "nav:episodes",
     "⚙️ Bot": "nav:bot",
+    "Movies": "nav:movies",
 }
 
 # Telegram immediately sends highlighted slash commands when tapped. In
@@ -620,6 +701,16 @@ HELP_COMMAND_TEMPLATES = {
         ],
         [
             {
+                "text": "Copy /movie_import",
+                "copy_text": {"text": "/movie_import "},
+            },
+            {
+                "text": "Copy /movie_undo_batch",
+                "copy_text": {"text": "/movie_undo_batch "},
+            },
+        ],
+        [
+            {
                 "text": "🎛 Open main menu",
                 "callback_data": "menu:open",
             }
@@ -664,9 +755,12 @@ class BotApp:
         self.downloader: DownloadManager | None = None
         self.jellyfin: JellyfinBridge | None = None
         self.sorter = SorterBridge(config, self.store)
+        self.movie_sorter = MovieSorterBridge(config, self.store)
         self.catalog = EpisodeCatalog(config.allowed_video_extensions)
         self.imdb = ImdbFuzzySearchBridge(config)
         self.imdb_choices: dict[str, dict] = {}
+        self.movie_choices: dict[str, dict] = {}
+        self.movie_manual_pending: dict[int, int] = {}
         self.background_tasks: set[asyncio.Task] = set()
         self.chat_types: dict[int, str] = {}
         if not self.store.get_setting("current_folder") and config.default_target_folder:
@@ -787,6 +881,14 @@ class BotApp:
             await self.handle_command(chat_id, text)
         elif text in REPLY_CATEGORY_ACTIONS or text == "⚡ Quick Menu":
             await self.handle_reply_category(chat_id, text)
+        elif text and chat_id in self.movie_manual_pending:
+            pending_id = self.movie_manual_pending.pop(chat_id)
+            self.track_task(
+                self._run_movie_search(
+                    chat_id, pending_id, text, manual_query=True
+                ),
+                f"movie-imdb-search:{chat_id}:{pending_id}",
+            )
         else:
             await self.handle_media(chat_id, message)
 
@@ -837,6 +939,12 @@ class BotApp:
             "menu:jellyfin_status": self.cmd_jellyfin_status,
             "menu:episodes": self.cmd_episodes,
             "menu:library_episodes": self.cmd_library_episodes,
+            "menu:movie_mode": self.cmd_movie_mode,
+            "menu:series_mode": self.cmd_series_mode,
+            "menu:movie_current": self.cmd_movie_current,
+            "menu:movie_cancel": self.cmd_movie_cancel,
+            "menu:movie_import": self.cmd_movie_import,
+            "menu:movie_undo_last": self.cmd_movie_undo_last,
             "menu:open": self.cmd_quick_menu,
             "menu:guide": self.cmd_guide,
             "menu:help": self.cmd_help,
@@ -885,6 +993,124 @@ class BotApp:
                 "You can also provide a different search phrase:\n"
                 "/imdb_fix_current dr ston",
                 HELP_COMMAND_TEMPLATES,
+            )
+            return
+        if action.startswith("movieidentify:"):
+            _, method, pending_text = action.split(":", 2)
+            try:
+                pending_id = int(pending_text)
+            except ValueError:
+                return
+            item = self._movie_item_for_chat(pending_id, int(chat_id))
+            if not item or item.get("status") != "awaiting_identification":
+                await self.send(
+                    int(chat_id),
+                    "This movie choice is no longer active. Send the movie again if needed.",
+                )
+                return
+            if method == "manual":
+                self.movie_manual_pending[int(chat_id)] = pending_id
+                await self.send(
+                    int(chat_id),
+                    "Send the movie title, preferably with its year.\n"
+                    "Example: Interstellar 2014",
+                )
+                return
+            if method != "filename":
+                return
+            query_text = movie_query_from_filename(item["original_filename"])
+            if len(query_text) < 2:
+                self.movie_manual_pending[int(chat_id)] = pending_id
+                await self.send(
+                    int(chat_id),
+                    "The filename did not contain a useful movie title. Send the "
+                    "title manually, preferably with its year.",
+                )
+                return
+            self.track_task(
+                self._run_movie_search(
+                    int(chat_id), pending_id, query_text, manual_query=False
+                ),
+                f"movie-imdb-search:{chat_id}:{pending_id}",
+            )
+            return
+        if action.startswith("moviemanual:"):
+            try:
+                pending_id = int(action.partition(":")[2])
+            except ValueError:
+                return
+            item = self._movie_item_for_chat(pending_id, int(chat_id))
+            if not item or item.get("status") != "awaiting_identification":
+                await self.send(int(chat_id), "This movie queue item was not found.")
+                return
+            self.movie_manual_pending[int(chat_id)] = pending_id
+            await self.send(
+                int(chat_id),
+                "Send a different movie title, preferably with its year.",
+            )
+            return
+        if action.startswith("moviepick:"):
+            token = action.partition(":")[2]
+            choice = self.movie_choices.get(token)
+            if (
+                not choice
+                or time.time() - choice["created_at"] > 600
+                or not (
+                    item := self._movie_item_for_chat(
+                        choice["pending_id"], int(chat_id)
+                    )
+                )
+                or item.get("status") != "awaiting_identification"
+            ):
+                await self.send(
+                    int(chat_id), "This movie result expired. Start the search again."
+                )
+                return
+            await self._offer_movie_confirmation(int(chat_id), token, choice)
+            return
+        if action.startswith("movieconfirm:"):
+            token = action.partition(":")[2]
+            choice = self.movie_choices.pop(token, None)
+            if not choice or time.time() - choice["created_at"] > 600:
+                await self.send(int(chat_id), "This movie confirmation expired.")
+                return
+            item = self._movie_item_for_chat(choice["pending_id"], int(chat_id))
+            if not item or item.get("status") != "awaiting_identification":
+                await self.send(int(chat_id), "This movie is no longer waiting for a name.")
+                return
+            self.store.update_item(
+                int(item["pending_id"]),
+                target_folder=choice["folder_name"],
+                movie_title=choice["title"],
+                movie_year=choice.get("year"),
+                imdb_id=choice.get("imdb_id") or None,
+                status="queued",
+                error=None,
+            )
+            await self.send(
+                int(chat_id),
+                "Movie identity confirmed.\n"
+                f"Folder: {choice['folder_name']}\n\n"
+                "Use /download to review the destination, then /confirm_download.",
+                MOVIE_MENU,
+            )
+            return
+        if action.startswith("moviecancel:"):
+            try:
+                pending_id = int(action.partition(":")[2])
+            except ValueError:
+                return
+            item = self._movie_item_for_chat(pending_id, int(chat_id))
+            removed = bool(
+                item
+                and item.get("status") == "awaiting_identification"
+                and self.queue.remove(pending_id)
+            )
+            if self.movie_manual_pending.get(int(chat_id)) == pending_id:
+                self.movie_manual_pending.pop(int(chat_id), None)
+            await self.send(
+                int(chat_id),
+                "Movie queue item cancelled." if removed else "Movie could not be cancelled.",
             )
             return
         if action.startswith("folders:"):
@@ -987,6 +1213,9 @@ class BotApp:
         except ValueError as exc:
             await self.send(chat_id, f"The file was not added to the queue: {exc}")
             return
+        if self._media_mode(chat_id) == "movie":
+            await self._queue_movie_for_identification(chat_id, message, media, filename)
+            return
         pending_id = self.queue.add(
             message_id=int(message["message_id"]),
             chat_id=chat_id,
@@ -996,6 +1225,7 @@ class BotApp:
             file_size=media.get("file_size"),
             received_at=datetime.now(timezone.utc).isoformat(),
             target_folder=self.store.get_setting("current_folder"),
+            media_kind="series",
         )
         if pending_id is None:
             await self.send(chat_id, "This video is already in the queue.")
@@ -1011,6 +1241,313 @@ class BotApp:
                 f"\nQueue ID for commands: #{pending_id}"
                 + (f"\n{notice}" if notice else ""),
             )
+
+    def _media_mode(self, chat_id: int) -> str:
+        mode = self.store.get_setting(f"media_mode:{chat_id}", "series")
+        return "movie" if mode == "movie" else "series"
+
+    async def _queue_movie_for_identification(
+        self, chat_id: int, message: dict, media: dict, filename: str
+    ) -> None:
+        if not self.config.movies_configured:
+            await self.send(
+                chat_id,
+                "Movie mode is not configured yet. Set jellyfin_movie_library_path "
+                "and movie_staging_path in config.json, then restart the bot.",
+            )
+            return
+        pending_id = self.queue.add(
+            message_id=int(message["message_id"]),
+            chat_id=chat_id,
+            file_id=media["file_id"],
+            file_unique_id=media["file_unique_id"],
+            original_filename=filename,
+            file_size=media.get("file_size"),
+            received_at=datetime.now(timezone.utc).isoformat(),
+            target_folder=None,
+            media_kind="movie",
+            status="awaiting_identification",
+        )
+        if pending_id is None:
+            await self.send(chat_id, "This movie is already registered in the queue.")
+            return
+        await self.send(
+            chat_id,
+            f"Movie received but not downloaded yet.\n"
+            f"Queue ID: #{pending_id}\nFilename: {filename}\n\n"
+            "How should I identify it?",
+            self._movie_identification_markup(pending_id),
+        )
+
+    @staticmethod
+    def _movie_identification_markup(pending_id: int) -> dict:
+        return {
+            "inline_keyboard": [
+                [{
+                    "text": "Search using filename",
+                    "callback_data": f"movieidentify:filename:{pending_id}",
+                }],
+                [{
+                    "text": "Enter name manually",
+                    "callback_data": f"movieidentify:manual:{pending_id}",
+                }],
+                [{
+                    "text": "Cancel movie",
+                    "callback_data": f"moviecancel:{pending_id}",
+                }],
+            ]
+        }
+
+    def _movie_item_for_chat(self, pending_id: int, chat_id: int) -> dict | None:
+        item = self.store.get_item(pending_id)
+        if (
+            not item
+            or item.get("media_kind") != "movie"
+            or int(item.get("chat_id") or 0) != chat_id
+        ):
+            return None
+        return item
+
+    @staticmethod
+    def _manual_movie_identity(query: str) -> tuple[str, int | None, str]:
+        value = re.sub(r"\s+", " ", query).strip()
+        if not value:
+            raise ValueError("Enter a movie title, optionally followed by its year.")
+        explicit_year = re.fullmatch(
+            r"(.+?)\s*[\[(]((?:18|19|20)\d{2})[\])]\s*", value
+        )
+        trailing_year = re.fullmatch(
+            r"(.+?)\s+((?:18|19|20)\d{2})\s*", value
+        )
+        if explicit_year:
+            title_text = explicit_year.group(1).strip()
+            year = int(explicit_year.group(2))
+        elif (
+            trailing_year
+            and int(trailing_year.group(2)) <= datetime.now().year + 5
+        ):
+            title_text = trailing_year.group(1).strip()
+            year = int(trailing_year.group(2))
+        else:
+            title_text = value
+            year = None
+        # A title can legitimately end in a four-digit number (for example,
+        # "Blade Runner 2049" or "1917"). Treat it as a year only when it is
+        # plausible, unless parentheses/brackets explicitly mark it as a year.
+        if year is not None and year < 1878:
+            raise ValueError("The movie year is outside the supported range.")
+        title = sanitize_folder_name(title_text)
+        folder_name = title + (f" ({year})" if year is not None else "")
+        return title, year, folder_name
+
+    async def _run_movie_search(
+        self,
+        chat_id: int,
+        pending_id: int,
+        query: str,
+        *,
+        manual_query: bool,
+    ) -> None:
+        item = self._movie_item_for_chat(pending_id, chat_id)
+        if not item or item.get("status") != "awaiting_identification":
+            await self.send(chat_id, "This movie is no longer waiting for identification.")
+            return
+        try:
+            await self.send(chat_id, f"Searching IMDb movies for: {query}")
+            results, source = await self.imdb.search(
+                query, media_type="movie"
+            )
+        except Exception as exc:
+            LOG.warning("Optional IMDb movie search failed: %s", exc)
+            if manual_query:
+                await self._offer_manual_movie_fallback(
+                    chat_id, pending_id, query, f"IMDb search is unavailable: {exc}"
+                )
+            else:
+                self.movie_manual_pending[chat_id] = pending_id
+                await self.send(
+                    chat_id,
+                    f"IMDb filename search is unavailable: {exc}\n\n"
+                    "Send the movie title manually. The bot will let you use that "
+                    "exact name if IMDb remains unavailable.",
+                )
+            return
+        if not results:
+            if manual_query:
+                await self._offer_manual_movie_fallback(
+                    chat_id, pending_id, query, "IMDb did not return a movie result."
+                )
+            else:
+                self.movie_manual_pending[chat_id] = pending_id
+                await self.send(
+                    chat_id,
+                    "IMDb did not recognize the filename. Send the movie title "
+                    "manually, preferably with its year.",
+                )
+            return
+
+        now = time.time()
+        self.movie_choices = {
+            key: value for key, value in self.movie_choices.items()
+            if now - value["created_at"] <= 600
+        }
+        rows = []
+        for result in results:
+            token = uuid.uuid4().hex[:16]
+            self.movie_choices[token] = {
+                "pending_id": pending_id,
+                "title": str(result["title"]),
+                "year": result.get("year"),
+                "imdb_id": str(result.get("imdb_id") or ""),
+                "folder_name": str(result["folder_name"]),
+                "source": source,
+                "created_at": now,
+            }
+            rows.append([{
+                "text": (
+                    f"{str(result['title'])[:32]} ({result.get('year') or '?'}) "
+                    f"· {result.get('score', '?')}%"
+                ),
+                "callback_data": f"moviepick:{token}",
+            }])
+        rows.append([{
+            "text": "Search with a different name",
+            "callback_data": f"moviemanual:{pending_id}",
+        }])
+        rows.append([{
+            "text": "Cancel movie",
+            "callback_data": f"moviecancel:{pending_id}",
+        }])
+        await self.send(
+            chat_id,
+            f"Choose the correct movie result.\nSource: {source}",
+            {"inline_keyboard": rows},
+        )
+
+    async def _offer_manual_movie_fallback(
+        self, chat_id: int, pending_id: int, query: str, reason: str
+    ) -> None:
+        try:
+            title, year, folder_name = self._manual_movie_identity(query)
+        except ValueError as exc:
+            self.movie_manual_pending[chat_id] = pending_id
+            await self.send(
+                chat_id,
+                f"{reason}\nThe manual name is not valid: {exc}\n"
+                "Send another title.",
+            )
+            return
+        token = uuid.uuid4().hex[:16]
+        choice = {
+            "pending_id": pending_id,
+            "title": title,
+            "year": year,
+            "imdb_id": "",
+            "folder_name": folder_name,
+            "source": "Manual name (IMDb unavailable)",
+            "created_at": time.time(),
+        }
+        self.movie_choices[token] = choice
+        await self.send(chat_id, reason)
+        await self._offer_movie_confirmation(chat_id, token, choice)
+
+    async def _offer_movie_confirmation(
+        self, chat_id: int, token: str, choice: dict
+    ) -> None:
+        extension = ""
+        item = self._movie_item_for_chat(choice["pending_id"], chat_id)
+        if item:
+            extension = Path(item["original_filename"]).suffix
+        await self.send(
+            chat_id,
+            "Confirm this movie identity:\n"
+            f"Title: {choice['title']}\n"
+            f"Year: {choice.get('year') or 'not specified'}\n"
+            f"IMDb: {choice.get('imdb_id') or 'not available'}\n\n"
+            f"Folder: {choice['folder_name']}\n"
+            f"File: {choice['folder_name']}{extension}",
+            {
+                "inline_keyboard": [
+                    [{
+                        "text": "Confirm movie",
+                        "callback_data": f"movieconfirm:{token}",
+                    }],
+                    [{
+                        "text": "Search manually",
+                        "callback_data": f"moviemanual:{choice['pending_id']}",
+                    }],
+                    [{
+                        "text": "Cancel",
+                        "callback_data": f"moviecancel:{choice['pending_id']}",
+                    }],
+                ]
+            },
+        )
+
+    async def cmd_movie_mode(self, chat_id: int, _: str) -> None:
+        if not self.config.movies_configured:
+            await self.send(
+                chat_id,
+                "Movie mode is disabled. Configure jellyfin_movie_library_path "
+                "and movie_staging_path in config.json, then restart the bot.",
+            )
+            return
+        self.store.set_setting(f"media_mode:{chat_id}", "movie")
+        await self.send(
+            chat_id,
+            "Movie mode enabled. Send one movie video. The bot will ask whether "
+            "to search using its filename or a manually entered title.\n\n"
+            f"Movie library: {self.config.jellyfin_movie_library_path}",
+            MOVIE_MENU,
+        )
+
+    async def cmd_series_mode(self, chat_id: int, _: str) -> None:
+        self.store.set_setting(f"media_mode:{chat_id}", "series")
+        self.movie_manual_pending.pop(chat_id, None)
+        await self.send(
+            chat_id,
+            "Series mode enabled. New video files will use the currently selected "
+            "series folder.",
+            CHANNEL_MENU,
+        )
+
+    async def cmd_movie_current(self, chat_id: int, _: str) -> None:
+        latest = self.store.latest_movie_item(chat_id=chat_id)
+        mode = self._media_mode(chat_id)
+        if not latest:
+            await self.send(chat_id, f"Current mode: {mode}\nNo movie job exists yet.")
+            return
+        markup = (
+            self._movie_identification_markup(int(latest["pending_id"]))
+            if latest.get("status") == "awaiting_identification"
+            else MOVIE_MENU
+        )
+        await self.send(
+            chat_id,
+            f"Current mode: {mode}\n"
+            f"Latest movie queue ID: #{latest['pending_id']}\n"
+            f"Status: {latest['status']}\n"
+            f"Original file: {latest['original_filename']}\n"
+            f"Movie: {latest.get('target_folder') or 'waiting for identification'}",
+            markup,
+        )
+
+    async def cmd_movie_cancel(self, chat_id: int, _: str) -> None:
+        latest = self.store.latest_movie_item(
+            ("awaiting_identification", "queued", "failed", "waiting_overwrite"),
+            chat_id=chat_id,
+        )
+        if not latest:
+            await self.send(chat_id, "There is no removable current movie job.")
+            return
+        pending_id = int(latest["pending_id"])
+        removed = self.queue.remove(pending_id)
+        if self.movie_manual_pending.get(chat_id) == pending_id:
+            self.movie_manual_pending.pop(chat_id, None)
+        await self.send(
+            chat_id,
+            "Current movie job cancelled." if removed else "The movie job could not be cancelled.",
+        )
 
     def _queue_display_number(self, pending_id: int, target_folder: str) -> int:
         """Return a friendly per-folder number while keeping pending_id stable."""
@@ -1082,6 +1619,13 @@ class BotApp:
             "/library_episodes": self.cmd_library_episodes,
             "/imdb_search": self.cmd_imdb_search,
             "/imdb_fix_current": self.cmd_imdb_fix_current,
+            "/movie_mode": self.cmd_movie_mode,
+            "/series_mode": self.cmd_series_mode,
+            "/movie_current": self.cmd_movie_current,
+            "/movie_cancel": self.cmd_movie_cancel,
+            "/movie_import": self.cmd_movie_import,
+            "/movie_undo_last": self.cmd_movie_undo_last,
+            "/movie_undo_batch": self.cmd_movie_undo_batch,
         }
         handler = handlers.get(command)
         if not handler:
@@ -1322,10 +1866,13 @@ class BotApp:
         lines = [f"Queue ({len(items)} file(s)):"]
         per_folder_counts: dict[str, int] = {}
         for item in items[:30]:
-            folder_label = item["target_folder"] or "(no folder)"
+            kind = item.get("media_kind", "series")
+            folder_label = item["target_folder"] or (
+                "(waiting for movie identification)" if kind == "movie" else "(no folder)"
+            )
             per_folder_counts[folder_label] = per_folder_counts.get(folder_label, 0) + 1
             lines.append(
-                f"{folder_label} item {per_folder_counts[folder_label]} "
+                f"{kind.title()} · {folder_label} item {per_folder_counts[folder_label]} "
                 f"(Queue ID #{item['pending_id']}) [{item['status']}] "
                 f"{item['original_filename']} — {format_size(item['file_size'])} "
             )
@@ -1353,7 +1900,11 @@ class BotApp:
         items = self.queue.downloadable()
         prepared = []
         for item in items:
-            if not item.get("target_folder") and current:
+            if (
+                item.get("media_kind", "series") == "series"
+                and not item.get("target_folder")
+                and current
+            ):
                 self.store.update_item(item["pending_id"], target_folder=current)
                 item["target_folder"] = current
             prepared.append(item)
@@ -1375,7 +1926,14 @@ class BotApp:
                 + "\nSend /setfolder NAME first."
             )
             return
-        destinations = sorted({str(self.config.target_path(x["target_folder"])) for x in items})
+        destinations = sorted({
+            str(
+                self.config.movie_target_path(x["target_folder"])
+                if x.get("media_kind") == "movie"
+                else self.config.target_path(x["target_folder"])
+            )
+            for x in items
+        })
         total = sum(int(x.get("file_size") or 0) for x in items)
         names = "\n".join(f"• {x['original_filename']}" for x in items[:10])
         summary = (
@@ -1389,7 +1947,7 @@ class BotApp:
             await self.send(chat_id, summary + "\n\nSend /confirm_download to start, or /cancel.")
         else:
             self.track_task(
-                self.downloader.run(items, lambda text: self.send(chat_id, text)),
+                self._run_downloads_and_movie_imports(chat_id, items),
                 f"download:{chat_id}",
             )
 
@@ -1404,8 +1962,129 @@ class BotApp:
             await self.send(chat_id, "There are no ready files to download.")
             return
         self.track_task(
-            self.downloader.run(items, lambda text: self.send(chat_id, text)),
+            self._run_downloads_and_movie_imports(chat_id, items),
             f"download:{chat_id}",
+        )
+
+    async def _run_downloads_and_movie_imports(
+        self, chat_id: int, items: list[dict]
+    ) -> None:
+        assert self.downloader
+        await self.downloader.run(items, lambda text: self.send(chat_id, text))
+        imported = 0
+        for original in items:
+            if original.get("media_kind") != "movie":
+                continue
+            current = self.store.get_item(int(original["pending_id"]))
+            if not current or current.get("status") != "completed":
+                continue
+            if await self._import_movie_item(chat_id, current):
+                imported += 1
+        if (
+            imported
+            and self.config.scan_after_movie_import
+            and self.jellyfin
+            and self.jellyfin.configured
+        ):
+            await self._run_jellyfin_scan(chat_id)
+
+    async def _import_movie_item(self, chat_id: int, item: dict) -> bool:
+        pending_id = int(item["pending_id"])
+        try:
+            await self.send(
+                chat_id,
+                f"Checking movie import plan for queue ID #{pending_id}...",
+            )
+            preview = await self.movie_sorter.import_movie(item, dry_run=True)
+            await self.send(
+                chat_id,
+                "Movie import plan verified. Importing without overwriting:\n"
+                f"{preview['destination']}",
+            )
+            result = await self.movie_sorter.import_movie(item, dry_run=False)
+            video = next(
+                (
+                    entry["destination"]
+                    for entry in result.get("files", [])
+                    if entry.get("file_type") == "video"
+                ),
+                "",
+            )
+            self.store.update_item(
+                pending_id,
+                status="imported",
+                error=None,
+                downloaded_path=video or item.get("downloaded_path"),
+                movie_batch_id=result.get("batch_id"),
+            )
+            self.store.set_setting("latest_imported_movie_id", str(pending_id))
+            self.store.set_setting("latest_movie_batch_id", str(result.get("batch_id", "")))
+            staging_file = Path(str(item.get("downloaded_path") or ""))
+            try:
+                staging_file.parent.rmdir()
+            except OSError:
+                pass
+            await self.send(
+                chat_id,
+                "Movie imported successfully.\n"
+                f"Destination: {result['destination']}\n"
+                f"Batch ID: {result['batch_id']}\n\n"
+                "This movie job is closed; send another movie while remaining in movie mode.",
+                MOVIE_MENU,
+            )
+            return True
+        except Exception as exc:
+            LOG.exception("Movie import failed for queue ID %s", pending_id)
+            self.store.update_item(
+                pending_id, status="movie_import_failed", error=str(exc)
+            )
+            await self.send(
+                chat_id,
+                f"Movie download is safe in staging, but import failed for queue "
+                f"ID #{pending_id}:\n{exc}\n\n"
+                f"Fix the problem and use /movie_import {pending_id} to retry.",
+            )
+            return False
+
+    async def _run_movie_import_command(self, chat_id: int, item: dict) -> None:
+        if self.downloader and self.downloader.running:
+            await self.send(chat_id, "Wait for the current download to finish first.")
+            return
+        imported = await self._import_movie_item(chat_id, item)
+        if (
+            imported
+            and self.config.scan_after_movie_import
+            and self.jellyfin
+            and self.jellyfin.configured
+        ):
+            await self._run_jellyfin_scan(chat_id)
+
+    async def cmd_movie_import(self, chat_id: int, argument: str) -> None:
+        if not self.config.movies_configured:
+            await self.send(chat_id, "Movie mode is not configured.")
+            return
+        item: dict | None
+        if argument.strip():
+            try:
+                pending_id = int(argument)
+            except ValueError:
+                await self.send(chat_id, "Correct format: /movie_import 12")
+                return
+            item = self._movie_item_for_chat(pending_id, chat_id)
+        else:
+            item = self.store.latest_movie_item(
+                ("completed", "movie_import_failed"), chat_id=chat_id
+            )
+        if not item or item.get("status") not in {"completed", "movie_import_failed"}:
+            await self.send(chat_id, "No downloaded movie is waiting for import.")
+            return
+        source = Path(str(item.get("downloaded_path") or ""))
+        if not source.is_file():
+            await self.send(chat_id, f"The staged movie file is missing:\n{source}")
+            return
+        self.track_task(
+            self._run_movie_import_command(chat_id, item),
+            f"movie-import:{chat_id}:{item['pending_id']}",
         )
 
     async def cmd_status(self, chat_id: int, _: str) -> None:
@@ -1414,6 +2093,10 @@ class BotApp:
         for item in all_items:
             counts[item["status"]] = counts.get(item["status"], 0) + 1
         part_count = sum(1 for _ in self.config.jellyfin_library_path.rglob("*.part"))
+        if self.config.movie_staging_path is not None:
+            part_count += sum(
+                1 for _ in self.config.movie_staging_path.rglob("*.part")
+            )
         text = "\n".join(f"{key}: {value}" for key, value in sorted(counts.items()))
         active = len(self.background_tasks)
         await self.send(
@@ -1607,6 +2290,66 @@ class BotApp:
             return
         self.track_task(self._run_sort_undo(chat_id, batch_id), f"undo-sort-batch:{chat_id}")
 
+    async def _run_movie_undo(
+        self, chat_id: int, batch_id: str | None = None
+    ) -> None:
+        if self.downloader and self.downloader.running:
+            await self.send(chat_id, "Movies cannot be restored while a download is running.")
+            return
+        try:
+            await self.send(
+                chat_id,
+                f"Movie undo started: {batch_id or 'latest movie batch'}",
+            )
+            result = (
+                await self.movie_sorter.undo_batch(batch_id)
+                if batch_id
+                else await self.movie_sorter.undo_last()
+            )
+            actual_batch = str(result.get("batch_id") or batch_id or "")
+            skipped = int(result.get("skipped", 0) or 0)
+            if actual_batch:
+                self.store.mark_movie_batch_status(
+                    actual_batch,
+                    "movie_undone" if bool(result.get("ok")) else "movie_undo_partial",
+                )
+            outcome = (
+                "Movie undo completed.\n"
+                if result.get("ok")
+                else "Movie undo was incomplete; conflicting files were skipped.\n"
+            )
+            await self.send(
+                chat_id,
+                outcome + f"Batch ID: {actual_batch or 'unknown'}\n"
+                f"Restored: {result.get('restored', 0)}\n"
+                f"Skipped: {skipped}",
+                MOVIE_MENU,
+            )
+            if (
+                self.config.scan_after_movie_import
+                and self.jellyfin
+                and self.jellyfin.configured
+            ):
+                await self._run_jellyfin_scan(chat_id)
+        except Exception as exc:
+            LOG.exception("Movie undo failed")
+            await self.send(chat_id, f"Movie undo failed: {exc}")
+
+    async def cmd_movie_undo_last(self, chat_id: int, _: str) -> None:
+        self.track_task(
+            self._run_movie_undo(chat_id), f"movie-undo-last:{chat_id}"
+        )
+
+    async def cmd_movie_undo_batch(self, chat_id: int, argument: str) -> None:
+        batch_id = argument.strip()
+        if not batch_id:
+            await self.send(chat_id, "Correct format: /movie_undo_batch BATCH_ID")
+            return
+        self.track_task(
+            self._run_movie_undo(chat_id, batch_id),
+            f"movie-undo-batch:{chat_id}",
+        )
+
     async def _run_jellyfin_scan(self, chat_id: int) -> None:
         if not self.jellyfin:
             await self.send(chat_id, "Jellyfin connection is not ready yet.")
@@ -1738,7 +2481,7 @@ class BotApp:
         )
         try:
             await self.send(chat_id, f"Searching IMDb for: {query}")
-            results, source = await self.imdb.search(query)
+            results, source = await self.imdb.search(query, media_type="series")
             if not results:
                 await self._offer_manual_folder_fallback(
                     chat_id,

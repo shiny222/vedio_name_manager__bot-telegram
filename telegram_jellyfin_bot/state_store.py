@@ -37,6 +37,11 @@ class StateStore:
                     file_size INTEGER,
                     received_at TEXT NOT NULL,
                     target_folder TEXT,
+                    media_kind TEXT NOT NULL DEFAULT 'series',
+                    movie_title TEXT,
+                    movie_year INTEGER,
+                    imdb_id TEXT,
+                    movie_batch_id TEXT,
                     status TEXT NOT NULL DEFAULT 'queued',
                     error TEXT,
                     downloaded_path TEXT,
@@ -56,6 +61,24 @@ class StateStore:
                 );
                 """
             )
+            # Safe forward-only migrations for databases created by older bot
+            # versions. Existing queue rows remain series items.
+            columns = {
+                str(row["name"])
+                for row in self.conn.execute("PRAGMA table_info(queue_items)")
+            }
+            migrations = {
+                "media_kind": "TEXT NOT NULL DEFAULT 'series'",
+                "movie_title": "TEXT",
+                "movie_year": "INTEGER",
+                "imdb_id": "TEXT",
+                "movie_batch_id": "TEXT",
+            }
+            for name, declaration in migrations.items():
+                if name not in columns:
+                    self.conn.execute(
+                        f"ALTER TABLE queue_items ADD COLUMN {name} {declaration}"
+                    )
             self.conn.execute(
                 "UPDATE queue_items SET status='queued', error='Recovered after bot restart' "
                 "WHERE status='downloading'"
@@ -84,14 +107,21 @@ class StateStore:
                     """
                     INSERT INTO queue_items(
                       message_id,chat_id,file_id,file_unique_id,original_filename,
-                      file_size,received_at,target_folder,status,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                      file_size,received_at,target_folder,media_kind,movie_title,
+                      movie_year,imdb_id,movie_batch_id,status,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         values["message_id"], values["chat_id"], values["file_id"],
                         values["file_unique_id"], values["original_filename"],
                         values.get("file_size"), values.get("received_at", now),
-                        values.get("target_folder") or None, "queued", now, now,
+                        values.get("target_folder") or None,
+                        values.get("media_kind", "series"),
+                        values.get("movie_title") or None,
+                        values.get("movie_year"),
+                        values.get("imdb_id") or None,
+                        values.get("movie_batch_id") or None,
+                        values.get("status", "queued"), now, now,
                     ),
                 )
                 return int(cursor.lastrowid)
@@ -129,7 +159,9 @@ class StateStore:
     def remove_item(self, pending_id: int) -> bool:
         with self.lock, self.conn:
             cursor = self.conn.execute(
-                "DELETE FROM queue_items WHERE pending_id=? AND status NOT IN ('downloading')",
+                "DELETE FROM queue_items WHERE pending_id=? AND status IN "
+                "('queued','failed','waiting_overwrite','cancelled',"
+                "'awaiting_identification')",
                 (pending_id,),
             )
             return cursor.rowcount > 0
@@ -137,7 +169,9 @@ class StateStore:
     def clear_queue(self) -> int:
         with self.lock, self.conn:
             cursor = self.conn.execute(
-                "DELETE FROM queue_items WHERE status IN ('queued','failed','waiting_overwrite','cancelled')"
+                "DELETE FROM queue_items WHERE status IN "
+                "('queued','failed','waiting_overwrite','cancelled',"
+                "'awaiting_identification')"
             )
             return cursor.rowcount
 
@@ -159,7 +193,7 @@ class StateStore:
                       ELSE downloaded_path
                     END,
                     updated_at=?
-                WHERE target_folder=?
+                WHERE target_folder=? AND media_kind='series'
                 """,
                 (
                     new_name,
@@ -169,6 +203,40 @@ class StateStore:
                 ),
             )
             return cursor.rowcount
+
+    def latest_movie_item(
+        self,
+        statuses: tuple[str, ...] | None = None,
+        chat_id: int | None = None,
+    ) -> dict | None:
+        values: list[Any] = []
+        where = "WHERE media_kind='movie'"
+        if chat_id is not None:
+            where += " AND chat_id=?"
+            values.append(chat_id)
+        if statuses:
+            marks = ",".join("?" for _ in statuses)
+            where += f" AND status IN ({marks})"
+            values.extend(statuses)
+        row = self.conn.execute(
+            f"SELECT * FROM queue_items {where} ORDER BY pending_id DESC LIMIT 1",
+            tuple(values),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def mark_movie_batch_status(self, batch_id: str, status: str) -> int:
+        if status not in {"movie_undone", "movie_undo_partial"}:
+            raise ValueError("Invalid movie undo status.")
+        with self.lock, self.conn:
+            cursor = self.conn.execute(
+                "UPDATE queue_items SET status=?,updated_at=? "
+                "WHERE media_kind='movie' AND movie_batch_id=?",
+                (status, utc_now(), batch_id),
+            )
+            return cursor.rowcount
+
+    def mark_movie_batch_undone(self, batch_id: str) -> int:
+        return self.mark_movie_batch_status(batch_id, "movie_undone")
 
     def create_sorter_run(self, folder: str, command: str) -> int:
         with self.lock, self.conn:

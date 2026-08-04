@@ -8,6 +8,8 @@
   "local_bot_api_base_url": "http://127.0.0.1:8081/bot",
   "local_bot_api_base_file_url": "http://127.0.0.1:8081/file/bot",
   "jellyfin_library_path": "D:\\Media\\Jellyfin\\Shows",
+  "jellyfin_movie_library_path": "",
+  "movie_staging_path": "",
   "data_path": "data",
   "logs_path": "logs",
   "sorter_command": [
@@ -18,6 +20,12 @@
     "{folder}"
   ],
   "sorter_timeout_seconds": 1800,
+  "movie_sorter_command": [
+    "movie_organizer\\.venv\\Scripts\\python.exe",
+    "movie_organizer\\movie_organizer.py"
+  ],
+  "movie_sorter_timeout_seconds": 1800,
+  "scan_after_movie_import": true,
   "allowed_chat_ids": [],
   "allowed_video_extensions": [".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"],
   "max_parallel_downloads": 1,

@@ -1,11 +1,14 @@
 # Telegram Jellyfin Bot
 
-This bot watches an allowed Telegram group or channel, queues video files, downloads them only after your command/confirmation, and can optionally call the separate Jellyfin organizer and IMDb fuzzy-title tool.
+This bot watches an allowed Telegram group or channel, queues video files,
+downloads them only after your command/confirmation, and can optionally call
+the separate series organizer, movie organizer, and IMDb fuzzy-title tool.
 
 The bot is intentionally separate from the other tools:
 
 - `telegram_jellyfin_bot` downloads and manages the queue.
 - `organizer` sorts/renames files for Jellyfin.
+- `movie_organizer` safely imports one confirmed movie at a time.
 - `fuzzy_search` is optional and only helps suggest official folder names.
 
 ## Requirements
@@ -25,6 +28,9 @@ The bot is intentionally separate from the other tools:
 5. Start `run_local_bot_api.bat`.
 6. Start `run.bat`.
 
+To use movie mode, also run `movie_organizer\install.bat` once from the parent
+folder and configure the two movie paths described below.
+
 Do not commit or share `config.json`; it contains your token and private settings.
 
 For a complete bilingual walkthrough, see
@@ -36,6 +42,13 @@ English or فارسی.
 - `bot_token`: your BotFather token.
 - `telegram_api_id` and `telegram_api_hash`: values from my.telegram.org.
 - `jellyfin_library_path`: your main Jellyfin shows/anime library folder.
+- `jellyfin_movie_library_path`: a separate Jellyfin Movies library. Leave it
+  empty to disable movie mode.
+- `movie_staging_path`: a separate temporary download folder outside both
+  Jellyfin libraries. Leave it empty when movie mode is disabled.
+- `movie_sorter_command`: command used to call the independent movie organizer.
+- `scan_after_movie_import`: automatically start and monitor Jellyfin after a
+  movie import or movie undo.
 - `allowed_chat_ids`: the Telegram group/channel IDs that may use the bot.
 - `confirm_before_download`: if `true`, the bot waits for `/confirm_download`.
 - `ask_before_overwrite`: if `true`, the bot asks before handling duplicate files.
@@ -47,6 +60,18 @@ English or فارسی.
   before it stops monitoring (default `3600` seconds). It does not cancel the
   Jellyfin scan.
 - `fuzzy_search_command`: command used to call the optional IMDb fuzzy search tool.
+
+For an existing `config.json`, the only new paths you must add to enable movie
+mode are these (choose your own real folders):
+
+```json
+"jellyfin_movie_library_path": "E:\\Jellyfin\\Movies",
+"movie_staging_path": "D:\\TelegramMovieStaging"
+```
+
+The shows library, Movies library, and staging folder must be three separate,
+non-nested folders. The update process preserves your existing `config.json`,
+so it cannot choose these machine-specific paths for you.
 
 If `allowed_chat_ids` is empty, every chat that can reach the bot is allowed. Use `/chatid` to find your chat ID, then add it to config.
 
@@ -82,6 +107,30 @@ Trigger Jellyfin scan:
 ```text
 /jellyfin_scan
 ```
+
+## Movie mode
+
+Movie mode is independent of the currently selected series folder:
+
+1. Send `/movie_mode`.
+2. Send one movie video.
+3. Choose **Search using filename** or **Enter name manually**.
+4. Select the IMDb result and confirm the exact final folder/file name. If IMDb
+   is unavailable after a manual search, confirm the manual title instead.
+5. Send `/download`, review the final Movies destination, then send
+   `/confirm_download`.
+
+The download first completes in `movie_staging_path`. Only then does the movie
+organizer perform an internal dry-run and move it into a folder such as:
+
+```text
+Movies\Interstellar (2014) [imdbid-tt0816692]\
+  Interstellar (2014) [imdbid-tt0816692].mkv
+```
+
+Use `/series_mode` before sending episode files again. A movie import never
+overwrites an existing movie video. On conflict, the completed download remains
+in staging and `/movie_import ID` can retry it after you fix the problem.
 
 ## Commands
 
@@ -119,6 +168,13 @@ Trigger Jellyfin scan:
 - `/library_episodes` — show an episode summary for the whole library.
 - `/imdb_search NAME` — fuzzy-search an official IMDb folder name.
 - `/imdb_fix_current [NAME]` — safely rename the current folder using IMDb results.
+- `/movie_mode` — make newly received videos enter the independent movie flow.
+- `/series_mode` — return newly received videos to the series flow.
+- `/movie_current` — show the latest movie job and its status.
+- `/movie_cancel` — remove the current movie before it is downloaded.
+- `/movie_import [ID]` — retry a completed movie that is still in staging.
+- `/movie_undo_last` — restore the latest imported movie to staging.
+- `/movie_undo_batch ID` — restore a specific movie import batch.
 - `/chatid` — show the current chat ID.
 - `/help` — show command help and copy buttons.
 
@@ -131,7 +187,7 @@ Telegram channels cannot pre-fill editable slash commands the same way normal ch
 In a private chat, group, or supergroup, send `/menu` once to enable a persistent
 keyboard beside the message box. Its category buttons open smaller inline menus
 for downloads, folders, sorting, undo/recovery, Jellyfin, IMDb, episodes, and
-bot information. The existing quick-access inline menu is still sent and has
+bot information. Movies have their own category. The existing quick-access inline menu is still sent and has
 not been replaced.
 
 Telegram does not support persistent reply keyboards in channels. In a channel,
@@ -202,4 +258,8 @@ The real `getMe` integration test runs only when local API integration is enable
 - The bot does not see channel posts: add it as a channel administrator and check `allowed_chat_ids`.
 - Files do not enter the queue: check the extension and `allowed_video_extensions`.
 - Sorter does not run: check Python and `organizer.py` paths inside `sorter_command`.
+- Movie mode is disabled: set both movie paths and run
+  `movie_organizer\install.bat` once.
+- Movie import stays in staging: use `/movie_current`, fix the reported conflict
+  or configuration error, then use `/movie_import ID`.
 - `.part` file remains: the download was interrupted; run `/download` again.

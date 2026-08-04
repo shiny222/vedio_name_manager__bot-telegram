@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -18,6 +19,7 @@ from telegram_jellyfin_bot.bot import (
     GUIDE_EN,
     GUIDE_FA,
     GUIDE_LANGUAGE_MENU,
+    MOVIE_MENU,
     PERSISTENT_CATEGORY_KEYBOARD,
     SORTING_MENU,
 )
@@ -26,6 +28,7 @@ from telegram_jellyfin_bot.episode_catalog import (
     EpisodeCatalog, compact_numbers, detect_episode, format_series_inventory
 )
 from telegram_jellyfin_bot.jellyfin_bridge import JellyfinBridge
+from telegram_jellyfin_bot.imdb_bridge import movie_query_from_filename
 from telegram_jellyfin_bot.queue_manager import QueueManager
 from telegram_jellyfin_bot.sorter_bridge import SorterBridge
 from telegram_jellyfin_bot.state_store import StateStore
@@ -33,6 +36,7 @@ from telegram_jellyfin_bot.utils import safe_child, sanitize_folder_name
 
 
 def config_data(root: Path) -> dict:
+    project_root = Path(__file__).resolve().parents[2]
     return {
         "bot_token": "123:test-token",
         "telegram_api_id": 123,
@@ -43,9 +47,17 @@ def config_data(root: Path) -> dict:
         "local_bot_api_base_url": "http://127.0.0.1:8081/bot",
         "local_bot_api_base_file_url": "http://127.0.0.1:8081/file/bot",
         "jellyfin_library_path": str(root / "library"),
+        "jellyfin_movie_library_path": str(root / "movies"),
+        "movie_staging_path": str(root / "movie-staging"),
         "data_path": str(root / "data"),
         "logs_path": str(root / "logs"),
         "sorter_command": [sys.executable, "-c", "print('dry sorter')", "{folder}", "{mode}"],
+        "movie_sorter_command": [
+            sys.executable,
+            str(project_root / "movie_organizer" / "movie_organizer.py"),
+        ],
+        "movie_sorter_timeout_seconds": 30,
+        "scan_after_movie_import": False,
         "allowed_chat_ids": [-100123, 987654321],
         "allowed_video_extensions": [".mkv", ".mp4"],
         "max_parallel_downloads": 1,
@@ -75,6 +87,23 @@ class ConfigAndPathTests(unittest.TestCase):
         for bad in ("../outside", r"C:\Windows", "..", ""):
             with self.assertRaises(ValueError):
                 sanitize_folder_name(bad)
+
+    def test_movie_mode_is_optional_but_its_roots_must_be_separate(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            data = config_data(root)
+            data.pop("jellyfin_movie_library_path")
+            data.pop("movie_staging_path")
+            path = root / "disabled.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            self.assertFalse(load_config(path, create_from_example=False).movies_configured)
+
+            data = config_data(root)
+            data["jellyfin_movie_library_path"] = str(root / "library" / "movies")
+            path = root / "nested.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "separate, non-nested"):
+                load_config(path, create_from_example=False)
 
     def test_safe_path_stays_in_library(self):
         with tempfile.TemporaryDirectory() as td:
@@ -175,6 +204,268 @@ class QueueTests(unittest.TestCase):
             self.assertEqual(store.get_item(pending_id)["target_folder"], "Correct Name")
             store.close()
 
+    def test_clear_queue_preserves_a_downloaded_movie_waiting_for_import(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(Path(td) / "state.db")
+            queue = QueueManager(store)
+            pending_id = queue.add(
+                message_id=3,
+                chat_id=-1,
+                file_id="movie",
+                file_unique_id="movie-unique",
+                original_filename="movie.mkv",
+                file_size=20,
+                target_folder="Movie (2020)",
+                media_kind="movie",
+                status="movie_import_failed",
+            )
+            try:
+                self.assertEqual(queue.clear(), 0)
+                self.assertIsNotNone(store.get_item(pending_id))
+            finally:
+                store.close()
+
+    def test_old_database_is_migrated_to_series_items(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "old-state.db"
+            connection = sqlite3.connect(db)
+            connection.executescript(
+                """
+                CREATE TABLE queue_items (
+                    pending_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    file_id TEXT NOT NULL,
+                    file_unique_id TEXT NOT NULL,
+                    original_filename TEXT NOT NULL,
+                    file_size INTEGER,
+                    received_at TEXT NOT NULL,
+                    target_folder TEXT,
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    error TEXT,
+                    downloaded_path TEXT,
+                    overwrite_policy TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(chat_id, message_id, file_unique_id)
+                );
+                INSERT INTO queue_items(
+                    message_id,chat_id,file_id,file_unique_id,original_filename,
+                    received_at,target_folder,status,created_at,updated_at
+                ) VALUES(1,2,'f','u','episode.mkv','now','Show','queued','now','now');
+                """
+            )
+            connection.commit()
+            connection.close()
+
+            store = StateStore(db)
+            try:
+                item = store.get_item(1)
+                self.assertEqual(item["media_kind"], "series")
+                self.assertIn("movie_batch_id", item)
+            finally:
+                store.close()
+
+
+class MovieWorkflowTests(unittest.TestCase):
+    def test_filename_query_removes_release_tags(self):
+        self.assertEqual(
+            movie_query_from_filename(
+                "[Group] Interstellar.2014.1080p.BluRay.x265-GROUP.mkv"
+            ),
+            "Interstellar 2014",
+        )
+
+    def test_numbered_movie_title_is_not_mistaken_for_a_future_year(self):
+        self.assertEqual(
+            BotApp._manual_movie_identity("Blade Runner 2049"),
+            ("Blade Runner 2049", None, "Blade Runner 2049"),
+        )
+        self.assertEqual(
+            BotApp._manual_movie_identity("1917 2019"),
+            ("1917", 2019, "1917 (2019)"),
+        )
+        self.assertEqual(
+            BotApp._manual_movie_identity("Future Film (2049)"),
+            ("Future Film", 2049, "Future Film (2049)"),
+        )
+
+    def test_bot_movie_identification_confirmation(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                class FakeApi:
+                    async def call(self, method, **params):
+                        return True
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    sent.append((text, reply_markup))
+
+                async def fake_search(query, limit=8, media_type="any"):
+                    self.assertEqual(query, "Interstellar 2014")
+                    self.assertEqual(media_type, "movie")
+                    return ([{
+                        "imdb_id": "tt0816692",
+                        "title": "Interstellar",
+                        "year": 2014,
+                        "type": "movie",
+                        "score": 99.0,
+                        "folder_name": "Interstellar (2014) [imdbid-tt0816692]",
+                    }], "online")
+
+                app.api = FakeApi()
+                app.send = fake_send
+                app.imdb.search = fake_search
+                try:
+                    await app.cmd_movie_mode(987654321, "")
+                    await app.handle_media(
+                        987654321,
+                        {
+                            "message_id": 50,
+                            "document": {
+                                "file_id": "movie-file",
+                                "file_unique_id": "movie-unique",
+                                "file_name": "Interstellar.2014.1080p.BluRay.mkv",
+                                "file_size": 123,
+                                "mime_type": "video/x-matroska",
+                            },
+                        },
+                    )
+                    item = app.store.latest_movie_item(chat_id=987654321)
+                    self.assertEqual(item["status"], "awaiting_identification")
+                    await app.cmd_movie_current(987654321, "")
+                    callbacks = {
+                        button.get("callback_data")
+                        for row in sent[-1][1]["inline_keyboard"]
+                        for button in row
+                    }
+                    self.assertIn(
+                        f"movieidentify:filename:{item['pending_id']}", callbacks
+                    )
+                    query = movie_query_from_filename(item["original_filename"])
+                    await app._run_movie_search(
+                        987654321, item["pending_id"], query, manual_query=False
+                    )
+                    token = next(iter(app.movie_choices))
+                    await app.handle_callback({
+                        "id": "movie-confirm",
+                        "data": f"movieconfirm:{token}",
+                        "message": {"chat": {"id": 987654321, "type": "private"}},
+                    })
+                    confirmed = app.store.get_item(item["pending_id"])
+                    self.assertEqual(confirmed["status"], "queued")
+                    self.assertEqual(confirmed["movie_title"], "Interstellar")
+                    self.assertEqual(confirmed["movie_year"], 2014)
+                    self.assertEqual(confirmed["imdb_id"], "tt0816692")
+                    self.assertEqual(
+                        confirmed["target_folder"],
+                        "Interstellar (2014) [imdbid-tt0816692]",
+                    )
+                    self.assertIs(sent[-1][1], MOVIE_MENU)
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_bot_imports_and_undoes_movie_through_independent_bridge(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    sent.append(text)
+
+                app.send = fake_send
+                try:
+                    pending_id = app.queue.add(
+                        message_id=51,
+                        chat_id=987654321,
+                        file_id="downloaded-movie",
+                        file_unique_id="downloaded-movie-unique",
+                        original_filename="Interstellar.2014.mkv",
+                        file_size=4,
+                        target_folder="Interstellar (2014) [imdbid-tt0816692]",
+                        media_kind="movie",
+                        movie_title="Interstellar",
+                        movie_year=2014,
+                        imdb_id="tt0816692",
+                        status="completed",
+                    )
+                    staging = cfg.movie_staging_job_path(pending_id)
+                    staging.mkdir(parents=True)
+                    source = staging / "Interstellar.2014.mkv"
+                    subtitle = staging / "Interstellar.2014.fa.srt"
+                    source.write_bytes(b"film")
+                    subtitle.write_text("subtitle", encoding="utf-8")
+                    app.store.update_item(pending_id, downloaded_path=str(source))
+
+                    self.assertTrue(
+                        await app._import_movie_item(
+                            987654321, app.store.get_item(pending_id)
+                        )
+                    )
+                    imported = app.store.get_item(pending_id)
+                    destination = Path(imported["downloaded_path"])
+                    self.assertTrue(destination.is_file())
+                    self.assertTrue(
+                        destination.with_name(
+                            "Interstellar (2014) [imdbid-tt0816692].fa.srt"
+                        ).is_file()
+                    )
+                    self.assertTrue(
+                        (destination.parent / ".rename_history.json").is_file()
+                    )
+
+                    duplicate_staging = cfg.movie_staging_job_path(pending_id + 100)
+                    duplicate_staging.mkdir(parents=True)
+                    duplicate_source = duplicate_staging / "duplicate.mkv"
+                    duplicate_source.write_bytes(b"new-film")
+                    duplicate_item = dict(imported)
+                    duplicate_item["downloaded_path"] = str(duplicate_source)
+                    with self.assertRaises(RuntimeError):
+                        await app.movie_sorter.import_movie(
+                            duplicate_item, dry_run=True
+                        )
+                    self.assertTrue(duplicate_source.is_file())
+                    self.assertEqual(destination.read_bytes(), b"film")
+
+                    source.parent.mkdir(parents=True, exist_ok=True)
+                    source.write_bytes(b"undo-conflict")
+                    await app._run_movie_undo(
+                        987654321, imported["movie_batch_id"]
+                    )
+                    self.assertTrue(destination.is_file())
+                    self.assertTrue(subtitle.is_file())
+                    self.assertEqual(
+                        app.store.get_item(pending_id)["status"],
+                        "movie_undo_partial",
+                    )
+                    self.assertTrue(any("incomplete" in text for text in sent))
+
+                    source.unlink()
+                    await app._run_movie_undo(
+                        987654321, imported["movie_batch_id"]
+                    )
+                    self.assertEqual(source.read_bytes(), b"film")
+                    self.assertEqual(
+                        app.store.get_item(pending_id)["status"], "movie_undone"
+                    )
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
 
 class MenuNavigationTests(unittest.TestCase):
     def test_native_command_menu_is_grouped_by_related_function(self):
@@ -194,13 +485,14 @@ class MenuNavigationTests(unittest.TestCase):
                 "Downloads",
                 "Sorting",
                 "History",
+                "Movies",
                 "Jellyfin",
                 "Episodes",
                 "IMDb",
             ],
         )
         commands = [item["command"] for item in BOT_COMMANDS]
-        self.assertEqual(len(commands), 36)
+        self.assertEqual(len(commands), 43)
         self.assertEqual(len(commands), len(set(commands)))
 
     def test_bilingual_guide_fits_telegram_and_language_callback_opens_it(self):
@@ -489,7 +781,8 @@ class FolderSuggestionTests(unittest.TestCase):
                 async def fake_send(chat_id, text, reply_markup=None):
                     sent.append((text, reply_markup))
 
-                async def fake_search(query, limit=8):
+                async def fake_search(query, limit=8, media_type="any"):
+                    self.assertEqual(media_type, "series")
                     return ([{
                         "imdb_id": "tt9679542",
                         "title": "Dr. Stone",

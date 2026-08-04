@@ -16,6 +16,11 @@ def _path(value: str, base: Path) -> Path:
     return path if path.is_absolute() else (base / path).resolve()
 
 
+def _optional_path(value: Any, base: Path) -> Path | None:
+    text = str(value or "").strip()
+    return _path(text, base) if text else None
+
+
 @dataclass(frozen=True)
 class Config:
     bot_token: str
@@ -27,10 +32,15 @@ class Config:
     local_bot_api_base_url: str
     local_bot_api_base_file_url: str
     jellyfin_library_path: Path
+    jellyfin_movie_library_path: Path | None
+    movie_staging_path: Path | None
     data_path: Path
     logs_path: Path
     sorter_command: list[str]
     sorter_timeout_seconds: int
+    movie_sorter_command: list[str]
+    movie_sorter_timeout_seconds: int
+    scan_after_movie_import: bool
     allowed_chat_ids: set[int]
     allowed_video_extensions: set[str]
     max_parallel_downloads: int
@@ -55,6 +65,22 @@ class Config:
 
     def target_path(self, folder_name: str) -> Path:
         return safe_child(self.jellyfin_library_path, folder_name)
+
+    @property
+    def movies_configured(self) -> bool:
+        return bool(self.jellyfin_movie_library_path and self.movie_staging_path)
+
+    def movie_target_path(self, folder_name: str) -> Path:
+        if self.jellyfin_movie_library_path is None:
+            raise ValueError("jellyfin_movie_library_path is not configured.")
+        return safe_child(self.jellyfin_movie_library_path, folder_name)
+
+    def movie_staging_job_path(self, pending_id: int) -> Path:
+        if self.movie_staging_path is None:
+            raise ValueError("movie_staging_path is not configured.")
+        if pending_id <= 0:
+            raise ValueError("Movie queue ID is invalid.")
+        return safe_child(self.movie_staging_path, f"job-{pending_id}")
 
 
 def load_config(path: Path | None = None, create_from_example: bool = True) -> Config:
@@ -91,6 +117,17 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
     command = raw.get("sorter_command", [])
     if not isinstance(command, list) or not all(isinstance(x, str) for x in command):
         raise ValueError("sorter_command must be a list of arguments.")
+    movie_sorter_command = raw.get(
+        "movie_sorter_command",
+        [
+            r"movie_organizer\.venv\Scripts\python.exe",
+            r"movie_organizer\movie_organizer.py",
+        ],
+    )
+    if not isinstance(movie_sorter_command, list) or not all(
+        isinstance(x, str) for x in movie_sorter_command
+    ):
+        raise ValueError("movie_sorter_command must be a list of arguments.")
     fuzzy_search_command = raw.get(
         "fuzzy_search_command",
         raw.get(
@@ -116,10 +153,19 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         local_bot_api_base_url=str(raw.get("local_bot_api_base_url", f"http://{host}:{port}/bot")),
         local_bot_api_base_file_url=str(raw.get("local_bot_api_base_file_url", f"http://{host}:{port}/file/bot")),
         jellyfin_library_path=_path(str(raw["jellyfin_library_path"]), base),
+        jellyfin_movie_library_path=_optional_path(
+            raw.get("jellyfin_movie_library_path"), base
+        ),
+        movie_staging_path=_optional_path(raw.get("movie_staging_path"), base),
         data_path=_path(str(raw.get("data_path", "data")), base),
         logs_path=_path(str(raw.get("logs_path", "logs")), base),
         sorter_command=command,
         sorter_timeout_seconds=max(1, int(raw.get("sorter_timeout_seconds", 1800))),
+        movie_sorter_command=movie_sorter_command,
+        movie_sorter_timeout_seconds=max(
+            1, int(raw.get("movie_sorter_timeout_seconds", 1800))
+        ),
+        scan_after_movie_import=bool(raw.get("scan_after_movie_import", True)),
         allowed_chat_ids={int(x) for x in raw.get("allowed_chat_ids", [])},
         allowed_video_extensions=extensions or {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"},
         max_parallel_downloads=max(1, int(raw.get("max_parallel_downloads", 1))),
@@ -154,6 +200,32 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         ("http://", "https://")
     ):
         raise ValueError("jellyfin_server_url must start with http:// or https://.")
-    for directory in (cfg.jellyfin_library_path, cfg.data_path, cfg.logs_path):
+    if (cfg.jellyfin_movie_library_path is None) != (cfg.movie_staging_path is None):
+        raise ValueError(
+            "jellyfin_movie_library_path and movie_staging_path must either both "
+            "be configured or both be empty."
+        )
+    if cfg.movies_configured:
+        assert cfg.jellyfin_movie_library_path is not None
+        assert cfg.movie_staging_path is not None
+        roots = {
+            "shows library": cfg.jellyfin_library_path.resolve(),
+            "movies library": cfg.jellyfin_movie_library_path.resolve(),
+            "movie staging": cfg.movie_staging_path.resolve(),
+        }
+        root_items = list(roots.items())
+        for index, (left_name, left) in enumerate(root_items):
+            for right_name, right in root_items[index + 1:]:
+                if left == right or left in right.parents or right in left.parents:
+                    raise ValueError(
+                        f"{left_name} and {right_name} must be separate, non-nested folders."
+                    )
+    directories = [cfg.jellyfin_library_path, cfg.data_path, cfg.logs_path]
+    if cfg.movies_configured:
+        directories.extend(
+            [cfg.jellyfin_movie_library_path, cfg.movie_staging_path]
+        )
+    for directory in directories:
+        assert directory is not None
         directory.mkdir(parents=True, exist_ok=True)
     return cfg
