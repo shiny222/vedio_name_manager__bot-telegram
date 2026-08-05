@@ -172,6 +172,7 @@ GUIDE_EN = """How to use the Telegram Jellyfin Bot
 • On first use, choose English or فارسی. Use /language to change it later.
 • Private chats and groups get the persistent category keyboard.
 • In a channel, press Command categories in the inline menu.
+• Series and Movies have separate categories and mode buttons.
 • In chats with topics enabled, replies stay in the same existing topic where
   you sent the command, button, or file. The bot does not create a new topic.
 
@@ -247,6 +248,7 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
   /language استفاده کنید.
 • در گفت‌وگوی خصوصی و گروه، صفحه‌کلید دائمی دسته‌بندی‌ها نمایش داده می‌شود.
 • در کانال، دکمه Command categories را در منوی شیشه‌ای انتخاب کنید.
+• سریال‌ها و فیلم‌ها دسته‌بندی و دکمه حالت جداگانه دارند.
 • در چت‌هایی که موضوع (Topic) فعال است، پاسخ‌ها در همان موضوعی می‌مانند که
   دستور، دکمه یا فایل را در آن فرستادید. ربات موضوع جدیدی ایجاد نمی‌کند.
 
@@ -432,7 +434,11 @@ CHANNEL_MENU = {
             {"text": "🔎 IMDb title search", "callback_data": "menu:imdb_help"},
         ],
         [
+            {"text": "Series", "callback_data": "nav:series"},
             {"text": "Movies", "callback_data": "nav:movies"},
+        ],
+        [
+            {"text": "Series mode", "callback_data": "menu:series_mode"},
             {"text": "Movie mode", "callback_data": "menu:movie_mode"},
         ],
         [
@@ -471,6 +477,7 @@ PERSISTENT_CATEGORY_KEYBOARD = {
             {"text": "⚙️ Bot"},
         ],
         [
+            {"text": "Series"},
             {"text": "Movies"},
         ],
         [
@@ -501,6 +508,7 @@ CATEGORY_MENU = {
             {"text": "⚙️ Bot", "callback_data": "nav:bot"},
         ],
         [
+            {"text": "Series", "callback_data": "nav:series"},
             {"text": "Movies", "callback_data": "nav:movies"},
         ],
         [
@@ -616,6 +624,26 @@ JELLYFIN_MENU = {
     ]
 }
 
+SERIES_MENU = {
+    "inline_keyboard": [
+        [
+            {"text": "Series mode", "callback_data": "menu:series_mode"},
+        ],
+        [
+            {"text": "📁 Current folder", "callback_data": "menu:folder"},
+            {"text": "🗂 Pick existing", "callback_data": "menu:folders"},
+        ],
+        [
+            {"text": "Sort new files", "callback_data": "menu:sort_current"},
+            {"text": "Current series", "callback_data": "menu:episodes"},
+        ],
+        [
+            {"text": "All series", "callback_data": "menu:library_episodes"},
+        ],
+        SUBMENU_FOOTER,
+    ]
+}
+
 MOVIE_MENU = {
     "inline_keyboard": [
         [
@@ -707,6 +735,7 @@ CATEGORY_SUBMENUS = {
     "nav:folders": ("Folder commands:", FOLDER_MENU),
     "nav:sorting": ("Sorting commands:", SORTING_MENU),
     "nav:undo": ("Undo and recovery commands:", UNDO_MENU),
+    "nav:series": ("TV-series workflow:", SERIES_MENU),
     "nav:movies": ("Independent movie workflow:", MOVIE_MENU),
     "nav:jellyfin": ("Jellyfin commands:", JELLYFIN_MENU),
     "nav:imdb": ("IMDb fuzzy-search commands:", IMDB_MENU),
@@ -723,6 +752,7 @@ REPLY_CATEGORY_ACTIONS = {
     "🔎 IMDb": "nav:imdb",
     "📺 Episodes": "nav:episodes",
     "⚙️ Bot": "nav:bot",
+    "Series": "nav:series",
     "Movies": "nav:movies",
 }
 

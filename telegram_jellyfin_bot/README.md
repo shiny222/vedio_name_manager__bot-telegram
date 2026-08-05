@@ -216,8 +216,9 @@ Telegram channels cannot pre-fill editable slash commands the same way normal ch
 In a private chat, group, or supergroup, send `/menu` once to enable a persistent
 keyboard beside the message box. Its category buttons open smaller inline menus
 for downloads, folders, sorting, undo/recovery, Jellyfin, IMDb, episodes, and
-bot information. Movies have their own category. The existing quick-access inline menu is still sent and has
-not been replaced.
+bot information. Series and Movies each have their own category and mode
+button. The existing quick-access inline menu is still sent and has not been
+replaced.
 
 Telegram does not support persistent reply keyboards in channels. In a channel,
 use the **Command categories** button at the bottom of the existing inline menu;

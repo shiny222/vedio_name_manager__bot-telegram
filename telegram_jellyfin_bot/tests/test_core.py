@@ -21,6 +21,7 @@ from telegram_jellyfin_bot.bot import (
     GUIDE_LANGUAGE_MENU,
     MOVIE_MENU,
     PERSISTENT_CATEGORY_KEYBOARD,
+    SERIES_MENU,
     SORTING_MENU,
     TelegramAPI,
 )
@@ -818,6 +819,7 @@ class MenuNavigationTests(unittest.TestCase):
                         for row in markup.get("keyboard", markup.get("inline_keyboard", []))
                         for button in row
                     }
+                    self.assertIn("سریال‌ها", all_button_texts)
                     self.assertIn("فیلم‌ها", all_button_texts)
                     self.assertIn("⚡ منوی سریع", all_button_texts)
 
@@ -943,6 +945,54 @@ class MenuNavigationTests(unittest.TestCase):
                     self.assertEqual(app.queue.pending(), [])
                 finally:
                     app.store.close()
+        asyncio.run(exercise())
+
+    def test_series_category_is_available_beside_movies(self):
+        labels = [
+            button["text"]
+            for row in PERSISTENT_CATEGORY_KEYBOARD["keyboard"]
+            for button in row
+        ]
+        self.assertIn("Series", labels)
+        self.assertIn("Movies", labels)
+
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    sent.append((chat_id, text, reply_markup))
+
+                app.send = fake_send
+                try:
+                    await app.handle_update(
+                        {
+                            "message": {
+                                "message_id": 1,
+                                "chat": {
+                                    "id": 987654321,
+                                    "type": "private",
+                                },
+                                "text": "Series",
+                            }
+                        }
+                    )
+                    self.assertEqual(len(sent), 1)
+                    self.assertIs(sent[0][2], SERIES_MENU)
+                    callbacks = {
+                        button.get("callback_data")
+                        for row in SERIES_MENU["inline_keyboard"]
+                        for button in row
+                    }
+                    self.assertIn("menu:series_mode", callbacks)
+                finally:
+                    app.store.close()
+
         asyncio.run(exercise())
 
     def test_category_callback_replies_inside_its_existing_topic(self):

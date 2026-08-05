@@ -20,6 +20,9 @@ Send `/menu`. Private chats, groups, and supergroups receive the persistent
 category keyboard. Telegram does not support that keyboard in channels, so a
 channel uses the **Command categories** inline button instead.
 
+Use **Series** to return to episode mode or access common series actions. Use
+**Movies** for the independent movie workflow.
+
 In chats with topics enabled, the bot replies in the same existing topic where
 you sent the command or file. Opening a category does not create a new topic.
 
@@ -116,6 +119,9 @@ and `/movie_undo_last` to return the latest import to staging. Send
 دائمی دسته‌بندی‌ها نمایش داده می‌شود. تلگرام این صفحه‌کلید را در کانال
 پشتیبانی نمی‌کند؛ بنابراین در کانال از دکمه **Command categories** استفاده
 کنید.
+
+برای بازگشت به حالت قسمت‌ها و دسترسی به کارهای رایج سریال از **سریال‌ها** و
+برای روند مستقل فیلم از **فیلم‌ها** استفاده کنید.
 
 در چت‌هایی که موضوع (Topic) فعال است، ربات در همان موضوعی پاسخ می‌دهد که
 دستور یا فایل را در آن فرستادید. باز کردن دسته‌بندی موضوع جدیدی ایجاد نمی‌کند.
