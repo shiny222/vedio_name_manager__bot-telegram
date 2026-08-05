@@ -156,6 +156,46 @@ class ConfigAndPathTests(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_send_passes_existing_topic_identifiers_to_telegram(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+
+                class FakeResponse:
+                    async def __aenter__(self):
+                        return self
+
+                    async def __aexit__(self, *_):
+                        return False
+
+                    async def json(self):
+                        return {"ok": True, "result": True}
+
+                class FakeSession:
+                    def __init__(self):
+                        self.calls = []
+
+                    def post(self, url, **kwargs):
+                        self.calls.append(kwargs)
+                        return FakeResponse()
+
+                session = FakeSession()
+                api = TelegramAPI(cfg, session)
+                await api.send(
+                    -100123,
+                    "Category menu",
+                    message_thread_id=42,
+                    direct_messages_topic_id=7001,
+                )
+                data = session.calls[0]["data"]
+                self.assertEqual(data["message_thread_id"], "42")
+                self.assertEqual(data["direct_messages_topic_id"], "7001")
+
+        asyncio.run(exercise())
+
     def test_existing_folder_picker(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -743,7 +783,9 @@ class MenuNavigationTests(unittest.TestCase):
                     async def call(self, method, **params):
                         return True
 
-                    async def send(self, chat_id, text, reply_markup=None):
+                    async def send(
+                        self, chat_id, text, reply_markup=None, **kwargs
+                    ):
                         self.sent.append((text, reply_markup))
 
                 api = FakeApi()
@@ -901,6 +943,120 @@ class MenuNavigationTests(unittest.TestCase):
                     self.assertEqual(app.queue.pending(), [])
                 finally:
                     app.store.close()
+        asyncio.run(exercise())
+
+    def test_category_callback_replies_inside_its_existing_topic(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+
+                class FakeApi:
+                    def __init__(self):
+                        self.sent = []
+
+                    async def call(self, method, **params):
+                        return True
+
+                    async def send(
+                        self, chat_id, text, reply_markup=None, **kwargs
+                    ):
+                        self.sent.append((chat_id, text, reply_markup, kwargs))
+
+                api = FakeApi()
+                app.api = api
+                app.store.set_setting("language:-100123", "en")
+                try:
+                    await app.handle_update(
+                        {
+                            "callback_query": {
+                                "id": "category-callback",
+                                "data": "nav:sorting",
+                                "message": {
+                                    "message_id": 1,
+                                    "message_thread_id": 42,
+                                    "chat": {
+                                        "id": -100123,
+                                        "type": "supergroup",
+                                    },
+                                },
+                            }
+                        }
+                    )
+                    self.assertEqual(len(api.sent), 1)
+                    self.assertIs(api.sent[0][2], SORTING_MENU)
+                    self.assertEqual(api.sent[0][3]["message_thread_id"], 42)
+                    self.assertIsNone(
+                        api.sent[0][3]["direct_messages_topic_id"]
+                    )
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_concurrent_chats_keep_their_own_direct_message_topics(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                data = config_data(root)
+                data["allowed_chat_ids"] = []
+                path.write_text(json.dumps(data), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+
+                class FakeApi:
+                    def __init__(self):
+                        self.sent = []
+
+                    async def call(self, method, **params):
+                        return True
+
+                    async def send(
+                        self, chat_id, text, reply_markup=None, **kwargs
+                    ):
+                        # Force both updates to overlap. Context-local routing
+                        # must keep every response attached to its source.
+                        await asyncio.sleep(0)
+                        self.sent.append((chat_id, kwargs))
+
+                api = FakeApi()
+                app.api = api
+                for chat_id in (111, 222):
+                    app.store.set_setting(f"language:{chat_id}", "en")
+
+                def message(chat_id, topic_id):
+                    return {
+                        "message": {
+                            "message_id": topic_id,
+                            "chat": {"id": chat_id, "type": "private"},
+                            "direct_messages_topic": {"topic_id": topic_id},
+                            "text": "\U0001f9f9 Sorting",
+                        }
+                    }
+
+                try:
+                    await asyncio.gather(
+                        app.handle_update(message(111, 7001)),
+                        app.handle_update(message(222, 8002)),
+                    )
+                    routes = {
+                        chat_id: params["direct_messages_topic_id"]
+                        for chat_id, params in api.sent
+                    }
+                    self.assertEqual(routes, {111: 7001, 222: 8002})
+                    self.assertTrue(
+                        all(
+                            params["message_thread_id"] is None
+                            for _, params in api.sent
+                        )
+                    )
+                finally:
+                    app.store.close()
+
         asyncio.run(exercise())
 
 

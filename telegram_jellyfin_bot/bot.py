@@ -9,11 +9,20 @@ import re
 import sys
 import time
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import aiohttp
+
+
+CURRENT_MESSAGE_THREAD_ID: ContextVar[int | None] = ContextVar(
+    "telegram_message_thread_id", default=None
+)
+CURRENT_DIRECT_MESSAGES_TOPIC_ID: ContextVar[int | None] = ContextVar(
+    "telegram_direct_messages_topic_id", default=None
+)
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -163,6 +172,8 @@ GUIDE_EN = """How to use the Telegram Jellyfin Bot
 • On first use, choose English or فارسی. Use /language to change it later.
 • Private chats and groups get the persistent category keyboard.
 • In a channel, press Command categories in the inline menu.
+• In chats with topics enabled, replies stay in the same existing topic where
+  you sent the command, button, or file. The bot does not create a new topic.
 
 3. Select the series folder before sending videos
 • Existing series: /folders, then press its folder.
@@ -236,6 +247,8 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
   /language استفاده کنید.
 • در گفت‌وگوی خصوصی و گروه، صفحه‌کلید دائمی دسته‌بندی‌ها نمایش داده می‌شود.
 • در کانال، دکمه Command categories را در منوی شیشه‌ای انتخاب کنید.
+• در چت‌هایی که موضوع (Topic) فعال است، پاسخ‌ها در همان موضوعی می‌مانند که
+  دستور، دکمه یا فایل را در آن فرستادید. ربات موضوع جدیدی ایجاد نمی‌کند.
 
 ۳. قبل از فرستادن ویدیو، پوشه سریال را انتخاب کنید
 • سریال موجود: دستور /folders را بفرستید و پوشه را انتخاب کنید.
@@ -817,9 +830,21 @@ class TelegramAPI:
         return payload.get("result")
 
     async def send(
-        self, chat_id: int, text: str, reply_markup: dict | None = None
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: dict | None = None,
+        *,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
     ) -> None:
         params: dict[str, str] = {"chat_id": str(chat_id), "text": text[:4000]}
+        if message_thread_id is not None:
+            params["message_thread_id"] = str(int(message_thread_id))
+        if direct_messages_topic_id is not None:
+            params["direct_messages_topic_id"] = str(
+                int(direct_messages_topic_id)
+            )
         if reply_markup is not None:
             params["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
         await self.call("sendMessage", **params)
@@ -950,10 +975,33 @@ class BotApp:
         return not self.config.allowed_chat_ids or chat_id in self.config.allowed_chat_ids
 
     async def handle_update(self, update: dict) -> None:
-        if update.get("callback_query"):
-            await self.handle_callback(update["callback_query"])
+        callback = update.get("callback_query")
+        message = (
+            (callback.get("message") or {})
+            if callback
+            else (update.get("message") or update.get("channel_post") or {})
+        )
+        thread_id = message.get("message_thread_id")
+        direct_topic = message.get("direct_messages_topic") or {}
+        direct_topic_id = direct_topic.get("topic_id")
+        thread_token = CURRENT_MESSAGE_THREAD_ID.set(
+            int(thread_id) if thread_id is not None else None
+        )
+        direct_token = CURRENT_DIRECT_MESSAGES_TOPIC_ID.set(
+            int(direct_topic_id) if direct_topic_id is not None else None
+        )
+        try:
+            await self._handle_update_in_context(update, callback, message)
+        finally:
+            CURRENT_MESSAGE_THREAD_ID.reset(thread_token)
+            CURRENT_DIRECT_MESSAGES_TOPIC_ID.reset(direct_token)
+
+    async def _handle_update_in_context(
+        self, update: dict, callback: dict | None, message: dict
+    ) -> None:
+        if callback:
+            await self.handle_callback(callback)
             return
-        message = update.get("message") or update.get("channel_post")
         if not message:
             return
         chat_id = int(message["chat"]["id"])
@@ -994,7 +1042,13 @@ class BotApp:
         text = translate_text(text, language)
         reply_markup = translate_markup(reply_markup, language)
         try:
-            await self.api.send(chat_id, text, reply_markup)
+            await self.api.send(
+                chat_id,
+                text,
+                reply_markup,
+                message_thread_id=CURRENT_MESSAGE_THREAD_ID.get(),
+                direct_messages_topic_id=CURRENT_DIRECT_MESSAGES_TOPIC_ID.get(),
+            )
         except Exception:
             LOG.exception("Could not send Telegram message")
 

@@ -96,6 +96,10 @@ group share one group-chat namespace because Telegram gives the group one chat
 ID. The Jellyfin folders themselves are still a shared library, so filesystem
 operations are serialized and retain the no-overwrite protections.
 
+In chats with Telegram topics enabled, every reply stays in the same existing
+topic where the command, button, or file was sent. The bot does not create a
+new topic for the category menu.
+
 To restrict access later, add the desired IDs to `allowed_chat_ids`; `/chatid`
 shows the current one.
 
