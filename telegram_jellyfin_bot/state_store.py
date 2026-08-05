@@ -1,10 +1,26 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+LEGACY_CHAT_SETTINGS = {
+    "current_folder",
+    "latest_downloaded_file",
+    "latest_downloaded_folder",
+    "latest_downloaded_movie_file",
+    "latest_downloaded_movie_id",
+    "latest_imported_movie_id",
+    "latest_movie_batch_id",
+}
+
+
+def chat_setting_key(chat_id: int, name: str) -> str:
+    return f"chat:{int(chat_id)}:{name}"
 
 
 def utc_now() -> str:
@@ -52,6 +68,9 @@ class StateStore:
                 );
                 CREATE TABLE IF NOT EXISTS sorter_runs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id INTEGER,
+                    operation_kind TEXT NOT NULL DEFAULT 'series',
+                    batch_id TEXT,
                     folder TEXT NOT NULL,
                     status TEXT NOT NULL,
                     command TEXT NOT NULL,
@@ -79,9 +98,89 @@ class StateStore:
                     self.conn.execute(
                         f"ALTER TABLE queue_items ADD COLUMN {name} {declaration}"
                     )
+            sorter_columns = {
+                str(row["name"])
+                for row in self.conn.execute("PRAGMA table_info(sorter_runs)")
+            }
+            sorter_migrations = {
+                "chat_id": "INTEGER",
+                "operation_kind": "TEXT NOT NULL DEFAULT 'series'",
+                "batch_id": "TEXT",
+            }
+            for name, declaration in sorter_migrations.items():
+                if name not in sorter_columns:
+                    self.conn.execute(
+                        f"ALTER TABLE sorter_runs ADD COLUMN {name} {declaration}"
+                    )
+            self._migrate_legacy_sorter_runs()
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_queue_chat_status "
+                "ON queue_items(chat_id,status,pending_id)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sorter_chat_kind "
+                "ON sorter_runs(chat_id,operation_kind,id)"
+            )
             self.conn.execute(
                 "UPDATE queue_items SET status='queued', error='Recovered after bot restart' "
                 "WHERE status='downloading'"
+            )
+
+    def _migrate_legacy_sorter_runs(self) -> None:
+        """Assign old single-user sorter records to their most likely owner."""
+        rows = self.conn.execute(
+            "SELECT id,command,output FROM sorter_runs WHERE chat_id IS NULL"
+        ).fetchall()
+        if not rows:
+            return
+        owner_row = self.conn.execute(
+            "SELECT chat_id FROM queue_items ORDER BY pending_id DESC LIMIT 1"
+        ).fetchone()
+        legacy_owner = int(owner_row["chat_id"]) if owner_row is not None else None
+        for row in rows:
+            command_text = str(row["command"] or "")
+            command_lower = command_text.casefold()
+            output = str(row["output"] or "")
+            if "movie_organizer.py" in command_lower:
+                kind = "movie"
+            elif '"undo-batch"' in command_lower or '"undo-last"' in command_lower:
+                kind = "series_undo"
+            elif any(
+                marker in command_lower
+                for marker in (
+                    '"rename-folder"',
+                    '"sort-history"',
+                    '"sort-back"',
+                    '"sort-forward"',
+                    '"recover-folder"',
+                )
+            ):
+                kind = "series_maintenance"
+            else:
+                kind = "series"
+            match = re.search(
+                r"(?:Resort |Metadata )?Batch ID:\s*([A-Za-z0-9._-]{1,100})",
+                output,
+                re.IGNORECASE,
+            )
+            batch_id = match.group(1) if match and kind == "series" else None
+            owner = legacy_owner
+            if kind == "movie":
+                movie_batch = re.search(
+                    r'"batch_id"\s*:\s*"([A-Za-z0-9._-]{1,100})"', output
+                )
+                if movie_batch:
+                    movie_owner = self.conn.execute(
+                        "SELECT chat_id FROM queue_items WHERE movie_batch_id=? "
+                        "ORDER BY pending_id DESC LIMIT 1",
+                        (movie_batch.group(1),),
+                    ).fetchone()
+                    if movie_owner is not None:
+                        owner = int(movie_owner["chat_id"])
+            self.conn.execute(
+                "UPDATE sorter_runs SET chat_id=?,operation_kind=?,batch_id=? "
+                "WHERE id=?",
+                (owner, kind, batch_id, int(row["id"])),
             )
 
     def close(self) -> None:
@@ -98,6 +197,87 @@ class StateStore:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, value),
             )
+
+    def get_chat_setting(self, chat_id: int, name: str, default: str = "") -> str:
+        """Read chat-private state and safely claim legacy single-chat state once."""
+        key = chat_setting_key(chat_id, name)
+        row = self.conn.execute(
+            "SELECT value FROM settings WHERE key=?", (key,)
+        ).fetchone()
+        if row is not None:
+            return str(row["value"])
+        if name not in LEGACY_CHAT_SETTINGS:
+            return default
+        with self.lock, self.conn:
+            owner_row = self.conn.execute(
+                "SELECT value FROM settings WHERE key='legacy_chat_state_owner'"
+            ).fetchone()
+            owner = str(owner_row["value"]) if owner_row else ""
+            if not owner:
+                queue_owner = self.conn.execute(
+                    "SELECT chat_id FROM queue_items ORDER BY pending_id DESC LIMIT 1"
+                ).fetchone()
+                owner = (
+                    str(int(queue_owner["chat_id"]))
+                    if queue_owner is not None
+                    else str(int(chat_id))
+                )
+                self.conn.execute(
+                    "INSERT INTO settings(key,value) VALUES('legacy_chat_state_owner',?)",
+                    (owner,),
+                )
+            if owner != str(int(chat_id)):
+                return default
+            legacy_row = self.conn.execute(
+                "SELECT value FROM settings WHERE key=?", (name,)
+            ).fetchone()
+            legacy = str(legacy_row["value"]) if legacy_row else ""
+            if legacy:
+                self.conn.execute(
+                    "INSERT INTO settings(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, legacy),
+                )
+                return legacy
+        return default
+
+    def has_chat_setting(self, chat_id: int, name: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM settings WHERE key=?",
+            (chat_setting_key(chat_id, name),),
+        ).fetchone()
+        return row is not None
+
+    def set_chat_setting(self, chat_id: int, name: str, value: str) -> None:
+        self.set_setting(chat_setting_key(chat_id, name), value)
+
+    def replace_chat_setting_value(
+        self, name: str, old_value: str, new_value: str
+    ) -> int:
+        """Keep every chat's pointer valid after a shared folder is renamed."""
+        with self.lock, self.conn:
+            cursor = self.conn.execute(
+                "UPDATE settings SET value=? WHERE key GLOB ? AND value=?",
+                (new_value, f"chat:*:{name}", old_value),
+            )
+            return cursor.rowcount
+
+    def replace_chat_setting_prefix(
+        self, name: str, old_prefix: str, new_prefix: str
+    ) -> int:
+        with self.lock, self.conn:
+            cursor = self.conn.execute(
+                "UPDATE settings SET value=? || substr(value, ?) "
+                "WHERE key GLOB ? AND substr(value, 1, ?)=?",
+                (
+                    new_prefix,
+                    len(old_prefix) + 1,
+                    f"chat:*:{name}",
+                    len(old_prefix),
+                    old_prefix,
+                ),
+            )
+            return cursor.rowcount
 
     def add_queue_item(self, **values: Any) -> int | None:
         now = utc_now()
@@ -128,21 +308,33 @@ class StateStore:
             except sqlite3.IntegrityError:
                 return None
 
-    def list_items(self, statuses: tuple[str, ...] | None = None) -> list[dict]:
+    def list_items(
+        self,
+        statuses: tuple[str, ...] | None = None,
+        chat_id: int | None = None,
+    ) -> list[dict]:
+        clauses: list[str] = []
+        values: list[Any] = []
         if statuses:
             marks = ",".join("?" for _ in statuses)
-            rows = self.conn.execute(
-                f"SELECT * FROM queue_items WHERE status IN ({marks}) ORDER BY pending_id",
-                statuses,
-            ).fetchall()
-        else:
-            rows = self.conn.execute("SELECT * FROM queue_items ORDER BY pending_id").fetchall()
+            clauses.append(f"status IN ({marks})")
+            values.extend(statuses)
+        if chat_id is not None:
+            clauses.append("chat_id=?")
+            values.append(int(chat_id))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM queue_items{where} ORDER BY pending_id", tuple(values)
+        ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_item(self, pending_id: int) -> dict | None:
-        row = self.conn.execute(
-            "SELECT * FROM queue_items WHERE pending_id=?", (pending_id,)
-        ).fetchone()
+    def get_item(self, pending_id: int, chat_id: int | None = None) -> dict | None:
+        query = "SELECT * FROM queue_items WHERE pending_id=?"
+        values: tuple[Any, ...] = (pending_id,)
+        if chat_id is not None:
+            query += " AND chat_id=?"
+            values += (int(chat_id),)
+        row = self.conn.execute(query, values).fetchone()
         return dict(row) if row else None
 
     def update_item(self, pending_id: int, **values: Any) -> None:
@@ -156,22 +348,29 @@ class StateStore:
                 (*values.values(), pending_id),
             )
 
-    def remove_item(self, pending_id: int) -> bool:
+    def remove_item(self, pending_id: int, chat_id: int | None = None) -> bool:
+        owner_clause = " AND chat_id=?" if chat_id is not None else ""
+        values: tuple[Any, ...] = (
+            (pending_id, int(chat_id)) if chat_id is not None else (pending_id,)
+        )
         with self.lock, self.conn:
             cursor = self.conn.execute(
                 "DELETE FROM queue_items WHERE pending_id=? AND status IN "
                 "('queued','failed','waiting_overwrite','cancelled',"
-                "'awaiting_identification')",
-                (pending_id,),
+                f"'awaiting_identification'){owner_clause}",
+                values,
             )
             return cursor.rowcount > 0
 
-    def clear_queue(self) -> int:
+    def clear_queue(self, chat_id: int | None = None) -> int:
+        owner_clause = " AND chat_id=?" if chat_id is not None else ""
+        values: tuple[Any, ...] = (int(chat_id),) if chat_id is not None else ()
         with self.lock, self.conn:
             cursor = self.conn.execute(
                 "DELETE FROM queue_items WHERE status IN "
                 "('queued','failed','waiting_overwrite','cancelled',"
-                "'awaiting_identification')"
+                f"'awaiting_identification'){owner_clause}",
+                values,
             )
             return cursor.rowcount
 
@@ -224,37 +423,128 @@ class StateStore:
         ).fetchone()
         return dict(row) if row else None
 
-    def mark_movie_batch_status(self, batch_id: str, status: str) -> int:
+    def mark_movie_batch_status(
+        self, batch_id: str, status: str, chat_id: int | None = None
+    ) -> int:
         if status not in {"movie_undone", "movie_undo_partial"}:
             raise ValueError("Invalid movie undo status.")
         with self.lock, self.conn:
+            owner_clause = " AND chat_id=?" if chat_id is not None else ""
+            values: tuple[Any, ...] = (status, utc_now(), batch_id)
+            if chat_id is not None:
+                values += (int(chat_id),)
             cursor = self.conn.execute(
                 "UPDATE queue_items SET status=?,updated_at=? "
-                "WHERE media_kind='movie' AND movie_batch_id=?",
-                (status, utc_now(), batch_id),
+                f"WHERE media_kind='movie' AND movie_batch_id=?{owner_clause}",
+                values,
             )
             return cursor.rowcount
+
+    def movie_batch_belongs_to_chat(self, batch_id: str, chat_id: int) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM queue_items WHERE media_kind='movie' "
+            "AND movie_batch_id=? AND chat_id=? LIMIT 1",
+            (batch_id, int(chat_id)),
+        ).fetchone()
+        return row is not None
+
+    def latest_movie_batch(self, chat_id: int) -> str:
+        row = self.conn.execute(
+            "SELECT movie_batch_id FROM queue_items WHERE media_kind='movie' "
+            "AND chat_id=? AND status IN ('imported','movie_undo_partial') "
+            "AND movie_batch_id IS NOT NULL AND movie_batch_id<>'' "
+            "ORDER BY pending_id DESC LIMIT 1",
+            (int(chat_id),),
+        ).fetchone()
+        return str(row["movie_batch_id"]) if row else ""
 
     def mark_movie_batch_undone(self, batch_id: str) -> int:
         return self.mark_movie_batch_status(batch_id, "movie_undone")
 
-    def create_sorter_run(self, folder: str, command: str) -> int:
+    def create_sorter_run(
+        self,
+        folder: str,
+        command: str,
+        chat_id: int | None = None,
+        operation_kind: str = "series",
+    ) -> int:
         with self.lock, self.conn:
             cursor = self.conn.execute(
-                "INSERT INTO sorter_runs(folder,status,command,started_at) VALUES(?,?,?,?)",
-                (folder, "running", command, utc_now()),
+                "INSERT INTO sorter_runs(chat_id,operation_kind,folder,status,command,started_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (chat_id, operation_kind, folder, "running", command, utc_now()),
             )
             return int(cursor.lastrowid)
 
-    def finish_sorter_run(self, run_id: int, status: str, output: str) -> None:
+    def finish_sorter_run(
+        self,
+        run_id: int,
+        status: str,
+        output: str,
+        batch_id: str | None = None,
+    ) -> None:
         with self.lock, self.conn:
             self.conn.execute(
-                "UPDATE sorter_runs SET status=?,output=?,finished_at=? WHERE id=?",
-                (status, output, utc_now(), run_id),
+                "UPDATE sorter_runs SET status=?,output=?,finished_at=?,batch_id=? "
+                "WHERE id=?",
+                (status, output, utc_now(), batch_id, run_id),
             )
 
-    def latest_sorter_run(self) -> dict | None:
+    def latest_sorter_run(
+        self,
+        chat_id: int | None = None,
+        operation_kind: str | None = None,
+    ) -> dict | None:
+        clauses: list[str] = []
+        values: list[Any] = []
+        if chat_id is not None:
+            clauses.append("chat_id=?")
+            values.append(int(chat_id))
+        if operation_kind is not None:
+            clauses.append("operation_kind=?")
+            values.append(operation_kind)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
         row = self.conn.execute(
-            "SELECT * FROM sorter_runs ORDER BY id DESC LIMIT 1"
+            f"SELECT * FROM sorter_runs{where} ORDER BY id DESC LIMIT 1",
+            tuple(values),
         ).fetchone()
         return dict(row) if row else None
+
+    def latest_series_sorter_run(self, chat_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM sorter_runs WHERE chat_id=? "
+            "AND operation_kind GLOB 'series*' ORDER BY id DESC LIMIT 1",
+            (int(chat_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def latest_sorter_batch(self, chat_id: int) -> str:
+        row = self.conn.execute(
+            "SELECT batch_id FROM sorter_runs WHERE chat_id=? "
+            "AND operation_kind='series' "
+            "AND status IN ('completed','failed','undo_partial') "
+            "AND batch_id IS NOT NULL AND batch_id<>'' ORDER BY id DESC LIMIT 1",
+            (int(chat_id),),
+        ).fetchone()
+        return str(row["batch_id"]) if row else ""
+
+    def mark_sorter_batch_status(
+        self, batch_id: str, chat_id: int, status: str
+    ) -> int:
+        if status not in {"undone", "undo_partial"}:
+            raise ValueError("Invalid sorter batch status.")
+        with self.lock, self.conn:
+            cursor = self.conn.execute(
+                "UPDATE sorter_runs SET status=?,finished_at=? WHERE batch_id=? "
+                "AND chat_id=? AND operation_kind='series'",
+                (status, utc_now(), batch_id, int(chat_id)),
+            )
+            return cursor.rowcount
+
+    def sorter_batch_belongs_to_chat(self, batch_id: str, chat_id: int) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM sorter_runs WHERE batch_id=? AND chat_id=? "
+            "AND operation_kind='series' LIMIT 1",
+            (batch_id, int(chat_id)),
+        ).fetchone()
+        return row is not None

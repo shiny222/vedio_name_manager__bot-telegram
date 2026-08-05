@@ -103,25 +103,42 @@ class MovieSorterBridge:
         return await self._execute(
             self.build_import_command(item, dry_run),
             str(item.get("downloaded_path") or ""),
+            chat_id=int(item["chat_id"]),
         )
 
-    async def undo_last(self) -> dict:
+    async def undo_last(self, chat_id: int | None = None) -> dict:
         return await self._execute(
-            self.build_undo_command(), "movie library", allow_partial=True
+            self.build_undo_command(),
+            "movie library",
+            chat_id=chat_id,
+            allow_partial=True,
         )
 
-    async def undo_batch(self, batch_id: str) -> dict:
+    async def undo_batch(self, batch_id: str, chat_id: int | None = None) -> dict:
         return await self._execute(
-            self.build_undo_command(batch_id), "movie library", allow_partial=True
+            self.build_undo_command(batch_id),
+            "movie library",
+            chat_id=chat_id,
+            allow_partial=True,
         )
 
     async def _execute(
-        self, command: list[str], label: str, *, allow_partial: bool = False
+        self,
+        command: list[str],
+        label: str,
+        *,
+        chat_id: int | None = None,
+        allow_partial: bool = False,
     ) -> dict:
         if self.active:
             raise RuntimeError("Another movie organizer operation is already running.")
         self.active = True
-        run_id = self.store.create_sorter_run(label, json.dumps(command, ensure_ascii=False))
+        run_id = self.store.create_sorter_run(
+            label,
+            json.dumps(command, ensure_ascii=False),
+            chat_id=chat_id,
+            operation_kind="movie",
+        )
         process: asyncio.subprocess.Process | None = None
         try:
             process = await asyncio.create_subprocess_exec(
@@ -168,9 +185,7 @@ class MovieSorterBridge:
             raise
         except Exception as exc:
             await _stop_process(process)
-            current = self.store.latest_sorter_run()
-            if current and current.get("id") == run_id and current.get("status") == "running":
-                self.store.finish_sorter_run(run_id, "failed", str(exc))
+            self.store.finish_sorter_run(run_id, "failed", str(exc))
             raise
         finally:
             self.active = False

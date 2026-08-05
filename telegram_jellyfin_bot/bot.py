@@ -27,6 +27,13 @@ if __package__ in {None, ""}:
         ImdbFuzzySearchBridge, movie_query_from_filename
     )
     from telegram_jellyfin_bot.movie_sorter_bridge import MovieSorterBridge
+    from telegram_jellyfin_bot.localization import (
+        LANGUAGE_MENU,
+        language_code,
+        reply_category_action,
+        translate_markup,
+        translate_text,
+    )
     from telegram_jellyfin_bot.queue_manager import QueueManager
     from telegram_jellyfin_bot.sorter_bridge import SorterBridge
     from telegram_jellyfin_bot.state_store import StateStore
@@ -40,6 +47,13 @@ else:
     from .jellyfin_bridge import JellyfinBridge
     from .imdb_bridge import ImdbFuzzySearchBridge, movie_query_from_filename
     from .movie_sorter_bridge import MovieSorterBridge
+    from .localization import (
+        LANGUAGE_MENU,
+        language_code,
+        reply_category_action,
+        translate_markup,
+        translate_text,
+    )
     from .queue_manager import QueueManager
     from .sorter_bridge import SorterBridge
     from .state_store import StateStore
@@ -88,8 +102,55 @@ HELP = """Commands:
 /movie_undo_last - Undo the latest movie import batch
 /movie_undo_batch ID - Undo a specific movie import batch
 /chatid - Show this chat ID
+/language - Choose English or Persian
 /guide - Show the English/Persian usage guide
 /help - Show this help"""
+
+HELP_FA = """دستورها:
+/menu - نمایش منوی دکمه‌ای
+/help - نمایش راهنمای دستورها
+/guide - نمایش راهنمای استفاده
+/language - انتخاب زبان فارسی یا انگلیسی
+/status - نمایش وضعیت ربات و دانلود
+/chatid - نمایش شناسه این چت
+/setfolder NAME - تنظیم یا ساخت پوشه سریال
+/folders - انتخاب پوشه سریال موجود
+/usefolder NAME - استفاده از پوشه موجود
+/renamefolder NAME - تغییر امن نام پوشه فعلی
+/folder - نمایش پوشه فعلی
+/unsetfolder - پاک کردن پوشه فعلی
+/queue - نمایش صف دانلود
+/remove ID - حذف یک مورد از صف
+/clearqueue - پاک کردن صف
+/download - بررسی و آماده‌سازی دانلودها
+/confirm_download - تأیید و شروع دانلود
+/cancel - لغو عملیات فعلی
+/resolve ID skip|overwrite|save_with_suffix - رفع تداخل فایل
+/sort_current - مرتب‌سازی فایل‌های جدید پوشه فعلی
+/resort_current - اصلاح نام قسمت‌های مرتب‌شده
+/sort_latest - مرتب‌سازی آخرین پوشه دانلودشده
+/sort_folder NAME - مرتب‌سازی یک پوشه مشخص
+/sort_status - نمایش وضعیت مرتب‌ساز
+/sort_history - نمایش نسخه‌های مرتب‌سازی
+/sort_back - یک نسخه به عقب
+/sort_forward - یک نسخه به جلو
+/recover_current - بازیابی عملیات ناقص پوشه فعلی
+/fix_metadata_current - اصلاح نام متادیتای قسمت‌ها
+/undo_sort_last - بازگردانی آخرین دسته مرتب‌سازی
+/undo_sort_batch ID - بازگردانی یک دسته مشخص
+/movie_mode - ورود به حالت فیلم
+/series_mode - بازگشت به حالت سریال
+/movie_current - نمایش آخرین عملیات فیلم
+/movie_cancel - لغو فیلم پردازش‌نشده
+/movie_import [ID] - تلاش دوباره برای انتقال فیلم staging
+/movie_undo_last - بازگردانی آخرین فیلم
+/movie_undo_batch ID - بازگردانی یک دسته فیلم
+/jellyfin_scan - شروع اسکن کتابخانه Jellyfin
+/jellyfin_status - بررسی اتصال و وضعیت Jellyfin
+/episodes [NAME] - نمایش قسمت‌های یک سریال
+/library_episodes - خلاصه قسمت‌های کل کتابخانه
+/imdb_search NAME - جستجوی نام رسمی در IMDb
+/imdb_fix_current [NAME] - اصلاح نام پوشه فعلی با IMDb"""
 
 GUIDE_EN = """How to use the Telegram Jellyfin Bot
 
@@ -255,6 +316,7 @@ BOT_COMMANDS = [
     {"command": "guide", "description": "General: How to use the bot (EN/FA)"},
     {"command": "status", "description": "General: Show bot and download status"},
     {"command": "chatid", "description": "General: Show this chat ID"},
+    {"command": "language", "description": "General: Choose English or Persian"},
     # Folder selection and naming
     {"command": "folder", "description": "Folders: Show the current folder"},
     {"command": "folders", "description": "Folders: Pick an existing folder"},
@@ -361,6 +423,7 @@ CHANNEL_MENU = {
         ],
         [
             {"text": "📖 How to use (English / فارسی)", "callback_data": "menu:guide"},
+            {"text": "🌐 Language", "callback_data": "menu:language"},
         ],
         [
             {"text": "🗂 Command categories", "callback_data": "nav:categories"},
@@ -610,6 +673,9 @@ BOT_MENU = {
             {"text": "❓ Command list", "callback_data": "menu:help"},
         ],
         [
+            {"text": "🌐 Language", "callback_data": "menu:language"},
+        ],
+        [
             {"text": "⚡ Quick menu", "callback_data": "menu:open"},
         ],
         [
@@ -771,17 +837,21 @@ class BotApp:
         self.movie_choices: dict[str, dict] = {}
         self.movie_manual_pending: dict[int, int] = {}
         self.background_tasks: set[asyncio.Task] = set()
+        self.task_chat_ids: dict[asyncio.Task, int] = {}
         self.chat_types: dict[int, str] = {}
-        if not self.store.get_setting("current_folder") and config.default_target_folder:
-            self.store.set_setting("current_folder", sanitize_folder_name(config.default_target_folder))
 
-    def track_task(self, awaitable: Any, name: str) -> asyncio.Task:
+    def track_task(
+        self, awaitable: Any, name: str, chat_id: int | None = None
+    ) -> asyncio.Task:
         """Start a background task and keep it visible until it finishes."""
         task = asyncio.create_task(awaitable, name=name)
         self.background_tasks.add(task)
+        if chat_id is not None:
+            self.task_chat_ids[task] = int(chat_id)
 
         def _done_callback(done_task: asyncio.Task) -> None:
             self.background_tasks.discard(done_task)
+            self.task_chat_ids.pop(done_task, None)
             try:
                 done_task.result()
             except asyncio.CancelledError:
@@ -800,6 +870,7 @@ class BotApp:
             task.cancel()
         await asyncio.gather(*self.background_tasks, return_exceptions=True)
         self.background_tasks.clear()
+        self.task_chat_ids.clear()
 
     async def run(self) -> None:
         timeout = aiohttp.ClientTimeout(total=None, connect=15, sock_read=60)
@@ -888,7 +959,10 @@ class BotApp:
         text = str(message.get("text", "")).strip()
         if text.startswith("/"):
             await self.handle_command(chat_id, text)
-        elif text in REPLY_CATEGORY_ACTIONS or text == "⚡ Quick Menu":
+        elif reply_category_action(text, REPLY_CATEGORY_ACTIONS) or text in {
+            "⚡ Quick Menu",
+            "⚡ منوی سریع",
+        }:
             await self.handle_reply_category(chat_id, text)
         elif text and chat_id in self.movie_manual_pending:
             pending_id = self.movie_manual_pending.pop(chat_id)
@@ -897,18 +971,45 @@ class BotApp:
                     chat_id, pending_id, text, manual_query=True
                 ),
                 f"movie-imdb-search:{chat_id}:{pending_id}",
+                chat_id,
             )
         else:
             await self.handle_media(chat_id, message)
 
     async def send(
-        self, chat_id: int, text: str, reply_markup: dict | None = None
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: dict | None = None,
+        *,
+        force_language: str | None = None,
     ) -> None:
         assert self.api
+        language = language_code(force_language or self._language(chat_id))
+        text = translate_text(text, language)
+        reply_markup = translate_markup(reply_markup, language)
         try:
             await self.api.send(chat_id, text, reply_markup)
         except Exception:
             LOG.exception("Could not send Telegram message")
+
+    def _language(self, chat_id: int) -> str:
+        return language_code(
+            self.store.get_setting(f"language:{chat_id}", "en")
+        )
+
+    def _chat_setting(self, chat_id: int, name: str, default: str = "") -> str:
+        value = self.store.get_chat_setting(chat_id, name, default)
+        if (
+            name == "current_folder"
+            and not self.store.has_chat_setting(chat_id, name)
+            and self.config.default_target_folder
+        ):
+            return sanitize_folder_name(self.config.default_target_folder)
+        return value
+
+    def _set_chat_setting(self, chat_id: int, name: str, value: str) -> None:
+        self.store.set_chat_setting(chat_id, name, value)
 
     async def handle_callback(self, query: dict) -> None:
         assert self.api
@@ -954,15 +1055,39 @@ class BotApp:
             "menu:movie_cancel": self.cmd_movie_cancel,
             "menu:movie_import": self.cmd_movie_import,
             "menu:movie_undo_last": self.cmd_movie_undo_last,
+            "menu:language": self.cmd_language,
             "menu:open": self.cmd_quick_menu,
             "menu:guide": self.cmd_guide,
             "menu:help": self.cmd_help,
         }
+        if action in {"language:en", "language:fa"}:
+            selected = action.partition(":")[2]
+            self.store.set_setting(f"language:{int(chat_id)}", selected)
+            confirmation = (
+                "Language changed to Persian."
+                if selected == "fa"
+                else "Language changed to English."
+            )
+            await self.send(int(chat_id), confirmation)
+            await self.cmd_menu(int(chat_id), "")
+            return
         if action == "guide:en":
-            await self.send(int(chat_id), GUIDE_EN, GUIDE_LANGUAGE_MENU)
+            self.store.set_setting(f"language:{int(chat_id)}", "en")
+            await self.send(
+                int(chat_id),
+                GUIDE_EN,
+                GUIDE_LANGUAGE_MENU,
+                force_language="en",
+            )
             return
         if action == "guide:fa":
-            await self.send(int(chat_id), GUIDE_FA, GUIDE_LANGUAGE_MENU)
+            self.store.set_setting(f"language:{int(chat_id)}", "fa")
+            await self.send(
+                int(chat_id),
+                GUIDE_FA,
+                GUIDE_LANGUAGE_MENU,
+                force_language="fa",
+            )
             return
         if action == "nav:categories":
             await self.send(
@@ -1041,6 +1166,7 @@ class BotApp:
                     int(chat_id), pending_id, query_text, manual_query=False
                 ),
                 f"movie-imdb-search:{chat_id}:{pending_id}",
+                int(chat_id),
             )
             return
         if action.startswith("moviemanual:"):
@@ -1113,7 +1239,7 @@ class BotApp:
             removed = bool(
                 item
                 and item.get("status") == "awaiting_identification"
-                and self.queue.remove(pending_id)
+                and self.queue.remove(pending_id, chat_id=int(chat_id))
             )
             if self.movie_manual_pending.get(int(chat_id)) == pending_id:
                 self.movie_manual_pending.pop(int(chat_id), None)
@@ -1146,7 +1272,11 @@ class BotApp:
         if action.startswith("imdbpick:"):
             token = action.partition(":")[2]
             choice = self.imdb_choices.get(token)
-            if not choice or time.time() - choice["created_at"] > 600:
+            if (
+                not choice
+                or int(choice.get("chat_id", 0)) != int(chat_id)
+                or time.time() - choice["created_at"] > 600
+            ):
                 await self.send(
                     int(chat_id),
                     "This IMDb result expired. Run /imdb_search again.",
@@ -1156,13 +1286,18 @@ class BotApp:
             return
         if action.startswith("folderconfirm:"):
             token = action.partition(":")[2]
-            choice = self.imdb_choices.pop(token, None)
-            if not choice or time.time() - choice["created_at"] > 600:
+            choice = self.imdb_choices.get(token)
+            if (
+                not choice
+                or int(choice.get("chat_id", 0)) != int(chat_id)
+                or time.time() - choice["created_at"] > 600
+            ):
                 await self.send(int(chat_id), "This confirmation expired. Please try again.")
                 return
+            self.imdb_choices.pop(token, None)
             if choice["mode"] == "rename":
                 source_folder = str(choice.get("source_folder", ""))
-                current_folder = self.store.get_setting("current_folder")
+                current_folder = self._chat_setting(int(chat_id), "current_folder")
                 if not source_folder or current_folder != source_folder:
                     await self.send(
                         int(chat_id),
@@ -1183,7 +1318,9 @@ class BotApp:
             return
         if action.startswith("foldercancel:"):
             token = action.partition(":")[2]
-            self.imdb_choices.pop(token, None)
+            choice = self.imdb_choices.get(token)
+            if choice and int(choice.get("chat_id", 0)) == int(chat_id):
+                self.imdb_choices.pop(token, None)
             await self.send(int(chat_id), "Folder change cancelled.", CHANNEL_MENU)
             return
         handler = handlers.get(action)
@@ -1192,10 +1329,10 @@ class BotApp:
 
     async def handle_reply_category(self, chat_id: int, text: str) -> None:
         """Open an inline submenu selected from the persistent reply keyboard."""
-        if text == "⚡ Quick Menu":
+        if text in {"⚡ Quick Menu", "⚡ منوی سریع"}:
             await self.cmd_quick_menu(chat_id, "")
             return
-        action = REPLY_CATEGORY_ACTIONS.get(text)
+        action = reply_category_action(text, REPLY_CATEGORY_ACTIONS)
         submenu = CATEGORY_SUBMENUS.get(action or "")
         if submenu:
             title, markup = submenu
@@ -1233,16 +1370,18 @@ class BotApp:
             original_filename=filename,
             file_size=media.get("file_size"),
             received_at=datetime.now(timezone.utc).isoformat(),
-            target_folder=self.store.get_setting("current_folder"),
+            target_folder=self._chat_setting(chat_id, "current_folder"),
             media_kind="series",
         )
         if pending_id is None:
             await self.send(chat_id, "This video is already in the queue.")
         else:
-            target_folder = self.store.get_setting("current_folder")
-            item_number = self._queue_display_number(pending_id, target_folder)
+            target_folder = self._chat_setting(chat_id, "current_folder")
+            item_number = self._queue_display_number(
+                chat_id, pending_id, target_folder
+            )
             notice = self._episode_arrival_notice(
-                filename, target_folder, pending_id
+                chat_id, filename, target_folder, pending_id
             )
             await self.send(
                 chat_id,
@@ -1308,7 +1447,7 @@ class BotApp:
         }
 
     def _movie_item_for_chat(self, pending_id: int, chat_id: int) -> dict | None:
-        item = self.store.get_item(pending_id)
+        item = self.store.get_item(pending_id, chat_id=chat_id)
         if (
             not item
             or item.get("media_kind") != "movie"
@@ -1550,7 +1689,7 @@ class BotApp:
             await self.send(chat_id, "There is no removable current movie job.")
             return
         pending_id = int(latest["pending_id"])
-        removed = self.queue.remove(pending_id)
+        removed = self.queue.remove(pending_id, chat_id=chat_id)
         if self.movie_manual_pending.get(chat_id) == pending_id:
             self.movie_manual_pending.pop(chat_id, None)
         await self.send(
@@ -1558,10 +1697,12 @@ class BotApp:
             "Current movie job cancelled." if removed else "The movie job could not be cancelled.",
         )
 
-    def _queue_display_number(self, pending_id: int, target_folder: str) -> int:
+    def _queue_display_number(
+        self, chat_id: int, pending_id: int, target_folder: str
+    ) -> int:
         """Return a friendly per-folder number while keeping pending_id stable."""
         same_folder = [
-            item for item in self.queue.pending()
+            item for item in self.queue.pending(chat_id)
             if (item.get("target_folder") or "") == (target_folder or "")
         ]
         for index, item in enumerate(same_folder, start=1):
@@ -1570,7 +1711,11 @@ class BotApp:
         return len(same_folder) + 1
 
     def _episode_arrival_notice(
-        self, filename: str, target_folder: str, pending_id: int
+        self,
+        chat_id: int,
+        filename: str,
+        target_folder: str,
+        pending_id: int,
     ) -> str:
         detected = detect_episode(filename)
         if not detected or not target_folder:
@@ -1584,7 +1729,7 @@ class BotApp:
                 f"⚠️ S{season:02d}E{episode:02d} already exists in the library:\n"
                 f"{existing.path.name}"
             )
-        for queued in self.queue.pending():
+        for queued in self.queue.pending(chat_id):
             if queued["pending_id"] == pending_id:
                 continue
             if queued.get("target_folder") != target_folder:
@@ -1603,6 +1748,7 @@ class BotApp:
         handlers = {
             "/start": self.cmd_start, "/help": self.cmd_help, "/menu": self.cmd_menu,
             "/guide": self.cmd_guide,
+            "/language": self.cmd_language,
             "/chatid": self.cmd_chatid,
             "/setfolder": self.cmd_setfolder, "/folder": self.cmd_folder,
             "/folders": self.cmd_folders, "/usefolder": self.cmd_usefolder,
@@ -1643,6 +1789,9 @@ class BotApp:
         await handler(chat_id, argument)
 
     async def cmd_start(self, chat_id: int, _: str) -> None:
+        if not self.store.get_setting(f"language:{chat_id}"):
+            await self.cmd_language(chat_id, "")
+            return
         if self.chat_types.get(chat_id) != "channel":
             await self.send(
                 chat_id,
@@ -1653,11 +1802,27 @@ class BotApp:
         await self.cmd_help(chat_id, "")
 
     async def cmd_help(self, chat_id: int, _: str) -> None:
+        persian = self._language(chat_id) == "fa"
+        help_text = HELP_FA if persian else HELP
+        suffix = (
+            "\n\nدکمه‌های زیر الگوی قابل‌ویرایش دستورها را کپی می‌کنند. "
+            "پس از لمس دکمه، دستور را جای‌گذاری و مقدار لازم را اضافه کنید."
+            if persian
+            else "\n\nThe buttons below copy editable command templates. "
+            "After tapping a button, paste the command and add the value."
+        )
         await self.send(
             chat_id,
-            HELP + "\n\nThe buttons below copy editable command templates. "
-            "After tapping a button, paste the command and add the value.",
+            help_text + suffix,
             HELP_COMMAND_TEMPLATES,
+        )
+
+    async def cmd_language(self, chat_id: int, _: str) -> None:
+        await self.send(
+            chat_id,
+            "Choose your language:\nزبان خود را انتخاب کنید:",
+            LANGUAGE_MENU,
+            force_language="en",
         )
 
     async def cmd_guide(self, chat_id: int, _: str) -> None:
@@ -1668,6 +1833,9 @@ class BotApp:
         )
 
     async def cmd_menu(self, chat_id: int, _: str) -> None:
+        if not self.store.get_setting(f"language:{chat_id}"):
+            await self.cmd_language(chat_id, "")
+            return
         if self.chat_types.get(chat_id) != "channel":
             await self.send(
                 chat_id,
@@ -1693,13 +1861,14 @@ class BotApp:
         self.track_task(
             self._run_imdb_search(chat_id, argument, "use"),
             f"imdb-search:{chat_id}",
+            chat_id,
         )
 
     async def _commit_folder(self, chat_id: int, folder_name: str) -> None:
         try:
             folder = sanitize_folder_name(folder_name)
             path = self.config.target_path(folder)
-            self.store.set_setting("current_folder", folder)
+            self._set_chat_setting(chat_id, "current_folder", folder)
             await self.send(
                 chat_id,
                 f"Target folder set after confirmation:\n{path}",
@@ -1769,7 +1938,7 @@ class BotApp:
         )
 
     async def _select_existing_folder(self, chat_id: int, folder: Path) -> None:
-        self.store.set_setting("current_folder", folder.name)
+        self._set_chat_setting(chat_id, "current_folder", folder.name)
         await self.send(
             chat_id,
             "Existing folder selected as the target for new episodes:\n"
@@ -1797,7 +1966,7 @@ class BotApp:
         await self._select_existing_folder(chat_id, folder)
 
     async def cmd_folder(self, chat_id: int, _: str) -> None:
-        folder = self.store.get_setting("current_folder")
+        folder = self._chat_setting(chat_id, "current_folder")
         if not folder:
             await self.send(chat_id, "No target folder is set. Use /setfolder NAME")
         else:
@@ -1805,7 +1974,7 @@ class BotApp:
 
     async def cmd_renamefolder(self, chat_id: int, argument: str) -> None:
         assert self.downloader
-        old_name = self.store.get_setting("current_folder")
+        old_name = self._chat_setting(chat_id, "current_folder")
         if not old_name:
             await self.send(chat_id, "No current folder is set. Use /setfolder first.")
             return
@@ -1834,7 +2003,9 @@ class BotApp:
                     chat_id,
                     "Safely renaming the folder and updating rollback paths...",
                 )
-                ok, output = await self.sorter.rename_folder(old_path, new_name)
+                ok, output = await self.sorter.rename_folder(
+                    old_path, new_name, chat_id=chat_id
+                )
                 if not ok:
                     await self.send(
                         chat_id,
@@ -1844,16 +2015,17 @@ class BotApp:
             changed = self.store.rename_target_folder(
                 old_name, new_name, old_path, new_path
             )
-            self.store.set_setting("current_folder", new_name)
-            if self.store.get_setting("latest_downloaded_folder") == old_name:
-                self.store.set_setting("latest_downloaded_folder", new_name)
-            latest_file = self.store.get_setting("latest_downloaded_file")
+            self._set_chat_setting(chat_id, "current_folder", new_name)
+            self.store.replace_chat_setting_value(
+                "current_folder", old_name, new_name
+            )
+            self.store.replace_chat_setting_value(
+                "latest_downloaded_folder", old_name, new_name
+            )
             old_prefix = str(old_path)
-            if latest_file.startswith(old_prefix):
-                self.store.set_setting(
-                    "latest_downloaded_file",
-                    str(new_path) + latest_file[len(old_prefix):],
-                )
+            self.store.replace_chat_setting_prefix(
+                "latest_downloaded_file", old_prefix, str(new_path)
+            )
             await self.send(
                 chat_id,
                 f"Folder renamed:\n{old_path}\n→ {new_path}\n"
@@ -1864,11 +2036,11 @@ class BotApp:
             await self.send(chat_id, f"Folder rename failed: {exc}")
 
     async def cmd_unsetfolder(self, chat_id: int, _: str) -> None:
-        self.store.set_setting("current_folder", "")
+        self._set_chat_setting(chat_id, "current_folder", "")
         await self.send(chat_id, "Target folder cleared.")
 
     async def cmd_queue(self, chat_id: int, _: str) -> None:
-        items = self.queue.pending()
+        items = self.queue.pending(chat_id)
         if not items:
             await self.send(chat_id, "The queue is empty.")
             return
@@ -1890,7 +2062,7 @@ class BotApp:
         await self.send(chat_id, "\n".join(lines))
 
     async def cmd_clearqueue(self, chat_id: int, _: str) -> None:
-        count = self.queue.clear()
+        count = self.queue.clear(chat_id)
         await self.send(chat_id, f"Removed {count} item(s) from the queue.")
 
     async def cmd_remove(self, chat_id: int, argument: str) -> None:
@@ -1901,12 +2073,14 @@ class BotApp:
             return
         await self.send(
             chat_id,
-            "Removed from the queue." if self.queue.remove(pending_id) else "No removable item was found.",
+            "Removed from the queue."
+            if self.queue.remove(pending_id, chat_id=chat_id)
+            else "No removable item was found.",
         )
 
-    def _prepare_download_items(self) -> list[dict]:
-        current = self.store.get_setting("current_folder")
-        items = self.queue.downloadable()
+    def _prepare_download_items(self, chat_id: int) -> list[dict]:
+        current = self._chat_setting(chat_id, "current_folder")
+        items = self.queue.downloadable(chat_id)
         prepared = []
         for item in items:
             if (
@@ -1922,9 +2096,14 @@ class BotApp:
     async def cmd_download(self, chat_id: int, _: str) -> None:
         assert self.downloader
         if self.downloader.running:
-            await self.send(chat_id, "A download is already running.")
+            message = (
+                "A download is already running for this chat."
+                if self.downloader.running_chat_id == chat_id
+                else "The downloader is busy with another chat. Your queue was not changed."
+            )
+            await self.send(chat_id, message)
             return
-        items = self._prepare_download_items()
+        items = self._prepare_download_items(chat_id)
         if not items:
             await self.send(chat_id, "There are no ready files in the queue.")
             return
@@ -1952,27 +2131,35 @@ class BotApp:
         if len(items) > 10:
             summary += f"\n... and {len(items)-10} more file(s)"
         if self.config.confirm_before_download:
-            self.store.set_setting("download_confirmation_chat", str(chat_id))
+            self._set_chat_setting(chat_id, "download_confirmation", "1")
             await self.send(chat_id, summary + "\n\nSend /confirm_download to start, or /cancel.")
         else:
             self.track_task(
                 self._run_downloads_and_movie_imports(chat_id, items),
                 f"download:{chat_id}",
+                chat_id,
             )
 
     async def cmd_confirm(self, chat_id: int, _: str) -> None:
         assert self.downloader
-        if self.store.get_setting("download_confirmation_chat") != str(chat_id):
+        if self._chat_setting(chat_id, "download_confirmation") != "1":
             await self.send(chat_id, "There is no unconfirmed download request for this chat.")
             return
-        self.store.set_setting("download_confirmation_chat", "")
-        items = self._prepare_download_items()
+        if self.downloader.running:
+            await self.send(
+                chat_id,
+                "The downloader is busy. Your confirmation is still saved; try again shortly.",
+            )
+            return
+        self._set_chat_setting(chat_id, "download_confirmation", "")
+        items = self._prepare_download_items(chat_id)
         if not items:
             await self.send(chat_id, "There are no ready files to download.")
             return
         self.track_task(
             self._run_downloads_and_movie_imports(chat_id, items),
             f"download:{chat_id}",
+            chat_id,
         )
 
     async def _run_downloads_and_movie_imports(
@@ -1984,7 +2171,9 @@ class BotApp:
         for original in items:
             if original.get("media_kind") != "movie":
                 continue
-            current = self.store.get_item(int(original["pending_id"]))
+            current = self.store.get_item(
+                int(original["pending_id"]), chat_id=chat_id
+            )
             if not current or current.get("status") != "completed":
                 continue
             if await self._import_movie_item(chat_id, current):
@@ -2026,8 +2215,12 @@ class BotApp:
                 downloaded_path=video or item.get("downloaded_path"),
                 movie_batch_id=result.get("batch_id"),
             )
-            self.store.set_setting("latest_imported_movie_id", str(pending_id))
-            self.store.set_setting("latest_movie_batch_id", str(result.get("batch_id", "")))
+            self._set_chat_setting(
+                chat_id, "latest_imported_movie_id", str(pending_id)
+            )
+            self._set_chat_setting(
+                chat_id, "latest_movie_batch_id", str(result.get("batch_id", ""))
+            )
             staging_file = Path(str(item.get("downloaded_path") or ""))
             try:
                 staging_file.parent.rmdir()
@@ -2039,7 +2232,6 @@ class BotApp:
                 f"Destination: {result['destination']}\n"
                 f"Batch ID: {result['batch_id']}\n\n"
                 "This movie job is closed; send another movie while remaining in movie mode.",
-                MOVIE_MENU,
             )
             return True
         except Exception as exc:
@@ -2094,20 +2286,35 @@ class BotApp:
         self.track_task(
             self._run_movie_import_command(chat_id, item),
             f"movie-import:{chat_id}:{item['pending_id']}",
+            chat_id,
         )
 
     async def cmd_status(self, chat_id: int, _: str) -> None:
-        all_items = self.store.list_items()
+        all_items = self.store.list_items(chat_id=chat_id)
         counts: dict[str, int] = {}
         for item in all_items:
             counts[item["status"]] = counts.get(item["status"], 0) + 1
-        part_count = sum(1 for _ in self.config.jellyfin_library_path.rglob("*.part"))
-        if self.config.movie_staging_path is not None:
-            part_count += sum(
-                1 for _ in self.config.movie_staging_path.rglob("*.part")
-            )
+        part_count = 0
+        for item in all_items:
+            try:
+                filename = validate_original_filename(item["original_filename"])
+                if item.get("media_kind") == "movie":
+                    part = self.config.movie_staging_job_path(
+                        int(item["pending_id"])
+                    ) / f"{filename}.part"
+                elif item.get("target_folder"):
+                    part = self.config.target_path(
+                        item["target_folder"]
+                    ) / f"{filename}.part"
+                else:
+                    continue
+                part_count += int(part.is_file())
+            except (AssertionError, TypeError, ValueError):
+                continue
         text = "\n".join(f"{key}: {value}" for key, value in sorted(counts.items()))
-        active = len(self.background_tasks)
+        active = sum(
+            1 for owner in self.task_chat_ids.values() if owner == chat_id
+        )
         await self.send(
             chat_id,
             (text or "No files have been registered yet.")
@@ -2116,9 +2323,17 @@ class BotApp:
         )
 
     async def cmd_cancel(self, chat_id: int, _: str) -> None:
-        self.store.set_setting("download_confirmation_chat", "")
-        cancelled = bool(self.downloader and self.downloader.cancel())
-        await self.send(chat_id, "Cancel request registered." if cancelled else "There is no active operation.")
+        had_confirmation = (
+            self._chat_setting(chat_id, "download_confirmation") == "1"
+        )
+        self._set_chat_setting(chat_id, "download_confirmation", "")
+        cancelled = bool(self.downloader and self.downloader.cancel(chat_id))
+        await self.send(
+            chat_id,
+            "Cancel request registered."
+            if cancelled or had_confirmation
+            else "There is no active operation.",
+        )
 
     async def cmd_resolve(self, chat_id: int, argument: str) -> None:
         parts = argument.split()
@@ -2130,7 +2345,7 @@ class BotApp:
         except ValueError:
             await self.send(chat_id, "The ID must be a number.")
             return
-        item = self.store.get_item(pending_id)
+        item = self.store.get_item(pending_id, chat_id=chat_id)
         if not item or item["status"] != "waiting_overwrite":
             await self.send(chat_id, "This file is not waiting for an overwrite decision.")
             return
@@ -2149,7 +2364,7 @@ class BotApp:
                 await self.send(chat_id, f"Folder not found:\n{folder}")
                 return
             await self.send(chat_id, f"Sorting started:\n{folder}")
-            ok, output = await self.sorter.run(folder)
+            ok, output = await self.sorter.run(folder, chat_id=chat_id)
             await self.send(
                 chat_id,
                 ("Sorting completed successfully.\n" if ok else "Sorting finished with errors.\n") + output[-3000:],
@@ -2159,16 +2374,18 @@ class BotApp:
             await self.send(chat_id, f"Sorter error: {exc}")
 
     async def cmd_sort_current(self, chat_id: int, _: str) -> None:
-        folder = self.store.get_setting("current_folder")
+        folder = self._chat_setting(chat_id, "current_folder")
         if not folder:
             await self.send(chat_id, "No current folder is selected.")
             return
-        self.track_task(self._run_sorter(chat_id, folder), f"sort-current:{chat_id}")
+        self.track_task(
+            self._run_sorter(chat_id, folder), f"sort-current:{chat_id}", chat_id
+        )
 
     async def _run_series_sort_action(
         self, chat_id: int, action: str, label: str
     ) -> None:
-        folder_name = self.store.get_setting("current_folder")
+        folder_name = self._chat_setting(chat_id, "current_folder")
         if not folder_name:
             await self.send(chat_id, "No current folder is selected.")
             return
@@ -2181,7 +2398,9 @@ class BotApp:
             return
         try:
             await self.send(chat_id, f"{label}:\n{folder}")
-            ok, output = await self.sorter.series_action(action, folder)
+            ok, output = await self.sorter.series_action(
+                action, folder, chat_id=chat_id
+            )
             await self.send(
                 chat_id,
                 ("Completed.\n" if ok else "Could not complete the action.\n")
@@ -2195,24 +2414,28 @@ class BotApp:
         self.track_task(
             self._run_series_sort_action(chat_id, "resort-existing", "Renaming existing sorted episodes"),
             f"resort-current:{chat_id}",
+            chat_id,
         )
 
     async def cmd_sort_history(self, chat_id: int, _: str) -> None:
         self.track_task(
             self._run_series_sort_action(chat_id, "sort-history", "Reading sort history"),
             f"sort-history:{chat_id}",
+            chat_id,
         )
 
     async def cmd_sort_back(self, chat_id: int, _: str) -> None:
         self.track_task(
             self._run_series_sort_action(chat_id, "sort-back", "Moving one revision back"),
             f"sort-back:{chat_id}",
+            chat_id,
         )
 
     async def cmd_sort_forward(self, chat_id: int, _: str) -> None:
         self.track_task(
             self._run_series_sort_action(chat_id, "sort-forward", "Moving one revision forward"),
             f"sort-forward:{chat_id}",
+            chat_id,
         )
 
     async def cmd_recover_current(self, chat_id: int, _: str) -> None:
@@ -2223,6 +2446,7 @@ class BotApp:
                 "Checking the current folder for incomplete operations",
             ),
             f"recover-current:{chat_id}",
+            chat_id,
         )
 
     async def cmd_fix_metadata_current(self, chat_id: int, _: str) -> None:
@@ -2233,14 +2457,17 @@ class BotApp:
                 "Renaming episode metadata in the current folder",
             ),
             f"fix-metadata-current:{chat_id}",
+            chat_id,
         )
 
     async def cmd_sort_latest(self, chat_id: int, _: str) -> None:
-        folder = self.store.get_setting("latest_downloaded_folder")
+        folder = self._chat_setting(chat_id, "latest_downloaded_folder")
         if not folder:
             await self.send(chat_id, "No completed download has been recorded yet.")
             return
-        self.track_task(self._run_sorter(chat_id, folder), f"sort-latest:{chat_id}")
+        self.track_task(
+            self._run_sorter(chat_id, folder), f"sort-latest:{chat_id}", chat_id
+        )
 
     async def cmd_sort_folder(self, chat_id: int, argument: str) -> None:
         try:
@@ -2248,10 +2475,12 @@ class BotApp:
         except ValueError as exc:
             await self.send(chat_id, str(exc))
             return
-        self.track_task(self._run_sorter(chat_id, folder), f"sort-folder:{chat_id}")
+        self.track_task(
+            self._run_sorter(chat_id, folder), f"sort-folder:{chat_id}", chat_id
+        )
 
     async def cmd_sort_status(self, chat_id: int, _: str) -> None:
-        run = self.store.latest_sorter_run()
+        run = self.store.latest_series_sorter_run(chat_id)
         if not run:
             await self.send(chat_id, "The sorter has not run yet.")
         else:
@@ -2270,13 +2499,19 @@ class BotApp:
                 "Files cannot be restored while a download is running.",
             )
             return
+        batch_id = batch_id or self.store.latest_sorter_batch(chat_id)
+        if not batch_id:
+            await self.send(chat_id, "This chat has no recorded sort batch to undo.")
+            return
+        if not self.store.sorter_batch_belongs_to_chat(batch_id, chat_id):
+            await self.send(chat_id, "That sort batch does not belong to this chat.")
+            return
         try:
-            label = f"Batch {batch_id}" if batch_id else "latest batch"
-            await self.send(chat_id, f"Sort undo started: {label}")
-            if batch_id:
-                ok, output = await self.sorter.undo_batch(batch_id)
-            else:
-                ok, output = await self.sorter.undo_last()
+            await self.send(chat_id, f"Sort undo started: Batch {batch_id}")
+            ok, output = await self.sorter.undo_batch(batch_id, chat_id=chat_id)
+            self.store.mark_sorter_batch_status(
+                batch_id, chat_id, "undone" if ok else "undo_partial"
+            )
             await self.send(
                 chat_id,
                 ("Undo completed successfully.\n" if ok else "Undo was incomplete or had errors.\n")
@@ -2287,7 +2522,9 @@ class BotApp:
             await self.send(chat_id, f"Sort undo error: {exc}")
 
     async def cmd_undo_sort_last(self, chat_id: int, _: str) -> None:
-        self.track_task(self._run_sort_undo(chat_id), f"undo-sort-last:{chat_id}")
+        self.track_task(
+            self._run_sort_undo(chat_id), f"undo-sort-last:{chat_id}", chat_id
+        )
 
     async def cmd_undo_sort_batch(self, chat_id: int, argument: str) -> None:
         batch_id = argument.strip()
@@ -2297,7 +2534,11 @@ class BotApp:
                 "Correct format:\n/undo_sort_batch 20260628-024900-a1b2c3d4",
             )
             return
-        self.track_task(self._run_sort_undo(chat_id, batch_id), f"undo-sort-batch:{chat_id}")
+        self.track_task(
+            self._run_sort_undo(chat_id, batch_id),
+            f"undo-sort-batch:{chat_id}",
+            chat_id,
+        )
 
     async def _run_movie_undo(
         self, chat_id: int, batch_id: str | None = None
@@ -2305,15 +2546,20 @@ class BotApp:
         if self.downloader and self.downloader.running:
             await self.send(chat_id, "Movies cannot be restored while a download is running.")
             return
+        batch_id = batch_id or self.store.latest_movie_batch(chat_id)
+        if not batch_id:
+            await self.send(chat_id, "This chat has no imported movie batch to undo.")
+            return
+        if not self.store.movie_batch_belongs_to_chat(batch_id, chat_id):
+            await self.send(chat_id, "That movie batch does not belong to this chat.")
+            return
         try:
             await self.send(
                 chat_id,
-                f"Movie undo started: {batch_id or 'latest movie batch'}",
+                f"Movie undo started: {batch_id}",
             )
-            result = (
-                await self.movie_sorter.undo_batch(batch_id)
-                if batch_id
-                else await self.movie_sorter.undo_last()
+            result = await self.movie_sorter.undo_batch(
+                batch_id, chat_id=chat_id
             )
             actual_batch = str(result.get("batch_id") or batch_id or "")
             skipped = int(result.get("skipped", 0) or 0)
@@ -2321,7 +2567,10 @@ class BotApp:
                 self.store.mark_movie_batch_status(
                     actual_batch,
                     "movie_undone" if bool(result.get("ok")) else "movie_undo_partial",
+                    chat_id=chat_id,
                 )
+                if result.get("ok"):
+                    self._set_chat_setting(chat_id, "latest_movie_batch_id", "")
             outcome = (
                 "Movie undo completed.\n"
                 if result.get("ok")
@@ -2346,7 +2595,7 @@ class BotApp:
 
     async def cmd_movie_undo_last(self, chat_id: int, _: str) -> None:
         self.track_task(
-            self._run_movie_undo(chat_id), f"movie-undo-last:{chat_id}"
+            self._run_movie_undo(chat_id), f"movie-undo-last:{chat_id}", chat_id
         )
 
     async def cmd_movie_undo_batch(self, chat_id: int, argument: str) -> None:
@@ -2357,6 +2606,7 @@ class BotApp:
         self.track_task(
             self._run_movie_undo(chat_id, batch_id),
             f"movie-undo-batch:{chat_id}",
+            chat_id,
         )
 
     async def _run_jellyfin_scan(self, chat_id: int) -> None:
@@ -2432,7 +2682,9 @@ class BotApp:
             await self.send(chat_id, f"Jellyfin scan error: {exc}")
 
     async def cmd_jellyfin_scan(self, chat_id: int, _: str) -> None:
-        self.track_task(self._run_jellyfin_scan(chat_id), f"jellyfin-scan:{chat_id}")
+        self.track_task(
+            self._run_jellyfin_scan(chat_id), f"jellyfin-scan:{chat_id}", chat_id
+        )
 
     async def cmd_jellyfin_status(self, chat_id: int, _: str) -> None:
         if not self.jellyfin:
@@ -2486,7 +2738,7 @@ class BotApp:
             await self.send(chat_id, f"Correct format:\n{command} dr ston")
             return
         source_folder = (
-            self.store.get_setting("current_folder") if mode == "rename" else ""
+            self._chat_setting(chat_id, "current_folder") if mode == "rename" else ""
         )
         try:
             await self.send(chat_id, f"Searching IMDb for: {query}")
@@ -2509,6 +2761,7 @@ class BotApp:
             for result in results:
                 token = uuid.uuid4().hex[:16]
                 self.imdb_choices[token] = {
+                    "chat_id": chat_id,
                     "folder_name": result["folder_name"],
                     "mode": mode,
                     "created_at": now,
@@ -2584,6 +2837,7 @@ class BotApp:
             return
         token = uuid.uuid4().hex[:16]
         choice = {
+            "chat_id": chat_id,
             "folder_name": manual_name,
             "mode": mode,
             "created_at": time.time(),
@@ -2601,10 +2855,11 @@ class BotApp:
         self.track_task(
             self._run_imdb_search(chat_id, argument, "use"),
             f"imdb-search:{chat_id}",
+            chat_id,
         )
 
     async def cmd_imdb_fix_current(self, chat_id: int, argument: str) -> None:
-        query = argument.strip() or self.store.get_setting("current_folder")
+        query = argument.strip() or self._chat_setting(chat_id, "current_folder")
         if not query:
             await self.send(
                 chat_id,
@@ -2614,10 +2869,11 @@ class BotApp:
         self.track_task(
             self._run_imdb_search(chat_id, query, "rename"),
             f"imdb-fix-current:{chat_id}",
+            chat_id,
         )
 
     async def cmd_episodes(self, chat_id: int, argument: str) -> None:
-        folder_name = argument.strip() or self.store.get_setting("current_folder")
+        folder_name = argument.strip() or self._chat_setting(chat_id, "current_folder")
         if not folder_name:
             await self.send(
                 chat_id,

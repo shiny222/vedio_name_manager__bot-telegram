@@ -31,9 +31,12 @@ class DownloadManager:
         self.session = session
         self.cancel_event = asyncio.Event()
         self.running = False
+        self.running_chat_id: int | None = None
 
-    def cancel(self) -> bool:
-        if not self.running:
+    def cancel(self, chat_id: int | None = None) -> bool:
+        if not self.running or (
+            chat_id is not None and self.running_chat_id != int(chat_id)
+        ):
             return False
         self.cancel_event.set()
         return True
@@ -42,7 +45,11 @@ class DownloadManager:
         if self.running:
             await notify("Another download is already running.")
             return
+        chat_ids = {int(item["chat_id"]) for item in items}
+        if len(chat_ids) != 1:
+            raise ValueError("A download batch must belong to exactly one chat.")
         self.running = True
+        self.running_chat_id = next(iter(chat_ids))
         self.cancel_event.clear()
         semaphore = asyncio.Semaphore(self.config.max_parallel_downloads)
 
@@ -97,6 +104,7 @@ class DownloadManager:
                 )
         finally:
             self.running = False
+            self.running_chat_id = None
 
     def _destination(self, item: dict) -> tuple[Path, str] | None:
         folder_name = item.get("target_folder")
@@ -185,11 +193,19 @@ class DownloadManager:
                 pending_id, "completed", None, downloaded_path=str(destination)
             )
             if item.get("media_kind", "series") == "movie":
-                self.queue.store.set_setting("latest_downloaded_movie_id", str(pending_id))
-                self.queue.store.set_setting("latest_downloaded_movie_file", str(destination))
+                self.queue.store.set_chat_setting(
+                    int(item["chat_id"]), "latest_downloaded_movie_id", str(pending_id)
+                )
+                self.queue.store.set_chat_setting(
+                    int(item["chat_id"]), "latest_downloaded_movie_file", str(destination)
+                )
             else:
-                self.queue.store.set_setting("latest_downloaded_folder", folder_name)
-                self.queue.store.set_setting("latest_downloaded_file", str(destination))
+                self.queue.store.set_chat_setting(
+                    int(item["chat_id"]), "latest_downloaded_folder", folder_name
+                )
+                self.queue.store.set_chat_setting(
+                    int(item["chat_id"]), "latest_downloaded_file", str(destination)
+                )
             await notify(f"Download completed: {destination.name}")
         except asyncio.CancelledError:
             self.queue.set_status(pending_id, "cancelled", "Download cancelled.")

@@ -37,6 +37,15 @@ For a complete bilingual walkthrough, see
 [HOW_TO_USE.md](HOW_TO_USE.md), or send `/guide` to the running bot and choose
 English or فارسی.
 
+## Interface language
+
+Send `/language` and choose **English** or **فارسی**. The selection is stored
+per chat in SQLite and is reused after a restart. Menus, buttons, normal status
+messages, movie/download prompts, and common errors follow the selected
+language. Filenames, paths, command names, provider responses, and technical
+exception details are preserved exactly so troubleshooting information is not
+damaged.
+
 ## Important config fields
 
 - `bot_token`: your BotFather token.
@@ -76,7 +85,19 @@ The shows library, Movies library, and staging folder must be three separate,
 non-nested folders. The update process preserves your existing `config.json`,
 so it cannot choose these machine-specific paths for you.
 
-If `allowed_chat_ids` is empty, every chat that can reach the bot is allowed. Use `/chatid` to find your chat ID, then add it to config.
+If `allowed_chat_ids` is empty, every chat that can reach the bot is allowed. No
+chat ID, registration, password, or login is required. Telegram supplies the
+chat ID automatically and the bot uses it only as an internal namespace.
+
+Each chat has independent language, media mode, current folder, queue,
+confirmation state, latest-download references, task status, and owned undo
+batches. A private chat is separate for each Telegram user. Members of the same
+group share one group-chat namespace because Telegram gives the group one chat
+ID. The Jellyfin folders themselves are still a shared library, so filesystem
+operations are serialized and retain the no-overwrite protections.
+
+To restrict access later, add the desired IDs to `allowed_chat_ids`; `/chatid`
+shows the current one.
 
 ## Normal usage
 
@@ -139,6 +160,7 @@ in staging and `/movie_import ID` can retry it after you fix the problem.
 
 - `/menu` — show the button menu.
 - `/guide` — choose the English or Persian step-by-step usage guide.
+- `/language` — choose and remember English or Persian for this chat.
 - `/setfolder NAME` — set a destination folder, using optional IMDb fuzzy search first.
 - `/folders` — choose from existing Jellyfin folders.
 - `/usefolder NAME` — use an existing folder by exact name.

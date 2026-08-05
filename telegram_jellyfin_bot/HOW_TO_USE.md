@@ -2,6 +2,9 @@
 
 The same guide is available inside Telegram with `/guide`.
 
+Use `/language` at any time to choose English or فارسی for the current chat.
+The bot remembers the choice after a restart.
+
 ## English
 
 ### 1. Start the services
@@ -24,8 +27,9 @@ channel uses the **Command categories** inline button instead.
 - Confirm the IMDb suggestion or select the manual name.
 - Send `/folder` to verify the current selection.
 
-The current folder is shared between authorized chats. Each queued video keeps
-the folder that was selected when the bot received it.
+Every chat has its own current folder, queue, confirmations, status, and undo
+batches. No chat can remove, cancel, download, or undo another chat's items.
+Members inside one Telegram group share that group's state.
 
 ### 4. Queue and download episodes
 
@@ -117,8 +121,9 @@ and `/movie_undo_last` to return the latest import to staging. Send
 - پیشنهاد IMDb را تأیید کنید یا نام دستی را انتخاب کنید.
 - با `/folder` انتخاب فعلی را بررسی کنید.
 
-پوشه فعلی بین چت‌های مجاز مشترک است. هر ویدیوی موجود در صف، پوشه‌ای را که در
-زمان دریافتش انتخاب شده بود حفظ می‌کند.
+هر چت پوشه فعلی، صف، تأییدها، وضعیت و دسته‌های بازگردانی مستقل خودش را دارد.
+هیچ چتی نمی‌تواند موارد چت دیگر را حذف، لغو، دانلود یا بازگردانی کند. اعضای
+یک گروه تلگرام، وضعیت همان گروه را با یکدیگر به اشتراک می‌گذارند.
 
 ### ۴. صف و دانلود قسمت‌ها
 

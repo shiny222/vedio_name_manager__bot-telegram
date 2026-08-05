@@ -204,9 +204,9 @@ class ConfigAndPathTests(unittest.TestCase):
                     original_filename="b1.mkv", file_size=10,
                     target_folder="Anime B",
                 )
-                self.assertEqual(app._queue_display_number(first, "Anime A"), 1)
-                self.assertEqual(app._queue_display_number(second, "Anime A"), 2)
-                self.assertEqual(app._queue_display_number(third, "Anime B"), 1)
+                self.assertEqual(app._queue_display_number(-1, first, "Anime A"), 1)
+                self.assertEqual(app._queue_display_number(-1, second, "Anime A"), 2)
+                self.assertEqual(app._queue_display_number(-1, third, "Anime B"), 1)
             finally:
                 app.store.close()
 
@@ -308,6 +308,140 @@ class QueueTests(unittest.TestCase):
                 self.assertIn("movie_batch_id", item)
             finally:
                 store.close()
+
+    def test_chat_state_queue_and_batch_ownership_are_isolated(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(Path(td) / "state.db")
+            queue = QueueManager(store)
+            try:
+                store.set_chat_setting(10, "current_folder", "Chat Ten Show")
+                store.set_chat_setting(20, "current_folder", "Chat Twenty Show")
+                store.set_chat_setting(10, "download_confirmation", "1")
+                first = queue.add(
+                    message_id=1,
+                    chat_id=10,
+                    file_id="first",
+                    file_unique_id="first-unique",
+                    original_filename="first.mkv",
+                    target_folder="Chat Ten Show",
+                )
+                second = queue.add(
+                    message_id=1,
+                    chat_id=20,
+                    file_id="second",
+                    file_unique_id="second-unique",
+                    original_filename="second.mkv",
+                    target_folder="Chat Twenty Show",
+                )
+
+                self.assertEqual(
+                    store.get_chat_setting(10, "current_folder"), "Chat Ten Show"
+                )
+                self.assertEqual(
+                    store.get_chat_setting(20, "current_folder"), "Chat Twenty Show"
+                )
+                self.assertEqual(
+                    store.get_chat_setting(20, "download_confirmation"), ""
+                )
+                self.assertEqual([item["pending_id"] for item in queue.pending(10)], [first])
+                self.assertEqual([item["pending_id"] for item in queue.pending(20)], [second])
+                self.assertIsNone(store.get_item(first, chat_id=20))
+                self.assertFalse(queue.remove(first, chat_id=20))
+                self.assertEqual(queue.clear(chat_id=10), 1)
+                self.assertIsNotNone(store.get_item(second, chat_id=20))
+
+                run_id = store.create_sorter_run(
+                    "Chat Twenty Show",
+                    "[]",
+                    chat_id=20,
+                    operation_kind="series",
+                )
+                store.finish_sorter_run(
+                    run_id, "completed", "ok", batch_id="chat-20-batch"
+                )
+                self.assertTrue(
+                    store.sorter_batch_belongs_to_chat("chat-20-batch", 20)
+                )
+                self.assertFalse(
+                    store.sorter_batch_belongs_to_chat("chat-20-batch", 10)
+                )
+                queue.add(
+                    message_id=2,
+                    chat_id=20,
+                    file_id="movie",
+                    file_unique_id="movie-unique",
+                    original_filename="movie.mkv",
+                    target_folder="Movie (2026)",
+                    media_kind="movie",
+                    movie_batch_id="movie-chat-20",
+                    status="imported",
+                )
+                self.assertEqual(
+                    store.latest_movie_batch(20), "movie-chat-20"
+                )
+                self.assertTrue(
+                    store.movie_batch_belongs_to_chat("movie-chat-20", 20)
+                )
+                self.assertFalse(
+                    store.movie_batch_belongs_to_chat("movie-chat-20", 10)
+                )
+            finally:
+                store.close()
+
+    def test_legacy_shared_folder_is_claimed_by_existing_queue_owner(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(Path(td) / "state.db")
+            queue = QueueManager(store)
+            try:
+                store.set_setting("current_folder", "Legacy Show")
+                queue.add(
+                    message_id=1,
+                    chat_id=111,
+                    file_id="owner",
+                    file_unique_id="owner-unique",
+                    original_filename="episode.mkv",
+                    target_folder="Legacy Show",
+                )
+                self.assertEqual(
+                    store.get_chat_setting(222, "current_folder"), ""
+                )
+                self.assertEqual(
+                    store.get_chat_setting(111, "current_folder"), "Legacy Show"
+                )
+            finally:
+                store.close()
+
+    def test_legacy_sort_batch_is_migrated_to_existing_queue_owner(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "state.db"
+            store = StateStore(db)
+            queue = QueueManager(store)
+            queue.add(
+                message_id=1,
+                chat_id=111,
+                file_id="owner",
+                file_unique_id="owner-unique",
+                original_filename="episode.mkv",
+                target_folder="Legacy Show",
+            )
+            run_id = store.create_sorter_run("Legacy Show", '["run"]')
+            store.finish_sorter_run(
+                run_id, "completed", "Batch ID: legacy-owned-batch"
+            )
+            store.close()
+
+            reopened = StateStore(db)
+            try:
+                self.assertEqual(
+                    reopened.latest_sorter_batch(111), "legacy-owned-batch"
+                )
+                self.assertTrue(
+                    reopened.sorter_batch_belongs_to_chat(
+                        "legacy-owned-batch", 111
+                    )
+                )
+            finally:
+                reopened.close()
 
 
 class MovieWorkflowTests(unittest.TestCase):
@@ -427,7 +561,7 @@ class MovieWorkflowTests(unittest.TestCase):
                 sent = []
 
                 async def fake_send(chat_id, text, reply_markup=None):
-                    sent.append(text)
+                    sent.append((text, reply_markup))
 
                 app.send = fake_send
                 try:
@@ -458,6 +592,11 @@ class MovieWorkflowTests(unittest.TestCase):
                             987654321, app.store.get_item(pending_id)
                         )
                     )
+                    success = next(
+                        entry for entry in sent
+                        if entry[0].startswith("Movie imported successfully.")
+                    )
+                    self.assertIsNone(success[1])
                     imported = app.store.get_item(pending_id)
                     destination = Path(imported["downloaded_path"])
                     self.assertTrue(destination.is_file())
@@ -494,7 +633,9 @@ class MovieWorkflowTests(unittest.TestCase):
                         app.store.get_item(pending_id)["status"],
                         "movie_undo_partial",
                     )
-                    self.assertTrue(any("incomplete" in text for text in sent))
+                    self.assertTrue(
+                        any("incomplete" in text for text, _ in sent)
+                    )
 
                     source.unlink()
                     await app._run_movie_undo(
@@ -535,7 +676,7 @@ class MenuNavigationTests(unittest.TestCase):
             ],
         )
         commands = [item["command"] for item in BOT_COMMANDS]
-        self.assertEqual(len(commands), 43)
+        self.assertEqual(len(commands), 44)
         self.assertEqual(len(commands), len(set(commands)))
 
     def test_bilingual_guide_fits_telegram_and_language_callback_opens_it(self):
@@ -557,7 +698,9 @@ class MenuNavigationTests(unittest.TestCase):
                     async def call(self, method, **params):
                         return True
 
-                async def fake_send(chat_id, text, reply_markup=None):
+                async def fake_send(
+                    chat_id, text, reply_markup=None, **kwargs
+                ):
                     sent.append((chat_id, text, reply_markup))
 
                 app.api = FakeApi()
@@ -584,6 +727,92 @@ class MenuNavigationTests(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_language_choice_persists_and_localizes_menus(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+
+                class FakeApi:
+                    def __init__(self):
+                        self.sent = []
+
+                    async def call(self, method, **params):
+                        return True
+
+                    async def send(self, chat_id, text, reply_markup=None):
+                        self.sent.append((text, reply_markup))
+
+                api = FakeApi()
+                app.api = api
+                app.chat_types[987654321] = "private"
+                try:
+                    await app.cmd_menu(987654321, "")
+                    self.assertIn("Choose your language", api.sent[-1][0])
+
+                    await app.handle_callback({
+                        "id": "language-fa",
+                        "data": "language:fa",
+                        "message": {
+                            "chat": {"id": 987654321, "type": "private"}
+                        },
+                    })
+                    self.assertEqual(
+                        app.store.get_setting("language:987654321"), "fa"
+                    )
+                    self.assertTrue(
+                        any(
+                            "زبان ربات به فارسی تغییر کرد" in text
+                            for text, _ in api.sent
+                        )
+                    )
+                    all_button_texts = {
+                        button["text"]
+                        for _, markup in api.sent
+                        if markup
+                        for row in markup.get("keyboard", markup.get("inline_keyboard", []))
+                        for button in row
+                    }
+                    self.assertIn("فیلم‌ها", all_button_texts)
+                    self.assertIn("⚡ منوی سریع", all_button_texts)
+
+                    await app.handle_reply_category(
+                        987654321, "🧹 مرتب‌سازی"
+                    )
+                    self.assertIn("دستورهای مرتب‌سازی", api.sent[-1][0])
+                    submenu_buttons = {
+                        button["text"]
+                        for row in api.sent[-1][1]["inline_keyboard"]
+                        for button in row
+                    }
+                    self.assertIn("مرتب‌سازی فایل‌های جدید", submenu_buttons)
+
+                    await app.send(
+                        987654321,
+                        "Movie imported successfully.\nDestination: D:\\Movies\\Example",
+                    )
+                    self.assertIn("فیلم با موفقیت منتقل شد", api.sent[-1][0])
+                    self.assertIn("مقصد:", api.sent[-1][0])
+                    self.assertIn(r"D:\Movies\Example", api.sent[-1][0])
+
+                    await app.send(
+                        987654321,
+                        "Downloads finished. 2 of 3 file(s) completed.\n"
+                        "Queue (1 file(s)):\n"
+                        "Movie · Example item 1 (Queue ID #7) [queued] movie.mkv",
+                    )
+                    self.assertIn("2 از 3 فایل کامل شد", api.sent[-1][0])
+                    self.assertIn("صف (1 فایل)", api.sent[-1][0])
+                    self.assertIn("فیلم · Example مورد 1", api.sent[-1][0])
+                    self.assertIn("[در صف]", api.sent[-1][0])
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
     def test_private_menu_installs_persistent_keyboard_and_keeps_quick_menu(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
@@ -599,6 +828,7 @@ class MenuNavigationTests(unittest.TestCase):
 
                 app.send = fake_send
                 app.chat_types[987654321] = "private"
+                app.store.set_setting("language:987654321", "en")
                 try:
                     await app.cmd_menu(987654321, "")
                     self.assertEqual(len(sent), 2)
@@ -623,6 +853,7 @@ class MenuNavigationTests(unittest.TestCase):
 
                 app.send = fake_send
                 app.chat_types[-100123] = "channel"
+                app.store.set_setting("language:-100123", "en")
                 try:
                     await app.cmd_menu(-100123, "")
                     self.assertEqual(len(sent), 1)
@@ -674,6 +905,17 @@ class MenuNavigationTests(unittest.TestCase):
 
 
 class DownloadSafetyTests(unittest.TestCase):
+    def test_one_chat_cannot_cancel_another_chats_download(self):
+        manager = object.__new__(DownloadManager)
+        manager.running = True
+        manager.running_chat_id = 10
+        manager.cancel_event = asyncio.Event()
+
+        self.assertFalse(manager.cancel(20))
+        self.assertFalse(manager.cancel_event.is_set())
+        self.assertTrue(manager.cancel(10))
+        self.assertTrue(manager.cancel_event.is_set())
+
     def test_size_mismatch_keeps_partial_file_and_does_not_publish_it(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
@@ -935,7 +1177,9 @@ class FolderSuggestionTests(unittest.TestCase):
                 app.imdb.search = fake_search
                 try:
                     await app._run_imdb_search(1, "dr ston", "use")
-                    self.assertEqual(app.store.get_setting("current_folder"), "")
+                    self.assertEqual(
+                        app.store.get_chat_setting(1, "current_folder"), ""
+                    )
                     choice = next(iter(app.imdb_choices.values()))
                     self.assertEqual(
                         choice["folder_name"],
@@ -943,7 +1187,7 @@ class FolderSuggestionTests(unittest.TestCase):
                     )
                     await app._commit_folder(1, choice["folder_name"])
                     self.assertEqual(
-                        app.store.get_setting("current_folder"),
+                        app.store.get_chat_setting(1, "current_folder"),
                         "Dr. Stone (2019) [imdbid-tt9679542]",
                     )
                     await app._offer_manual_folder_fallback(
@@ -986,16 +1230,17 @@ class FolderSuggestionTests(unittest.TestCase):
                 app.cmd_renamefolder = fake_rename
                 first = cfg.jellyfin_library_path / "First Show"
                 first.mkdir()
-                app.store.set_setting("current_folder", "First Show")
+                app.store.set_chat_setting(987654321, "current_folder", "First Show")
                 token = "rename-test"
                 app.imdb_choices[token] = {
+                    "chat_id": 987654321,
                     "folder_name": "Official Show (2026) [imdbid-tt1234567]",
                     "mode": "rename",
                     "created_at": 9999999999,
                     "source": "online",
                     "source_folder": "First Show",
                 }
-                app.store.set_setting("current_folder", "Second Show")
+                app.store.set_chat_setting(987654321, "current_folder", "Second Show")
                 try:
                     await app.handle_callback(
                         {
@@ -1026,7 +1271,7 @@ class FolderSuggestionTests(unittest.TestCase):
                     calls.append((chat_id, query, mode))
 
                 app._run_imdb_search = fake_search
-                app.store.set_setting("current_folder", "NIPPON SAGOKu")
+                app.store.set_chat_setting(123, "current_folder", "NIPPON SAGOKu")
                 try:
                     await app.cmd_imdb_fix_current(123, "")
                     await asyncio.sleep(0)
@@ -1099,6 +1344,45 @@ class SorterTests(unittest.TestCase):
                 self.assertEqual(store.latest_sorter_run()["status"], "cancelled")
                 self.assertFalse(bridge.active)
                 store.close()
+        asyncio.run(exercise())
+
+    def test_sort_batch_is_recorded_for_the_chat_that_started_it(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                store = StateStore(cfg.data_path / "state.db")
+                bridge = SorterBridge(cfg, store)
+                try:
+                    ok, _ = await bridge._execute(
+                        root,
+                        [
+                            sys.executable,
+                            "-c",
+                            "print('Batch ID: owned-batch-123')",
+                        ],
+                        chat_id=777,
+                        operation_kind="series",
+                    )
+                    self.assertTrue(ok)
+                    self.assertEqual(
+                        store.latest_sorter_batch(777), "owned-batch-123"
+                    )
+                    self.assertTrue(
+                        store.sorter_batch_belongs_to_chat(
+                            "owned-batch-123", 777
+                        )
+                    )
+                    self.assertFalse(
+                        store.sorter_batch_belongs_to_chat(
+                            "owned-batch-123", 888
+                        )
+                    )
+                finally:
+                    store.close()
+
         asyncio.run(exercise())
 
 

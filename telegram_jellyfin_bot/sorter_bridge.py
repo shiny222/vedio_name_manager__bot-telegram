@@ -10,6 +10,10 @@ from .config import Config
 from .state_store import StateStore
 
 LOG = logging.getLogger(__name__)
+BATCH_ID_RE = re.compile(
+    r"(?:Resort |Metadata )?Batch ID:\s*([A-Za-z0-9._-]{1,100})",
+    re.IGNORECASE,
+)
 
 
 async def _stop_process(process: asyncio.subprocess.Process | None) -> None:
@@ -117,33 +121,55 @@ class SorterBridge:
             list(self.config.sorter_command[:2]) + [action, str(safe_folder)]
         )
 
-    async def run(self, folder: Path, dry_run: bool = False) -> tuple[bool, str]:
+    async def run(
+        self, folder: Path, dry_run: bool = False, chat_id: int | None = None
+    ) -> tuple[bool, str]:
         command = self.build_command(folder, dry_run)
-        return await self._execute(folder, command)
+        return await self._execute(folder, command, chat_id, "series")
 
-    async def undo_batch(self, batch_id: str) -> tuple[bool, str]:
+    async def undo_batch(
+        self, batch_id: str, chat_id: int | None = None
+    ) -> tuple[bool, str]:
         command = self.build_undo_command(batch_id)
-        return await self._execute(self.config.jellyfin_library_path, command)
+        return await self._execute(
+            self.config.jellyfin_library_path, command, chat_id, "series_undo"
+        )
 
-    async def undo_last(self) -> tuple[bool, str]:
+    async def undo_last(self, chat_id: int | None = None) -> tuple[bool, str]:
         command = self.build_undo_command()
-        return await self._execute(self.config.jellyfin_library_path, command)
+        return await self._execute(
+            self.config.jellyfin_library_path, command, chat_id, "series_undo"
+        )
 
     async def rename_folder(
-        self, folder: Path, new_name: str
+        self, folder: Path, new_name: str, chat_id: int | None = None
     ) -> tuple[bool, str]:
         command = self.build_rename_command(folder, new_name)
-        return await self._execute(folder, command)
+        return await self._execute(folder, command, chat_id, "series_maintenance")
 
-    async def series_action(self, action: str, folder: Path) -> tuple[bool, str]:
+    async def series_action(
+        self, action: str, folder: Path, chat_id: int | None = None
+    ) -> tuple[bool, str]:
         command = self.build_series_action_command(action, folder)
-        return await self._execute(folder, command)
+        kind = "series" if action in {"resort-existing", "fix-metadata"} else "series_maintenance"
+        return await self._execute(folder, command, chat_id, kind)
 
-    async def _execute(self, folder: Path, command: list[str]) -> tuple[bool, str]:
+    async def _execute(
+        self,
+        folder: Path,
+        command: list[str],
+        chat_id: int | None = None,
+        operation_kind: str = "series",
+    ) -> tuple[bool, str]:
         if self.active:
             return False, "A sorter operation is already running."
         self.active = True
-        run_id = self.store.create_sorter_run(str(folder), json.dumps(command, ensure_ascii=False))
+        run_id = self.store.create_sorter_run(
+            str(folder),
+            json.dumps(command, ensure_ascii=False),
+            chat_id=chat_id,
+            operation_kind=operation_kind,
+        )
         process: asyncio.subprocess.Process | None = None
         try:
             process = await asyncio.create_subprocess_exec(
@@ -163,7 +189,9 @@ class SorterBridge:
                 return False, output
             output = output_bytes.decode("utf-8", errors="replace")
             status = "completed" if process.returncode == 0 else "failed"
-            self.store.finish_sorter_run(run_id, status, output)
+            batch_match = BATCH_ID_RE.search(output)
+            batch_id = batch_match.group(1) if batch_match else None
+            self.store.finish_sorter_run(run_id, status, output, batch_id=batch_id)
             LOG.info("Sorter run %s finished with code %s\n%s", run_id, process.returncode, output)
             return process.returncode == 0, output[-3000:] or "(no output)"
         except asyncio.CancelledError:
