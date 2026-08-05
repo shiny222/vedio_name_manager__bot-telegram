@@ -22,6 +22,7 @@ from telegram_jellyfin_bot.bot import (
     MOVIE_MENU,
     PERSISTENT_CATEGORY_KEYBOARD,
     SORTING_MENU,
+    TelegramAPI,
 )
 from telegram_jellyfin_bot.downloader import DownloadManager
 from telegram_jellyfin_bot.episode_catalog import (
@@ -80,6 +81,7 @@ class ConfigAndPathTests(unittest.TestCase):
             cfg = load_config(path, create_from_example=False)
             self.assertEqual(cfg.local_bot_api_host, "127.0.0.1")
             self.assertEqual(cfg.allowed_chat_ids, {-100123, 987654321})
+            self.assertEqual(cfg.telegram_download_read_timeout_seconds, 1800)
 
     def test_sanitize_folder(self):
         self.assertEqual(sanitize_folder_name("My Course"), "My Course")
@@ -112,6 +114,47 @@ class ConfigAndPathTests(unittest.TestCase):
             self.assertEqual(safe_child(base, "Anime").parent, base.resolve())
             with self.assertRaises(ValueError):
                 safe_child(base, r"..\outside")
+
+    def test_large_file_timeout_override_is_not_sent_as_bot_api_data(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+
+                class FakeResponse:
+                    async def __aenter__(self):
+                        return self
+
+                    async def __aexit__(self, *_):
+                        return False
+
+                    async def json(self):
+                        return {"ok": True, "result": {"file_path": "movie.mp4"}}
+
+                class FakeSession:
+                    def __init__(self):
+                        self.calls = []
+
+                    def post(self, url, **kwargs):
+                        self.calls.append(kwargs)
+                        return FakeResponse()
+
+                session = FakeSession()
+                api = TelegramAPI(cfg, session)
+                await api.call("getMe")
+                large_timeout = object()
+                await api.call(
+                    "getFile",
+                    file_id="movie-id",
+                    _request_timeout=large_timeout,
+                )
+                self.assertNotIn("timeout", session.calls[0])
+                self.assertIs(session.calls[1]["timeout"], large_timeout)
+                self.assertNotIn("_request_timeout", session.calls[1]["data"])
+
+        asyncio.run(exercise())
 
     def test_existing_folder_picker(self):
         with tempfile.TemporaryDirectory() as td:
@@ -651,8 +694,10 @@ class DownloadSafetyTests(unittest.TestCase):
                 )
                 local_source = root / "telegram-source.mkv"
                 local_source.write_bytes(b"new")
+                api_params = {}
 
                 async def fake_api_call(method, **params):
+                    api_params.update(params)
                     return {"file_path": str(local_source)}
 
                 async def notify(text):
@@ -673,8 +718,102 @@ class DownloadSafetyTests(unittest.TestCase):
                     item = store.get_item(pending_id)
                     self.assertEqual(item["status"], "failed")
                     self.assertIn("size mismatch", item["error"].lower())
+                    self.assertEqual(
+                        api_params["_request_timeout"].sock_read, 1800
+                    )
                 finally:
                     store.close()
+        asyncio.run(exercise())
+
+    def test_http_movie_stream_uses_large_file_timeout(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                data = config_data(root)
+                data["telegram_download_read_timeout_seconds"] = 2400
+                path.write_text(json.dumps(data), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                store = StateStore(cfg.data_path / "state.db")
+                queue = QueueManager(store)
+
+                class FakeContent:
+                    async def iter_chunked(self, size):
+                        yield b"movie-data"
+
+                class FakeResponse:
+                    content = FakeContent()
+
+                    async def __aenter__(self):
+                        return self
+
+                    async def __aexit__(self, *_):
+                        return False
+
+                    def raise_for_status(self):
+                        return None
+
+                class FakeSession:
+                    def __init__(self):
+                        self.timeout = None
+
+                    def get(self, url, **kwargs):
+                        self.timeout = kwargs.get("timeout")
+                        return FakeResponse()
+
+                session = FakeSession()
+                manager = DownloadManager(cfg, queue, None, session)
+                destination = root / "large-movie.part"
+                try:
+                    await manager._download_http("videos/movie.mp4", destination)
+                    self.assertEqual(destination.read_bytes(), b"movie-data")
+                    self.assertEqual(session.timeout.sock_read, 2400)
+                    self.assertIsNone(session.timeout.total)
+                finally:
+                    store.close()
+
+        asyncio.run(exercise())
+
+    def test_failed_movie_batch_does_not_claim_it_will_import(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                store = StateStore(cfg.data_path / "state.db")
+                queue = QueueManager(store)
+                pending_id = queue.add(
+                    message_id=4,
+                    chat_id=-1,
+                    file_id="movie-id",
+                    file_unique_id="movie-unique",
+                    original_filename="movie.mkv",
+                    file_size=100,
+                    target_folder="Movie (2026)",
+                    media_kind="movie",
+                )
+                manager = DownloadManager(cfg, queue, None, None)
+                notices = []
+
+                async def fail_download(item, notify):
+                    queue.set_status(item["pending_id"], "failed", "simulated")
+
+                async def notify(text):
+                    notices.append(text)
+
+                manager._download_one = fail_download
+                try:
+                    await manager.run(
+                        [store.get_item(pending_id)], notify
+                    )
+                    final = notices[-1]
+                    self.assertIn("0 of 1", final)
+                    self.assertIn("No files were completed or imported", final)
+                    self.assertNotIn("imported automatically", final)
+                finally:
+                    store.close()
+
         asyncio.run(exercise())
 
     def test_failed_atomic_overwrite_preserves_existing_file(self):

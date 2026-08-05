@@ -7,6 +7,7 @@
   "local_bot_api_port": 8081,
   "local_bot_api_base_url": "http://127.0.0.1:8081/bot",
   "local_bot_api_base_file_url": "http://127.0.0.1:8081/file/bot",
+  "telegram_download_read_timeout_seconds": 1800,
   "jellyfin_library_path": "D:\\Media\\Jellyfin\\Shows",
   "jellyfin_movie_library_path": "",
   "movie_staging_path": "",

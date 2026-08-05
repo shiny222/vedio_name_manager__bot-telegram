@@ -54,24 +54,46 @@ class DownloadManager:
         try:
             await notify("Download started.")
             await asyncio.gather(*(guarded(item) for item in items))
-            completed = sum(
-                1 for item in items
-                if (self.queue.store.get_item(item["pending_id"]) or {}).get("status") == "completed"
-            )
+            completed_items = [
+                item
+                for item in items
+                if (self.queue.store.get_item(item["pending_id"]) or {}).get(
+                    "status"
+                ) == "completed"
+            ]
+            completed = len(completed_items)
             if self.cancel_event.is_set():
                 await notify(f"Operation cancelled. {completed} file(s) completed.")
             else:
-                series_count = sum(
-                    1 for item in items if item.get("media_kind", "series") == "series"
+                completed_series = sum(
+                    1
+                    for item in completed_items
+                    if item.get("media_kind", "series") == "series"
                 )
-                suffix = (
-                    "\nUse /sort_latest to organize the latest downloaded series folder."
-                    if series_count
-                    else "\nDownloaded movies will now be imported automatically."
-                )
+                completed_movies = completed - completed_series
+                notes = []
+                if completed == 0:
+                    notes.append(
+                        "No files were completed or imported. Fix the reported "
+                        "error, then use /download to retry."
+                    )
+                else:
+                    if completed_series:
+                        notes.append(
+                            "Use /sort_latest to organize the latest downloaded "
+                            "series folder."
+                        )
+                    if completed_movies:
+                        notes.append(
+                            "Completed movies will now be imported automatically."
+                        )
+                    if completed < len(items):
+                        notes.append(
+                            "Some files did not complete; use /download to retry them."
+                        )
                 await notify(
                     f"Downloads finished. {completed} of {len(items)} file(s) completed."
-                    + suffix
+                    + "\n" + "\n".join(notes)
                 )
         finally:
             self.running = False
@@ -120,7 +142,11 @@ class DownloadManager:
                     return
 
             self.queue.set_status(pending_id, "downloading", None)
-            file_info = await self.api_call("getFile", file_id=item["file_id"])
+            file_info = await self.api_call(
+                "getFile",
+                file_id=item["file_id"],
+                _request_timeout=self._download_timeout(),
+            )
             file_path = str(file_info.get("file_path", ""))
             if not file_path:
                 raise RuntimeError("Local Bot API did not return a file path.")
@@ -168,6 +194,15 @@ class DownloadManager:
         except asyncio.CancelledError:
             self.queue.set_status(pending_id, "cancelled", "Download cancelled.")
             raise
+        except asyncio.TimeoutError:
+            seconds = self.config.telegram_download_read_timeout_seconds
+            error = (
+                f"Telegram stopped sending data for {seconds} seconds. "
+                "Any incomplete .part file was kept; use /download to retry."
+            )
+            LOG.warning("Download timed out for pending_id=%s", pending_id)
+            self.queue.set_status(pending_id, "failed", error)
+            await notify(f"Download timeout for file #{pending_id}: {error}")
         except Exception as exc:
             LOG.exception("Download failed for pending_id=%s", pending_id)
             self.queue.set_status(pending_id, "failed", str(exc))
@@ -186,13 +221,23 @@ class DownloadManager:
 
     async def _download_http(self, file_path: str, destination: Path) -> None:
         url = f"{self.config.file_root}/{quote(file_path.lstrip('/'), safe='/')}"
-        async with self.session.get(url) as response:
+        async with self.session.get(
+            url, timeout=self._download_timeout()
+        ) as response:
             response.raise_for_status()
             with destination.open("wb") as output:
                 async for chunk in response.content.iter_chunked(1024 * 1024):
                     if self.cancel_event.is_set():
                         return
                     output.write(chunk)
+
+    def _download_timeout(self) -> aiohttp.ClientTimeout:
+        """Allow large Local Bot API transfers to pause without timing out early."""
+        return aiohttp.ClientTimeout(
+            total=None,
+            connect=15,
+            sock_read=self.config.telegram_download_read_timeout_seconds,
+        )
 
     @staticmethod
     def _unique_path(path: Path) -> Path:

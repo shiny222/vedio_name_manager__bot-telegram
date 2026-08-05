@@ -31,6 +31,7 @@ class Config:
     local_bot_api_port: int
     local_bot_api_base_url: str
     local_bot_api_base_file_url: str
+    telegram_download_read_timeout_seconds: int
     jellyfin_library_path: Path
     jellyfin_movie_library_path: Path | None
     movie_staging_path: Path | None
@@ -152,6 +153,9 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         local_bot_api_port=port,
         local_bot_api_base_url=str(raw.get("local_bot_api_base_url", f"http://{host}:{port}/bot")),
         local_bot_api_base_file_url=str(raw.get("local_bot_api_base_file_url", f"http://{host}:{port}/file/bot")),
+        telegram_download_read_timeout_seconds=max(
+            60, int(raw.get("telegram_download_read_timeout_seconds", 1800))
+        ),
         jellyfin_library_path=_path(str(raw["jellyfin_library_path"]), base),
         jellyfin_movie_library_path=_optional_path(
             raw.get("jellyfin_movie_library_path"), base

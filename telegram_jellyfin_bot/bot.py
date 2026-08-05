@@ -724,9 +724,18 @@ class TelegramAPI:
         self.config = config
         self.session = session
 
-    async def call(self, method: str, **params: Any) -> Any:
+    async def call(
+        self,
+        method: str,
+        *,
+        _request_timeout: aiohttp.ClientTimeout | None = None,
+        **params: Any,
+    ) -> Any:
         url = f"{self.config.api_root}/{method}"
-        async with self.session.post(url, data=params) as response:
+        request_options: dict[str, Any] = {"data": params}
+        if _request_timeout is not None:
+            request_options["timeout"] = _request_timeout
+        async with self.session.post(url, **request_options) as response:
             try:
                 payload = await response.json()
             except Exception as exc:

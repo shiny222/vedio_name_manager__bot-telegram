@@ -52,6 +52,9 @@ English or فارسی.
 - `allowed_chat_ids`: the Telegram group/channel IDs that may use the bot.
 - `confirm_before_download`: if `true`, the bot waits for `/confirm_download`.
 - `ask_before_overwrite`: if `true`, the bot asks before handling duplicate files.
+- `telegram_download_read_timeout_seconds`: maximum time a large Telegram
+  transfer may produce no data before it is marked failed. The default is 1800
+  seconds (30 minutes); normal bot requests keep their shorter timeout.
 - `sorter_command`: command used to call the independent `organizer` tool.
 - `jellyfin_server_url` and `jellyfin_api_key`: needed for `/jellyfin_scan`.
 - `jellyfin_scan_poll_interval_seconds`: how often an explicitly requested scan
