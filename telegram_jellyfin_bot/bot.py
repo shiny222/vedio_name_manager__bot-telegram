@@ -160,6 +160,7 @@ GUIDE_EN = """How to use the Telegram Jellyfin Bot
 
 2. Open the controls
 • Send /menu.
+• On first use, choose English or فارسی. Use /language to change it later.
 • Private chats and groups get the persistent category keyboard.
 • In a channel, press Command categories in the inline menu.
 
@@ -169,11 +170,12 @@ GUIDE_EN = """How to use the Telegram Jellyfin Bot
 • Confirm the IMDb suggestion, or choose the manual name.
 • Check the selection with /folder.
 
-Important: the current folder is shared by the authorized chats. A queued video
-keeps the folder that was selected when that video was received.
+Each chat has its own current folder, queue, confirmations, status, and undo
+batches. One chat cannot control another chat's queued items. Members of the
+same Telegram group share that group's state.
 
 4. Send episodes
-Send supported video files to the authorized bot chat or channel. The bot adds
+Send supported video files to the bot chat or channel. The bot adds
 them to the queue; it does not download immediately.
 
 5. Download
@@ -230,6 +232,8 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
 
 ۲. باز کردن کنترل‌ها
 • دستور /menu را ارسال کنید.
+• در اولین استفاده، English یا فارسی را انتخاب کنید. برای تغییر بعدی از
+  /language استفاده کنید.
 • در گفت‌وگوی خصوصی و گروه، صفحه‌کلید دائمی دسته‌بندی‌ها نمایش داده می‌شود.
 • در کانال، دکمه Command categories را در منوی شیشه‌ای انتخاب کنید.
 
@@ -239,11 +243,12 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
 • پیشنهاد IMDb را تأیید کنید یا نام دستی را انتخاب کنید.
 • با دستور /folder پوشه انتخاب‌شده را بررسی کنید.
 
-مهم: پوشه فعلی بین چت‌های مجاز مشترک است. هر ویدیوی واردشده، پوشه‌ای را که
-در زمان دریافت آن انتخاب شده بود در صف خود نگه می‌دارد.
+هر چت پوشه فعلی، صف، تأییدها، وضعیت و دسته‌های بازگردانی مستقل خودش را دارد.
+یک چت نمی‌تواند موارد صف چت دیگری را کنترل کند. اعضای یک گروه تلگرام، وضعیت
+همان گروه را با یکدیگر به اشتراک می‌گذارند.
 
 ۴. فرستادن قسمت‌ها
-فایل‌های ویدیویی پشتیبانی‌شده را در چت یا کانال مجاز بفرستید. ربات آن‌ها را
+فایل‌های ویدیویی پشتیبانی‌شده را در چت یا کانال ربات بفرستید. ربات آن‌ها را
 وارد صف می‌کند و دانلود به‌صورت خودکار شروع نمی‌شود.
 
 ۵. دانلود

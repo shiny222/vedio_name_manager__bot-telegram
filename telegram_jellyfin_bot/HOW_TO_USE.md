@@ -33,7 +33,7 @@ Members inside one Telegram group share that group's state.
 
 ### 4. Queue and download episodes
 
-Send supported video files to the authorized bot chat or channel. Then use:
+Send supported video files to the bot chat or channel. Then use:
 
 ```text
 /queue
@@ -127,7 +127,7 @@ and `/movie_undo_last` to return the latest import to staging. Send
 
 ### ۴. صف و دانلود قسمت‌ها
 
-فایل‌های ویدیویی پشتیبانی‌شده را در چت یا کانال مجاز ارسال کنید. سپس:
+فایل‌های ویدیویی پشتیبانی‌شده را در چت یا کانال ربات ارسال کنید. سپس:
 
 ```text
 /queue
