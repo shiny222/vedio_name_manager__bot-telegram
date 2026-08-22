@@ -81,24 +81,21 @@ JELLYFIN_API_KEY=your_jellyfin_api_key
 Leave `JELLYFIN_API_KEY` empty if scan/status commands are not needed yet. The
 download and organizer functions still work.
 
-The first Docker phase exposes all four NAS libraries to the container. The
-current application still has one active series root and one active movie root.
-The example selects the animation pair:
+All four NAS libraries are exposed to the bot at the same time:
 
 ```env
-JELLYFIN_LIBRARY_PATH=/media/animation-serise
-JELLYFIN_MOVIE_LIBRARY_PATH=/media/animation-movie
+LIBRARY_ANIMATION_SERIES_PATH=/media/animation-serise
+LIBRARY_ANIMATION_MOVIE_PATH=/media/animation-movie
+LIBRARY_VIDEO_SERIES_PATH=/media/video-serise
+LIBRARY_VIDEO_MOVIE_PATH=/media/video-movie
+DEFAULT_LIBRARY_KEY=animation_series
 ```
 
-To use the video pair instead:
-
-```env
-JELLYFIN_LIBRARY_PATH=/media/video-serise
-JELLYFIN_MOVIE_LIBRARY_PATH=/media/video-movie
-```
-
-An in-bot four-library selector is intentionally left for the next application
-phase so Docker deployment can be verified independently.
+After the bot starts, send `/libraries` and choose Animation Series, Animation
+Movies, Video Series, or Video Movies. The choice is stored separately for each
+chat and automatically changes that chat to series or movie mode. Every queued
+file remembers the chosen library, so selecting another destination later does
+not reroute it.
 
 ## 3. Stop the old Windows processes
 

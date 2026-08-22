@@ -16,6 +16,8 @@ LEGACY_CHAT_SETTINGS = {
     "latest_downloaded_movie_id",
     "latest_imported_movie_id",
     "latest_movie_batch_id",
+    "current_library_key",
+    "latest_downloaded_library_key",
 }
 
 
@@ -53,6 +55,7 @@ class StateStore:
                     file_size INTEGER,
                     received_at TEXT NOT NULL,
                     target_folder TEXT,
+                    library_key TEXT,
                     media_kind TEXT NOT NULL DEFAULT 'series',
                     movie_title TEXT,
                     movie_year INTEGER,
@@ -70,6 +73,7 @@ class StateStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     chat_id INTEGER,
                     operation_kind TEXT NOT NULL DEFAULT 'series',
+                    library_key TEXT,
                     batch_id TEXT,
                     folder TEXT NOT NULL,
                     status TEXT NOT NULL,
@@ -88,6 +92,7 @@ class StateStore:
             }
             migrations = {
                 "media_kind": "TEXT NOT NULL DEFAULT 'series'",
+                "library_key": "TEXT",
                 "movie_title": "TEXT",
                 "movie_year": "INTEGER",
                 "imdb_id": "TEXT",
@@ -105,6 +110,7 @@ class StateStore:
             sorter_migrations = {
                 "chat_id": "INTEGER",
                 "operation_kind": "TEXT NOT NULL DEFAULT 'series'",
+                "library_key": "TEXT",
                 "batch_id": "TEXT",
             }
             for name, declaration in sorter_migrations.items():
@@ -279,6 +285,74 @@ class StateStore:
             )
             return cursor.rowcount
 
+    def replace_chat_setting_value_in_library(
+        self,
+        name: str,
+        old_value: str,
+        new_value: str,
+        library_key: str,
+        *,
+        include_legacy: bool = False,
+        library_setting_name: str = "current_library_key",
+    ) -> int:
+        """Update chat pointers only for chats using the renamed library."""
+        changed = 0
+        with self.lock, self.conn:
+            rows = self.conn.execute(
+                "SELECT key FROM settings WHERE key GLOB ? AND value=?",
+                (f"chat:*:{name}", old_value),
+            ).fetchall()
+            for row in rows:
+                key = str(row["key"])
+                match = re.fullmatch(r"chat:(-?\d+):.+", key)
+                if not match:
+                    continue
+                chat_id = int(match.group(1))
+                selected = self.get_chat_setting(chat_id, library_setting_name)
+                if selected != library_key and not (include_legacy and not selected):
+                    continue
+                cursor = self.conn.execute(
+                    "UPDATE settings SET value=? WHERE key=? AND value=?",
+                    (new_value, key, old_value),
+                )
+                changed += cursor.rowcount
+        return changed
+
+    def replace_chat_setting_prefix_in_library(
+        self,
+        name: str,
+        old_prefix: str,
+        new_prefix: str,
+        library_key: str,
+        *,
+        include_legacy: bool = False,
+        library_setting_name: str = "current_library_key",
+    ) -> int:
+        changed = 0
+        with self.lock, self.conn:
+            rows = self.conn.execute(
+                "SELECT key,value FROM settings WHERE key GLOB ? "
+                "AND substr(value,1,?)=?",
+                (f"chat:*:{name}", len(old_prefix), old_prefix),
+            ).fetchall()
+            for row in rows:
+                key = str(row["key"])
+                match = re.fullmatch(r"chat:(-?\d+):.+", key)
+                if not match:
+                    continue
+                chat_id = int(match.group(1))
+                selected = self.get_chat_setting(chat_id, library_setting_name)
+                if selected != library_key and not (include_legacy and not selected):
+                    continue
+                old_value = str(row["value"])
+                new_value = new_prefix + old_value[len(old_prefix):]
+                cursor = self.conn.execute(
+                    "UPDATE settings SET value=? WHERE key=? AND value=?",
+                    (new_value, key, old_value),
+                )
+                changed += cursor.rowcount
+        return changed
+
     def add_queue_item(self, **values: Any) -> int | None:
         now = utc_now()
         with self.lock, self.conn:
@@ -287,15 +361,16 @@ class StateStore:
                     """
                     INSERT INTO queue_items(
                       message_id,chat_id,file_id,file_unique_id,original_filename,
-                      file_size,received_at,target_folder,media_kind,movie_title,
+                      file_size,received_at,target_folder,library_key,media_kind,movie_title,
                       movie_year,imdb_id,movie_batch_id,status,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         values["message_id"], values["chat_id"], values["file_id"],
                         values["file_unique_id"], values["original_filename"],
                         values.get("file_size"), values.get("received_at", now),
                         values.get("target_folder") or None,
+                        values.get("library_key") or None,
                         values.get("media_kind", "series"),
                         values.get("movie_title") or None,
                         values.get("movie_year"),
@@ -375,7 +450,13 @@ class StateStore:
             return cursor.rowcount
 
     def rename_target_folder(
-        self, old_name: str, new_name: str, old_path: Path, new_path: Path
+        self,
+        old_name: str,
+        new_name: str,
+        old_path: Path,
+        new_path: Path,
+        library_key: str | None = None,
+        include_legacy: bool = False,
     ) -> int:
         """Retarget queue records after a safe destination-folder rename."""
         old_prefix = str(old_path)
@@ -393,12 +474,13 @@ class StateStore:
                     END,
                     updated_at=?
                 WHERE target_folder=? AND media_kind='series'
+                  AND (? IS NULL OR library_key=? OR (?=1 AND library_key IS NULL))
                 """,
                 (
                     new_name,
                     len(old_prefix), old_prefix,
                     new_prefix, len(old_prefix) + 1,
-                    utc_now(), old_name,
+                    utc_now(), old_name, library_key, library_key, int(include_legacy),
                 ),
             )
             return cursor.rowcount
@@ -467,12 +549,21 @@ class StateStore:
         command: str,
         chat_id: int | None = None,
         operation_kind: str = "series",
+        library_key: str | None = None,
     ) -> int:
         with self.lock, self.conn:
             cursor = self.conn.execute(
-                "INSERT INTO sorter_runs(chat_id,operation_kind,folder,status,command,started_at) "
-                "VALUES(?,?,?,?,?,?)",
-                (chat_id, operation_kind, folder, "running", command, utc_now()),
+                "INSERT INTO sorter_runs(chat_id,operation_kind,library_key,folder,status,command,started_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (
+                    chat_id,
+                    operation_kind,
+                    library_key,
+                    folder,
+                    "running",
+                    command,
+                    utc_now(),
+                ),
             )
             return int(cursor.lastrowid)
 
@@ -518,13 +609,21 @@ class StateStore:
         ).fetchone()
         return dict(row) if row else None
 
-    def latest_sorter_batch(self, chat_id: int) -> str:
+    def latest_sorter_batch(
+        self, chat_id: int, library_key: str | None = None
+    ) -> str:
+        library_clause = " AND library_key=?" if library_key else ""
+        values: tuple[Any, ...] = (int(chat_id),)
+        if library_key:
+            values += (library_key,)
         row = self.conn.execute(
             "SELECT batch_id FROM sorter_runs WHERE chat_id=? "
             "AND operation_kind='series' "
+            + library_clause
+            + " "
             "AND status IN ('completed','failed','undo_partial') "
             "AND batch_id IS NOT NULL AND batch_id<>'' ORDER BY id DESC LIMIT 1",
-            (int(chat_id),),
+            values,
         ).fetchone()
         return str(row["batch_id"]) if row else ""
 
@@ -548,3 +647,19 @@ class StateStore:
             (batch_id, int(chat_id)),
         ).fetchone()
         return row is not None
+
+    def sorter_batch_library(self, batch_id: str, chat_id: int) -> str:
+        row = self.conn.execute(
+            "SELECT library_key FROM sorter_runs WHERE batch_id=? AND chat_id=? "
+            "AND operation_kind='series' ORDER BY id DESC LIMIT 1",
+            (batch_id, int(chat_id)),
+        ).fetchone()
+        return str(row["library_key"] or "") if row else ""
+
+    def movie_batch_library(self, batch_id: str, chat_id: int) -> str:
+        row = self.conn.execute(
+            "SELECT library_key FROM queue_items WHERE movie_batch_id=? AND chat_id=? "
+            "AND media_kind='movie' ORDER BY pending_id DESC LIMIT 1",
+            (batch_id, int(chat_id)),
+        ).fetchone()
+        return str(row["library_key"] or "") if row else ""

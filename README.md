@@ -37,6 +37,8 @@ Git clone on the NAS, while runtime secrets and state remain outside Git.
 
 See [`nas/README.md`](nas/README.md) for the exact OpenMediaVault paths, initial
 build commands, shared Docker network, persistent mounts, and update procedure.
+The NAS bot exposes all four mounted Jellyfin libraries simultaneously; use
+`/libraries` to choose the destination independently in each Telegram chat.
 
 ## Updating on another PC
 

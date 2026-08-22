@@ -53,6 +53,9 @@ damaged.
 - `jellyfin_library_path`: your main Jellyfin shows/anime library folder.
 - `jellyfin_movie_library_path`: a separate Jellyfin Movies library. Leave it
   empty to disable movie mode.
+- `media_libraries`: optional named destinations for installations with more
+  than one series or movie root. Docker configures the four NAS libraries from
+  environment variables automatically.
 - `movie_staging_path`: a separate temporary download folder outside both
   Jellyfin libraries. Leave it empty when movie mode is disabled.
 - `movie_sorter_command`: command used to call the independent movie organizer.
@@ -91,7 +94,9 @@ chat ID automatically and the bot uses it only as an internal namespace.
 
 Each chat has independent language, media mode, current folder, queue,
 confirmation state, latest-download references, task status, and owned undo
-batches. A private chat is separate for each Telegram user. Members of the same
+batches. Its selected media library is independent too, and every queued item
+keeps the library selected when that item arrived. A private chat is separate
+for each Telegram user. Members of the same
 group share one group-chat namespace because Telegram gives the group one chat
 ID. The Jellyfin folders themselves are still a shared library, so filesystem
 operations are serialized and retain the no-overwrite protections.
@@ -108,6 +113,7 @@ shows the current one.
 Set or choose a destination folder:
 
 ```text
+/libraries
 /setfolder My Anime
 /folders
 /usefolder Existing Anime Folder
@@ -140,7 +146,8 @@ Trigger Jellyfin scan:
 
 Movie mode is independent of the currently selected series folder:
 
-1. Send `/movie_mode`.
+1. Send `/libraries` and choose the correct movie library. `/movie_mode` opens
+   only the movie-library choices.
 2. Send one movie video.
 3. Choose **Search using filename** or **Enter name manually**.
 4. Select the IMDb result and confirm the exact final folder/file name. If IMDb
@@ -165,6 +172,8 @@ in staging and `/movie_import ID` can retry it after you fix the problem.
 - `/menu` — show the button menu.
 - `/guide` — choose the English or Persian step-by-step usage guide.
 - `/language` — choose and remember English or Persian for this chat.
+- `/libraries` — choose one of the configured series/movie libraries.
+- `/use_library KEY` — select a configured library directly by key.
 - `/setfolder NAME` — set a destination folder, using optional IMDb fuzzy search first.
 - `/folders` — choose from existing Jellyfin folders.
 - `/usefolder NAME` — use an existing folder by exact name.
@@ -197,8 +206,8 @@ in staging and `/movie_import ID` can retry it after you fix the problem.
 - `/library_episodes` — show an episode summary for the whole library.
 - `/imdb_search NAME` — fuzzy-search an official IMDb folder name.
 - `/imdb_fix_current [NAME]` — safely rename the current folder using IMDb results.
-- `/movie_mode` — make newly received videos enter the independent movie flow.
-- `/series_mode` — return newly received videos to the series flow.
+- `/movie_mode` — choose a movie library and enter the movie flow.
+- `/series_mode` — choose a series library and enter the episode flow.
 - `/movie_current` — show the latest movie job and its status.
 - `/movie_cancel` — remove the current movie before it is downloaded.
 - `/movie_import [ID]` — retry a completed movie that is still in staging.

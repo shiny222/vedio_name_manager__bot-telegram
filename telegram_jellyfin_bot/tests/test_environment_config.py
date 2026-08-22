@@ -45,6 +45,41 @@ class EnvironmentConfigTests(unittest.TestCase):
             self.assertTrue(config.jellyfin_library_path.is_dir())
             self.assertTrue(config.jellyfin_movie_library_path.is_dir())
 
+    def test_loads_all_four_named_docker_libraries(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            environment = {
+                "VIDEO_MANAGER_CONFIG_MODE": "env",
+                "BOT_TOKEN": "123456:test-token",
+                "LIBRARY_ANIMATION_SERIES_PATH": str(root / "animation-series"),
+                "LIBRARY_ANIMATION_MOVIE_PATH": str(root / "animation-movies"),
+                "LIBRARY_VIDEO_SERIES_PATH": str(root / "video-series"),
+                "LIBRARY_VIDEO_MOVIE_PATH": str(root / "video-movies"),
+                "MOVIE_STAGING_PATH": str(root / "staging"),
+                "DATA_PATH": str(root / "data"),
+                "LOGS_PATH": str(root / "logs"),
+            }
+            with mock.patch.dict(os.environ, environment, clear=True):
+                config = load_config(create_from_example=False)
+
+            self.assertEqual(
+                [library.key for library in config.media_libraries],
+                [
+                    "animation_series",
+                    "animation_movies",
+                    "video_series",
+                    "video_movies",
+                ],
+            )
+            self.assertEqual(
+                config.target_path("Show", "video_series").parent,
+                (root / "video-series").resolve(),
+            )
+            self.assertEqual(
+                config.movie_target_path("Film", "video_movies").parent,
+                (root / "video-movies").resolve(),
+            )
+
     def test_rejects_invalid_environment_boolean(self) -> None:
         environment = {
             "VIDEO_MANAGER_CONFIG_MODE": "env",

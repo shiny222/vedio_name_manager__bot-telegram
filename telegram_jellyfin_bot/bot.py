@@ -26,7 +26,7 @@ CURRENT_DIRECT_MESSAGES_TOPIC_ID: ContextVar[int | None] = ContextVar(
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from telegram_jellyfin_bot.config import Config, load_config
+    from telegram_jellyfin_bot.config import Config, MediaLibrary, load_config
     from telegram_jellyfin_bot.downloader import DownloadManager
     from telegram_jellyfin_bot.episode_catalog import (
         EpisodeCatalog, detect_episode, format_series_inventory
@@ -50,7 +50,7 @@ if __package__ in {None, ""}:
         format_size, sanitize_folder_name, setup_logging, validate_original_filename
     )
 else:
-    from .config import Config, load_config
+    from .config import Config, MediaLibrary, load_config
     from .downloader import DownloadManager
     from .episode_catalog import EpisodeCatalog, detect_episode, format_series_inventory
     from .jellyfin_bridge import JellyfinBridge
@@ -71,6 +71,8 @@ else:
 LOG = logging.getLogger(__name__)
 HELP = """Commands:
 /menu - Show the button menu
+/libraries - Choose one of the configured media libraries
+/use_library KEY - Select a library directly
 /setfolder NAME - Set the target folder
 /folders - Pick from existing folders
 /usefolder NAME - Use an existing folder by name
@@ -117,6 +119,8 @@ HELP = """Commands:
 
 HELP_FA = """دستورها:
 /menu - نمایش منوی دکمه‌ای
+/libraries - انتخاب یکی از کتابخانه‌های رسانه
+/use_library KEY - انتخاب مستقیم کتابخانه
 /help - نمایش راهنمای دستورها
 /guide - نمایش راهنمای استفاده
 /language - انتخاب زبان فارسی یا انگلیسی
@@ -176,7 +180,8 @@ GUIDE_EN = """How to use the Telegram Jellyfin Bot
 • In chats with topics enabled, replies stay in the same existing topic where
   you sent the command, button, or file. The bot does not create a new topic.
 
-3. Select the series folder before sending videos
+3. Select the library and series folder before sending videos
+• /libraries — choose Animation Series or Video Series. This also sets series mode.
 • Existing series: /folders, then press its folder.
 • New series: /setfolder SERIES NAME
 • Confirm the IMDb suggestion, or choose the manual name.
@@ -221,7 +226,8 @@ ready. Use /jellyfin_status to check live progress or diagnose an HTTP error.
   power loss. It checks only the current series folder.
 
 10. Import an independent movie
-• /movie_mode — new videos become movie jobs, not episodes.
+• /libraries — choose Animation Movies or Video Movies; this sets movie mode.
+• /movie_mode — opens the movie-library choices.
 • Send one movie, choose filename or manual search, select the IMDb result, and
   confirm the exact name.
 • /download then /confirm_download — download to staging and safely import it.
@@ -252,7 +258,9 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
 • در چت‌هایی که موضوع (Topic) فعال است، پاسخ‌ها در همان موضوعی می‌مانند که
   دستور، دکمه یا فایل را در آن فرستادید. ربات موضوع جدیدی ایجاد نمی‌کند.
 
-۳. قبل از فرستادن ویدیو، پوشه سریال را انتخاب کنید
+۳. قبل از فرستادن ویدیو، کتابخانه و پوشه سریال را انتخاب کنید
+• با /libraries کتابخانه Animation Series یا Video Series را انتخاب کنید؛
+  حالت سریال نیز خودکار فعال می‌شود.
 • سریال موجود: دستور /folders را بفرستید و پوشه را انتخاب کنید.
 • سریال جدید: /setfolder SERIES NAME
 • پیشنهاد IMDb را تأیید کنید یا نام دستی را انتخاب کنید.
@@ -300,7 +308,9 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
   بررسی می‌کند و فقط پوشه سریال فعلی را می‌گردد.
 
 ۱۰. وارد کردن فیلم مستقل
-• با /movie_mode ویدیوهای جدید به‌عنوان فیلم دریافت می‌شوند، نه قسمت سریال.
+• با /libraries کتابخانه Animation Movies یا Video Movies را انتخاب کنید؛
+  حالت فیلم نیز خودکار فعال می‌شود.
+• دستور /movie_mode فهرست کتابخانه‌های فیلم را باز می‌کند.
 • یک فیلم بفرستید، جستجو با نام فایل یا نام دستی را انتخاب کنید، نتیجه IMDb را
   انتخاب و نام نهایی را تأیید کنید.
 • با /download و سپس /confirm_download فیلم ابتدا در staging دانلود و بعد
@@ -344,6 +354,8 @@ BOT_COMMANDS = [
     {"command": "usefolder", "description": "Folders: Use an existing folder by name"},
     {"command": "renamefolder", "description": "Folders: Rename the current folder"},
     {"command": "unsetfolder", "description": "Folders: Clear the current folder"},
+    {"command": "libraries", "description": "Folders: Choose a media library"},
+    {"command": "use_library", "description": "Folders: Select a library by key"},
     # Queue and downloads
     {"command": "queue", "description": "Downloads: Show the queue"},
     {"command": "download", "description": "Downloads: Prepare queued files"},
@@ -440,6 +452,9 @@ CHANNEL_MENU = {
         [
             {"text": "Series mode", "callback_data": "menu:series_mode"},
             {"text": "Movie mode", "callback_data": "menu:movie_mode"},
+        ],
+        [
+            {"text": "🗄 Choose media library", "callback_data": "menu:libraries"},
         ],
         [
             {"text": "✏️ Set/rename folder", "callback_data": "menu:folder_help"},
@@ -547,6 +562,9 @@ DOWNLOAD_MENU = {
 FOLDER_MENU = {
     "inline_keyboard": [
         [
+            {"text": "🗄 Choose media library", "callback_data": "menu:libraries"},
+        ],
+        [
             {"text": "📁 Current folder", "callback_data": "menu:folder"},
             {"text": "🗂 Pick existing", "callback_data": "menu:folders"},
         ],
@@ -627,7 +645,7 @@ JELLYFIN_MENU = {
 SERIES_MENU = {
     "inline_keyboard": [
         [
-            {"text": "Series mode", "callback_data": "menu:series_mode"},
+            {"text": "Choose series library", "callback_data": "menu:series_mode"},
         ],
         [
             {"text": "📁 Current folder", "callback_data": "menu:folder"},
@@ -647,7 +665,7 @@ SERIES_MENU = {
 MOVIE_MENU = {
     "inline_keyboard": [
         [
-            {"text": "Enter movie mode", "callback_data": "menu:movie_mode"},
+            {"text": "Choose movie library", "callback_data": "menu:movie_mode"},
             {"text": "Series mode", "callback_data": "menu:series_mode"},
         ],
         [
@@ -1100,6 +1118,71 @@ class BotApp:
     def _set_chat_setting(self, chat_id: int, name: str, value: str) -> None:
         self.store.set_chat_setting(chat_id, name, value)
 
+    def _selected_library(
+        self, chat_id: int, media_kind: str | None = None
+    ) -> MediaLibrary:
+        key = self._chat_setting(chat_id, "current_library_key")
+        try:
+            return self.config.library(key or None, media_kind)
+        except ValueError:
+            # A removed/renamed key from an older deployment must not make the
+            # bot unusable. Fall back to a configured library of the requested type.
+            return self.config.library(None, media_kind)
+
+    def _library_picker_markup(self, media_kind: str | None = None) -> dict:
+        libraries = (
+            self.config.libraries_for(media_kind)
+            if media_kind
+            else self.config.media_libraries
+        )
+        rows = [
+            [{
+                "text": (
+                    ("📺 " if library.media_kind == "series" else "🎬 ")
+                    + library.name
+                ),
+                "callback_data": f"library:{library.key}",
+            }]
+            for library in libraries
+        ]
+        rows.append([{"text": "⬅️ Categories", "callback_data": "nav:categories"}])
+        return {"inline_keyboard": rows}
+
+    async def _require_library_kind(
+        self, chat_id: int, media_kind: str
+    ) -> MediaLibrary | None:
+        current = self._selected_library(chat_id)
+        if current.media_kind == media_kind:
+            return current
+        await self.send(
+            chat_id,
+            f"Choose a {media_kind} library before using this command:",
+            self._library_picker_markup(media_kind),
+        )
+        return None
+
+    async def _select_library(self, chat_id: int, library: MediaLibrary) -> None:
+        previous = self._chat_setting(chat_id, "current_library_key")
+        self._set_chat_setting(chat_id, "current_library_key", library.key)
+        self.store.set_setting(f"media_mode:{chat_id}", library.media_kind)
+        self.movie_manual_pending.pop(chat_id, None)
+        if previous != library.key:
+            # A folder name is meaningful only inside its own library root.
+            self._set_chat_setting(chat_id, "current_folder", "")
+            self._set_chat_setting(chat_id, "download_confirmation", "")
+        await self.send(
+            chat_id,
+            f"Library selected: {library.name}\n"
+            f"Mode: {library.media_kind}\n"
+            f"Path: {library.path}\n\n"
+            + (
+                "Choose or create a series folder before sending episodes."
+                if library.media_kind == "series"
+                else "Send movie files; each queued movie will remember this library."
+            ),
+            SERIES_MENU if library.media_kind == "series" else MOVIE_MENU,
+        )
+
     async def handle_callback(self, query: dict) -> None:
         assert self.api
         message = query.get("message") or {}
@@ -1114,6 +1197,7 @@ class BotApp:
         self.chat_types[int(chat_id)] = str(chat.get("type", ""))
         action = str(query.get("data", ""))
         handlers = {
+            "menu:libraries": self.cmd_libraries,
             "menu:folder": self.cmd_folder,
             "menu:folders": self.cmd_folders,
             "menu:unsetfolder": self.cmd_unsetfolder,
@@ -1159,6 +1243,15 @@ class BotApp:
             )
             await self.send(int(chat_id), confirmation)
             await self.cmd_menu(int(chat_id), "")
+            return
+        if action.startswith("library:"):
+            key = action.partition(":")[2]
+            try:
+                library = self.config.library(key)
+            except ValueError as exc:
+                await self.send(int(chat_id), str(exc))
+                return
+            await self._select_library(int(chat_id), library)
             return
         if action == "guide:en":
             self.store.set_setting(f"language:{int(chat_id)}", "en")
@@ -1347,7 +1440,7 @@ class BotApp:
         if action.startswith("pickfolder:"):
             token = action.partition(":")[2]
             matches = [
-                folder for folder in self._existing_series_folders()
+                folder for folder in self._existing_series_folders(int(chat_id))
                 if self._folder_token(folder.name) == token
             ]
             if len(matches) != 1:
@@ -1384,9 +1477,23 @@ class BotApp:
                 await self.send(int(chat_id), "This confirmation expired. Please try again.")
                 return
             self.imdb_choices.pop(token, None)
+            choice_library_key = str(choice.get("library_key") or "")
+            if (
+                choice_library_key
+                and self._selected_library(int(chat_id), "series").key
+                != choice_library_key
+            ):
+                await self.send(
+                    int(chat_id),
+                    "The selected library changed after this IMDb search. "
+                    "Nothing was changed. Start the folder search again.",
+                )
+                return
             if choice["mode"] == "rename":
                 source_folder = str(choice.get("source_folder", ""))
                 current_folder = self._chat_setting(int(chat_id), "current_folder")
+                library_key = str(choice.get("library_key") or "")
+                current_library = self._selected_library(int(chat_id), "series")
                 if not source_folder or current_folder != source_folder:
                     await self.send(
                         int(chat_id),
@@ -1394,7 +1501,16 @@ class BotApp:
                         "Nothing was renamed. Run /imdb_fix_current again.",
                     )
                     return
-                if not self.config.target_path(source_folder).is_dir():
+                if library_key and current_library.key != library_key:
+                    await self.send(
+                        int(chat_id),
+                        "The selected library changed after this IMDb search. "
+                        "Nothing was renamed. Run /imdb_fix_current again.",
+                    )
+                    return
+                if not self.config.target_path(
+                    source_folder, library_key or current_library.key
+                ).is_dir():
                     await self.send(
                         int(chat_id),
                         "The folder used for this IMDb search no longer exists. "
@@ -1451,6 +1567,7 @@ class BotApp:
         if self._media_mode(chat_id) == "movie":
             await self._queue_movie_for_identification(chat_id, message, media, filename)
             return
+        library = self._selected_library(chat_id, "series")
         pending_id = self.queue.add(
             message_id=int(message["message_id"]),
             chat_id=chat_id,
@@ -1460,6 +1577,7 @@ class BotApp:
             file_size=media.get("file_size"),
             received_at=datetime.now(timezone.utc).isoformat(),
             target_folder=self._chat_setting(chat_id, "current_folder"),
+            library_key=library.key,
             media_kind="series",
         )
         if pending_id is None:
@@ -1467,10 +1585,10 @@ class BotApp:
         else:
             target_folder = self._chat_setting(chat_id, "current_folder")
             item_number = self._queue_display_number(
-                chat_id, pending_id, target_folder
+                chat_id, pending_id, target_folder, library.key
             )
             notice = self._episode_arrival_notice(
-                chat_id, filename, target_folder, pending_id
+                chat_id, filename, target_folder, pending_id, library.key
             )
             await self.send(
                 chat_id,
@@ -1480,6 +1598,12 @@ class BotApp:
             )
 
     def _media_mode(self, chat_id: int) -> str:
+        key = self._chat_setting(chat_id, "current_library_key")
+        if key:
+            try:
+                return self.config.library(key).media_kind
+            except ValueError:
+                pass
         mode = self.store.get_setting(f"media_mode:{chat_id}", "series")
         return "movie" if mode == "movie" else "series"
 
@@ -1493,6 +1617,7 @@ class BotApp:
                 "and movie_staging_path in config.json, then restart the bot.",
             )
             return
+        library = self._selected_library(chat_id, "movie")
         pending_id = self.queue.add(
             message_id=int(message["message_id"]),
             chat_id=chat_id,
@@ -1502,6 +1627,7 @@ class BotApp:
             file_size=media.get("file_size"),
             received_at=datetime.now(timezone.utc).isoformat(),
             target_folder=None,
+            library_key=library.key,
             media_kind="movie",
             status="awaiting_identification",
         )
@@ -1729,24 +1855,54 @@ class BotApp:
                 "and movie_staging_path in config.json, then restart the bot.",
             )
             return
-        self.store.set_setting(f"media_mode:{chat_id}", "movie")
+        libraries = self.config.libraries_for("movie")
+        if len(libraries) == 1:
+            await self._select_library(chat_id, libraries[0])
+            return
         await self.send(
             chat_id,
-            "Movie mode enabled. Send one movie video. The bot will ask whether "
-            "to search using its filename or a manually entered title.\n\n"
-            f"Movie library: {self.config.jellyfin_movie_library_path}",
-            MOVIE_MENU,
+            "Choose which movie library should receive new movies:",
+            self._library_picker_markup("movie"),
         )
 
     async def cmd_series_mode(self, chat_id: int, _: str) -> None:
-        self.store.set_setting(f"media_mode:{chat_id}", "series")
-        self.movie_manual_pending.pop(chat_id, None)
+        libraries = self.config.libraries_for("series")
+        if len(libraries) == 1:
+            await self._select_library(chat_id, libraries[0])
+            return
         await self.send(
             chat_id,
-            "Series mode enabled. New video files will use the currently selected "
-            "series folder.",
-            CHANNEL_MENU,
+            "Choose which series library should receive new episodes:",
+            self._library_picker_markup("series"),
         )
+
+    async def cmd_libraries(self, chat_id: int, _: str) -> None:
+        current = self._selected_library(chat_id)
+        await self.send(
+            chat_id,
+            f"Current library: {current.name}\nPath: {current.path}\n\n"
+            "Choose a destination. Selecting one also changes Series/Movie mode:",
+            self._library_picker_markup(),
+        )
+
+    async def cmd_use_library(self, chat_id: int, argument: str) -> None:
+        query = argument.strip().casefold()
+        if not query:
+            await self.cmd_libraries(chat_id, "")
+            return
+        matches = [
+            library
+            for library in self.config.media_libraries
+            if query in {library.key.casefold(), library.name.casefold()}
+        ]
+        if len(matches) != 1:
+            await self.send(
+                chat_id,
+                "Unknown library. Use /libraries and choose a button.",
+                self._library_picker_markup(),
+            )
+            return
+        await self._select_library(chat_id, matches[0])
 
     async def cmd_movie_current(self, chat_id: int, _: str) -> None:
         latest = self.store.latest_movie_item(chat_id=chat_id)
@@ -1787,12 +1943,23 @@ class BotApp:
         )
 
     def _queue_display_number(
-        self, chat_id: int, pending_id: int, target_folder: str
+        self,
+        chat_id: int,
+        pending_id: int,
+        target_folder: str,
+        library_key: str = "",
     ) -> int:
         """Return a friendly per-folder number while keeping pending_id stable."""
         same_folder = [
             item for item in self.queue.pending(chat_id)
             if (item.get("target_folder") or "") == (target_folder or "")
+            and (
+                not library_key
+                or (
+                    item.get("library_key")
+                    or self.config.default_series_library_key
+                ) == library_key
+            )
         ]
         for index, item in enumerate(same_folder, start=1):
             if int(item["pending_id"]) == pending_id:
@@ -1805,13 +1972,14 @@ class BotApp:
         filename: str,
         target_folder: str,
         pending_id: int,
+        library_key: str,
     ) -> str:
         detected = detect_episode(filename)
         if not detected or not target_folder:
             return ""
         season, episode = detected
         existing = self.catalog.contains(
-            self.config.target_path(target_folder), season, episode
+            self.config.target_path(target_folder, library_key), season, episode
         )
         if existing:
             return (
@@ -1822,6 +1990,11 @@ class BotApp:
             if queued["pending_id"] == pending_id:
                 continue
             if queued.get("target_folder") != target_folder:
+                continue
+            if (
+                queued.get("library_key")
+                or self.config.default_series_library_key
+            ) != library_key:
                 continue
             if detect_episode(queued["original_filename"]) == detected:
                 return (
@@ -1839,6 +2012,8 @@ class BotApp:
             "/guide": self.cmd_guide,
             "/language": self.cmd_language,
             "/chatid": self.cmd_chatid,
+            "/libraries": self.cmd_libraries,
+            "/use_library": self.cmd_use_library,
             "/setfolder": self.cmd_setfolder, "/folder": self.cmd_folder,
             "/folders": self.cmd_folders, "/usefolder": self.cmd_usefolder,
             "/renamefolder": self.cmd_renamefolder,
@@ -1944,6 +2119,8 @@ class BotApp:
         await self.send(chat_id, f"chat_id for this chat:\n{chat_id}")
 
     async def cmd_setfolder(self, chat_id: int, argument: str) -> None:
+        if await self._require_library_kind(chat_id, "series") is None:
+            return
         if not argument.strip():
             await self.send(chat_id, "Correct format:\n/setfolder dr ston")
             return
@@ -1956,7 +2133,8 @@ class BotApp:
     async def _commit_folder(self, chat_id: int, folder_name: str) -> None:
         try:
             folder = sanitize_folder_name(folder_name)
-            path = self.config.target_path(folder)
+            library = self._selected_library(chat_id, "series")
+            path = self.config.target_path(folder, library.key)
             self._set_chat_setting(chat_id, "current_folder", folder)
             await self.send(
                 chat_id,
@@ -1970,23 +2148,26 @@ class BotApp:
     def _folder_token(name: str) -> str:
         return hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
 
-    def _existing_series_folders(self) -> list[Path]:
+    def _existing_series_folders(self, chat_id: int = 0) -> list[Path]:
         folders: list[Path] = []
-        for folder in self.config.jellyfin_library_path.iterdir():
+        library = self._selected_library(chat_id, "series")
+        for folder in library.path.iterdir():
             if not folder.is_dir() or folder.name.startswith("_"):
                 continue
             try:
                 # Reuse the path-containment guard; directory junctions that
                 # escape the configured library are deliberately excluded.
-                safe = self.config.target_path(folder.name)
+                safe = self.config.target_path(folder.name, library.key)
             except ValueError:
                 continue
             if safe == folder.resolve():
                 folders.append(folder)
         return sorted(folders, key=lambda path: path.name.casefold())
 
-    def _folder_picker_markup(self, page: int, page_size: int = 12) -> tuple[dict, int, int]:
-        folders = self._existing_series_folders()
+    def _folder_picker_markup(
+        self, page: int, page_size: int = 12, chat_id: int = 0
+    ) -> tuple[dict, int, int]:
+        folders = self._existing_series_folders(chat_id)
         pages = max(1, (len(folders) + page_size - 1) // page_size)
         page = min(max(0, page), pages - 1)
         selected = folders[page * page_size:(page + 1) * page_size]
@@ -2012,7 +2193,7 @@ class BotApp:
         return {"inline_keyboard": rows}, page, pages
 
     async def _send_folder_picker(self, chat_id: int, page: int = 0) -> None:
-        markup, page, pages = self._folder_picker_markup(page)
+        markup, page, pages = self._folder_picker_markup(page, chat_id=chat_id)
         if len(markup["inline_keyboard"]) == 1:
             await self.send(
                 chat_id,
@@ -2036,12 +2217,17 @@ class BotApp:
         )
 
     async def cmd_folders(self, chat_id: int, _: str) -> None:
+        if await self._require_library_kind(chat_id, "series") is None:
+            return
         await self._send_folder_picker(chat_id)
 
     async def cmd_usefolder(self, chat_id: int, argument: str) -> None:
+        if await self._require_library_kind(chat_id, "series") is None:
+            return
         try:
             name = sanitize_folder_name(argument)
-            folder = self.config.target_path(name)
+            library = self._selected_library(chat_id, "series")
+            folder = self.config.target_path(name, library.key)
         except ValueError as exc:
             await self.send(chat_id, str(exc))
             return
@@ -2059,10 +2245,17 @@ class BotApp:
         if not folder:
             await self.send(chat_id, "No target folder is set. Use /setfolder NAME")
         else:
-            await self.send(chat_id, f"Current folder:\n{self.config.target_path(folder)}")
+            library = self._selected_library(chat_id, "series")
+            await self.send(
+                chat_id,
+                f"Current library: {library.name}\n"
+                f"Current folder:\n{self.config.target_path(folder, library.key)}",
+            )
 
     async def cmd_renamefolder(self, chat_id: int, argument: str) -> None:
         assert self.downloader
+        if await self._require_library_kind(chat_id, "series") is None:
+            return
         old_name = self._chat_setting(chat_id, "current_folder")
         if not old_name:
             await self.send(chat_id, "No current folder is set. Use /setfolder first.")
@@ -2071,9 +2264,10 @@ class BotApp:
             await self.send(chat_id, "You cannot rename the folder while a download or sort is running.")
             return
         try:
+            library = self._selected_library(chat_id, "series")
             new_name = sanitize_folder_name(argument)
-            old_path = self.config.target_path(old_name)
-            new_path = self.config.target_path(new_name)
+            old_path = self.config.target_path(old_name, library.key)
+            new_path = self.config.target_path(new_name, library.key)
         except ValueError as exc:
             await self.send(chat_id, str(exc))
             return
@@ -2093,7 +2287,10 @@ class BotApp:
                     "Safely renaming the folder and updating rollback paths...",
                 )
                 ok, output = await self.sorter.rename_folder(
-                    old_path, new_name, chat_id=chat_id
+                    old_path,
+                    new_name,
+                    chat_id=chat_id,
+                    library_key=library.key,
                 )
                 if not ok:
                     await self.send(
@@ -2102,18 +2299,40 @@ class BotApp:
                     )
                     return
             changed = self.store.rename_target_folder(
-                old_name, new_name, old_path, new_path
+                old_name,
+                new_name,
+                old_path,
+                new_path,
+                library.key,
+                include_legacy=(
+                    library.key == self.config.default_series_library_key
+                ),
             )
             self._set_chat_setting(chat_id, "current_folder", new_name)
-            self.store.replace_chat_setting_value(
-                "current_folder", old_name, new_name
+            include_legacy = library.key == self.config.default_series_library_key
+            self.store.replace_chat_setting_value_in_library(
+                "current_folder",
+                old_name,
+                new_name,
+                library.key,
+                include_legacy=include_legacy,
             )
-            self.store.replace_chat_setting_value(
-                "latest_downloaded_folder", old_name, new_name
+            self.store.replace_chat_setting_value_in_library(
+                "latest_downloaded_folder",
+                old_name,
+                new_name,
+                library.key,
+                include_legacy=include_legacy,
+                library_setting_name="latest_downloaded_library_key",
             )
             old_prefix = str(old_path)
-            self.store.replace_chat_setting_prefix(
-                "latest_downloaded_file", old_prefix, str(new_path)
+            self.store.replace_chat_setting_prefix_in_library(
+                "latest_downloaded_file",
+                old_prefix,
+                str(new_path),
+                library.key,
+                include_legacy=include_legacy,
+                library_setting_name="latest_downloaded_library_key",
             )
             await self.send(
                 chat_id,
@@ -2134,15 +2353,24 @@ class BotApp:
             await self.send(chat_id, "The queue is empty.")
             return
         lines = [f"Queue ({len(items)} file(s)):"]
-        per_folder_counts: dict[str, int] = {}
+        per_folder_counts: dict[tuple[str, str], int] = {}
         for item in items[:30]:
             kind = item.get("media_kind", "series")
+            try:
+                library = self.config.library(
+                    str(item.get("library_key") or "") or None, kind
+                )
+                library_label = library.name
+            except ValueError:
+                library_label = "Unknown library"
             folder_label = item["target_folder"] or (
                 "(waiting for movie identification)" if kind == "movie" else "(no folder)"
             )
-            per_folder_counts[folder_label] = per_folder_counts.get(folder_label, 0) + 1
+            count_key = (library_label, folder_label)
+            per_folder_counts[count_key] = per_folder_counts.get(count_key, 0) + 1
             lines.append(
-                f"{kind.title()} · {folder_label} item {per_folder_counts[folder_label]} "
+                f"{kind.title()} · {library_label} · {folder_label} "
+                f"item {per_folder_counts[count_key]} "
                 f"(Queue ID #{item['pending_id']}) [{item['status']}] "
                 f"{item['original_filename']} — {format_size(item['file_size'])} "
             )
@@ -2169,6 +2397,7 @@ class BotApp:
 
     def _prepare_download_items(self, chat_id: int) -> list[dict]:
         current = self._chat_setting(chat_id, "current_folder")
+        current_library = self._selected_library(chat_id)
         items = self.queue.downloadable(chat_id)
         prepared = []
         for item in items:
@@ -2176,9 +2405,22 @@ class BotApp:
                 item.get("media_kind", "series") == "series"
                 and not item.get("target_folder")
                 and current
+                and (
+                    item.get("library_key")
+                    or self.config.default_series_library_key
+                ) == current_library.key
             ):
-                self.store.update_item(item["pending_id"], target_folder=current)
+                self.store.update_item(
+                    item["pending_id"],
+                    target_folder=current,
+                    library_key=item.get("library_key")
+                    or self.config.default_series_library_key,
+                )
                 item["target_folder"] = current
+                item["library_key"] = (
+                    item.get("library_key")
+                    or self.config.default_series_library_key
+                )
             prepared.append(item)
         return prepared
 
@@ -2205,9 +2447,13 @@ class BotApp:
             return
         destinations = sorted({
             str(
-                self.config.movie_target_path(x["target_folder"])
+                self.config.movie_target_path(
+                    x["target_folder"], str(x.get("library_key") or "") or None
+                )
                 if x.get("media_kind") == "movie"
-                else self.config.target_path(x["target_folder"])
+                else self.config.target_path(
+                    x["target_folder"], str(x.get("library_key") or "") or None
+                )
             )
             for x in items
         })
@@ -2393,7 +2639,8 @@ class BotApp:
                     ) / f"{filename}.part"
                 elif item.get("target_folder"):
                     part = self.config.target_path(
-                        item["target_folder"]
+                        item["target_folder"],
+                        str(item.get("library_key") or "") or None,
                     ) / f"{filename}.part"
                 else:
                     continue
@@ -2404,9 +2651,12 @@ class BotApp:
         active = sum(
             1 for owner in self.task_chat_ids.values() if owner == chat_id
         )
+        selected_library = self._selected_library(chat_id)
         await self.send(
             chat_id,
-            (text or "No files have been registered yet.")
+            f"Current library: {selected_library.name}\n"
+            f"Mode: {selected_library.media_kind}\n"
+            + (text or "No files have been registered yet.")
             + f"\nIncomplete .part files: {part_count}"
             + f"\nTracked background tasks: {active}",
         )
@@ -2446,14 +2696,22 @@ class BotApp:
             )
         await self.send(chat_id, "Decision saved. Send /download to continue.")
 
-    async def _run_sorter(self, chat_id: int, folder_name: str) -> None:
+    async def _run_sorter(
+        self, chat_id: int, folder_name: str, library_key: str | None = None
+    ) -> None:
         try:
-            folder = self.config.target_path(folder_name)
+            library = self.config.library(
+                library_key or self._selected_library(chat_id, "series").key,
+                "series",
+            )
+            folder = self.config.target_path(folder_name, library.key)
             if not folder.is_dir():
                 await self.send(chat_id, f"Folder not found:\n{folder}")
                 return
             await self.send(chat_id, f"Sorting started:\n{folder}")
-            ok, output = await self.sorter.run(folder, chat_id=chat_id)
+            ok, output = await self.sorter.run(
+                folder, chat_id=chat_id, library_key=library.key
+            )
             await self.send(
                 chat_id,
                 ("Sorting completed successfully.\n" if ok else "Sorting finished with errors.\n") + output[-3000:],
@@ -2463,6 +2721,8 @@ class BotApp:
             await self.send(chat_id, f"Sorter error: {exc}")
 
     async def cmd_sort_current(self, chat_id: int, _: str) -> None:
+        if await self._require_library_kind(chat_id, "series") is None:
+            return
         folder = self._chat_setting(chat_id, "current_folder")
         if not folder:
             await self.send(chat_id, "No current folder is selected.")
@@ -2474,6 +2734,8 @@ class BotApp:
     async def _run_series_sort_action(
         self, chat_id: int, action: str, label: str
     ) -> None:
+        if await self._require_library_kind(chat_id, "series") is None:
+            return
         folder_name = self._chat_setting(chat_id, "current_folder")
         if not folder_name:
             await self.send(chat_id, "No current folder is selected.")
@@ -2481,14 +2743,15 @@ class BotApp:
         if self.downloader and self.downloader.running:
             await self.send(chat_id, "Wait for the current download to finish first.")
             return
-        folder = self.config.target_path(folder_name)
+        library = self._selected_library(chat_id, "series")
+        folder = self.config.target_path(folder_name, library.key)
         if not folder.is_dir():
             await self.send(chat_id, f"Folder not found:\n{folder}")
             return
         try:
             await self.send(chat_id, f"{label}:\n{folder}")
             ok, output = await self.sorter.series_action(
-                action, folder, chat_id=chat_id
+                action, folder, chat_id=chat_id, library_key=library.key
             )
             await self.send(
                 chat_id,
@@ -2554,11 +2817,16 @@ class BotApp:
         if not folder:
             await self.send(chat_id, "No completed download has been recorded yet.")
             return
+        library_key = self._chat_setting(chat_id, "latest_downloaded_library_key")
         self.track_task(
-            self._run_sorter(chat_id, folder), f"sort-latest:{chat_id}", chat_id
+            self._run_sorter(chat_id, folder, library_key or None),
+            f"sort-latest:{chat_id}",
+            chat_id,
         )
 
     async def cmd_sort_folder(self, chat_id: int, argument: str) -> None:
+        if await self._require_library_kind(chat_id, "series") is None:
+            return
         try:
             folder = sanitize_folder_name(argument)
         except ValueError as exc:
@@ -2588,6 +2856,7 @@ class BotApp:
                 "Files cannot be restored while a download is running.",
             )
             return
+        selected_library = self._selected_library(chat_id, "series")
         batch_id = batch_id or self.store.latest_sorter_batch(chat_id)
         if not batch_id:
             await self.send(chat_id, "This chat has no recorded sort batch to undo.")
@@ -2596,8 +2865,14 @@ class BotApp:
             await self.send(chat_id, "That sort batch does not belong to this chat.")
             return
         try:
+            library_key = self.store.sorter_batch_library(batch_id, chat_id)
+            library = self.config.library(
+                library_key or selected_library.key, "series"
+            )
             await self.send(chat_id, f"Sort undo started: Batch {batch_id}")
-            ok, output = await self.sorter.undo_batch(batch_id, chat_id=chat_id)
+            ok, output = await self.sorter.undo_batch(
+                batch_id, chat_id=chat_id, library_key=library.key
+            )
             self.store.mark_sorter_batch_status(
                 batch_id, chat_id, "undone" if ok else "undo_partial"
             )
@@ -2643,12 +2918,17 @@ class BotApp:
             await self.send(chat_id, "That movie batch does not belong to this chat.")
             return
         try:
+            library_key = self.store.movie_batch_library(batch_id, chat_id)
+            library = self.config.library(
+                library_key or self._selected_library(chat_id, "movie").key,
+                "movie",
+            )
             await self.send(
                 chat_id,
                 f"Movie undo started: {batch_id}",
             )
             result = await self.movie_sorter.undo_batch(
-                batch_id, chat_id=chat_id
+                batch_id, chat_id=chat_id, library_key=library.key
             )
             actual_batch = str(result.get("batch_id") or batch_id or "")
             skipped = int(result.get("skipped", 0) or 0)
@@ -2822,6 +3102,8 @@ class BotApp:
     async def _run_imdb_search(
         self, chat_id: int, query: str, mode: str
     ) -> None:
+        if await self._require_library_kind(chat_id, "series") is None:
+            return
         if not query.strip():
             command = "/imdb_fix_current" if mode == "rename" else "/imdb_search"
             await self.send(chat_id, f"Correct format:\n{command} dr ston")
@@ -2829,6 +3111,7 @@ class BotApp:
         source_folder = (
             self._chat_setting(chat_id, "current_folder") if mode == "rename" else ""
         )
+        library = self._selected_library(chat_id, "series")
         try:
             await self.send(chat_id, f"Searching IMDb for: {query}")
             results, source = await self.imdb.search(query, media_type="series")
@@ -2839,6 +3122,7 @@ class BotApp:
                     mode,
                     "IMDb did not return any results.",
                     source_folder,
+                    library.key,
                 )
                 return
             now = time.time()
@@ -2856,6 +3140,7 @@ class BotApp:
                     "created_at": now,
                     "source": source,
                     "source_folder": source_folder,
+                    "library_key": library.key,
                 }
                 title = str(result["title"])
                 year = result.get("year") or "?"
@@ -2886,6 +3171,7 @@ class BotApp:
                 mode,
                 f"Optional IMDb search is not available: {exc}",
                 source_folder,
+                library.key,
             )
 
     async def _offer_folder_confirmation(
@@ -2918,6 +3204,7 @@ class BotApp:
         mode: str,
         reason: str,
         source_folder: str = "",
+        library_key: str = "",
     ) -> None:
         try:
             manual_name = sanitize_folder_name(entered_name)
@@ -2932,6 +3219,8 @@ class BotApp:
             "created_at": time.time(),
             "source": "Manual fallback (IMDb unavailable)",
             "source_folder": source_folder,
+            "library_key": library_key
+            or self._selected_library(chat_id, "series").key,
         }
         self.imdb_choices[token] = choice
         await self.send(
@@ -2962,6 +3251,8 @@ class BotApp:
         )
 
     async def cmd_episodes(self, chat_id: int, argument: str) -> None:
+        if await self._require_library_kind(chat_id, "series") is None:
+            return
         folder_name = argument.strip() or self._chat_setting(chat_id, "current_folder")
         if not folder_name:
             await self.send(
@@ -2971,7 +3262,8 @@ class BotApp:
             return
         try:
             folder_name = sanitize_folder_name(folder_name)
-            folder = self.config.target_path(folder_name)
+            library = self._selected_library(chat_id, "series")
+            folder = self.config.target_path(folder_name, library.key)
         except ValueError as exc:
             await self.send(chat_id, str(exc))
             return
@@ -2982,23 +3274,32 @@ class BotApp:
         await self.send(chat_id, format_series_inventory(folder_name, entries))
 
     def _library_episode_summary(self) -> str:
-        lines = ["📚 Jellyfin library episode summary"]
+        lines = ["📚 Jellyfin series-library episode summary"]
         series_count = 0
-        for folder in sorted(
-            (p for p in self.config.jellyfin_library_path.iterdir() if p.is_dir()),
-            key=lambda p: p.name.casefold(),
-        ):
-            grouped = self.catalog.grouped(self.catalog.scan_series(folder))
-            if not grouped:
-                continue
-            series_count += 1
-            seasons = ", ".join(
-                f"S{season:02d}: {len(episodes)} eps (latest E{max(episodes):02d})"
-                for season, episodes in sorted(grouped.items())
-            )
-            lines.append(f"• {folder.name} — {seasons}")
+        for library in self.config.libraries_for("series"):
+            library_lines: list[str] = []
+            for folder in sorted(
+                (p for p in library.path.iterdir() if p.is_dir()),
+                key=lambda p: p.name.casefold(),
+            ):
+                grouped = self.catalog.grouped(self.catalog.scan_series(folder))
+                if not grouped:
+                    continue
+                series_count += 1
+                seasons = ", ".join(
+                    f"S{season:02d}: {len(episodes)} eps (latest E{max(episodes):02d})"
+                    for season, episodes in sorted(grouped.items())
+                )
+                library_lines.append(f"• {folder.name} — {seasons}")
+                if len(lines) + len(library_lines) >= 60:
+                    library_lines.append(
+                        "... result shortened; select a library and use /episodes NAME"
+                    )
+                    break
+            if library_lines:
+                lines.append(f"\n[{library.name}]")
+                lines.extend(library_lines)
             if len(lines) >= 60:
-                lines.append("... result shortened; use /episodes NAME for details")
                 break
         if not series_count:
             return "No recognizable episodes were found in the library."

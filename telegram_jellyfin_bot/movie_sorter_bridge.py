@@ -62,8 +62,8 @@ class MovieSorterBridge:
             raise ValueError("The movie has not completed downloading.")
         source = Path(source_text).resolve()
         staging = self.config.movie_staging_path
-        library = self.config.jellyfin_movie_library_path
-        assert staging is not None and library is not None
+        library = self.config.library(item.get("library_key") or None, "movie")
+        assert staging is not None
         staging = staging.resolve()
         if source == staging or staging not in source.parents:
             raise ValueError("Movie source is outside the configured staging folder.")
@@ -73,7 +73,7 @@ class MovieSorterBridge:
         command = self._prefix() + [
             "dry-run" if dry_run else "import",
             "--source", str(source),
-            "--library", str(library.resolve()),
+            "--library", str(library.path.resolve()),
             "--title", title,
         ]
         year = item.get("movie_year")
@@ -85,17 +85,16 @@ class MovieSorterBridge:
         command.append("--json")
         return command
 
-    def build_undo_command(self, batch_id: str | None = None) -> list[str]:
-        library = self.config.jellyfin_movie_library_path
-        if library is None:
-            self._prefix()
-            raise AssertionError("unreachable")
+    def build_undo_command(
+        self, batch_id: str | None = None, library_key: str | None = None
+    ) -> list[str]:
+        library = self.config.library(library_key, "movie")
         if batch_id is not None and not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", batch_id):
             raise ValueError("Invalid movie batch ID.")
         command = self._prefix() + (
-            ["undo-batch", batch_id, "--library", str(library.resolve()), "--json"]
+            ["undo-batch", batch_id, "--library", str(library.path.resolve()), "--json"]
             if batch_id is not None
-            else ["undo-last", "--library", str(library.resolve()), "--json"]
+            else ["undo-last", "--library", str(library.path.resolve()), "--json"]
         )
         return command
 
@@ -104,21 +103,31 @@ class MovieSorterBridge:
             self.build_import_command(item, dry_run),
             str(item.get("downloaded_path") or ""),
             chat_id=int(item["chat_id"]),
+            library_key=str(item.get("library_key") or "") or None,
         )
 
-    async def undo_last(self, chat_id: int | None = None) -> dict:
+    async def undo_last(
+        self, chat_id: int | None = None, library_key: str | None = None
+    ) -> dict:
         return await self._execute(
-            self.build_undo_command(),
+            self.build_undo_command(library_key=library_key),
             "movie library",
             chat_id=chat_id,
+            library_key=library_key,
             allow_partial=True,
         )
 
-    async def undo_batch(self, batch_id: str, chat_id: int | None = None) -> dict:
+    async def undo_batch(
+        self,
+        batch_id: str,
+        chat_id: int | None = None,
+        library_key: str | None = None,
+    ) -> dict:
         return await self._execute(
-            self.build_undo_command(batch_id),
+            self.build_undo_command(batch_id, library_key),
             "movie library",
             chat_id=chat_id,
+            library_key=library_key,
             allow_partial=True,
         )
 
@@ -128,6 +137,7 @@ class MovieSorterBridge:
         label: str,
         *,
         chat_id: int | None = None,
+        library_key: str | None = None,
         allow_partial: bool = False,
     ) -> dict:
         if self.active:
@@ -138,6 +148,7 @@ class MovieSorterBridge:
             json.dumps(command, ensure_ascii=False),
             chat_id=chat_id,
             operation_kind="movie",
+            library_key=library_key,
         )
         process: asyncio.subprocess.Process | None = None
         try:

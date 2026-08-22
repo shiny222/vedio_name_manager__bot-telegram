@@ -113,7 +113,9 @@ class DownloadManager:
         if item.get("media_kind", "series") == "movie":
             folder = self.config.movie_staging_job_path(int(item["pending_id"]))
         else:
-            folder = self.config.target_path(folder_name)
+            folder = self.config.target_path(
+                folder_name, str(item.get("library_key") or "") or None
+            )
         filename = validate_original_filename(item["original_filename"])
         return folder / filename, folder_name
 
@@ -200,6 +202,11 @@ class DownloadManager:
                     int(item["chat_id"]), "latest_downloaded_movie_file", str(destination)
                 )
             else:
+                self.queue.store.set_chat_setting(
+                    int(item["chat_id"]),
+                    "latest_downloaded_library_key",
+                    str(item.get("library_key") or ""),
+                )
                 self.queue.store.set_chat_setting(
                     int(item["chat_id"]), "latest_downloaded_folder", folder_name
                 )

@@ -16,6 +16,12 @@ services:
       VIDEO_MANAGER_CONFIG_MODE: env
       LOCAL_BOT_API_BASE_URL: http://telegram-bot-api:8081/bot
       LOCAL_BOT_API_BASE_FILE_URL: http://telegram-bot-api:8081/file/bot
+      # These are container paths, so all four destinations remain available
+      # even when upgrading an older .env that only had one library pair.
+      LIBRARY_ANIMATION_SERIES_PATH: /media/animation-serise
+      LIBRARY_ANIMATION_MOVIE_PATH: /media/animation-movie
+      LIBRARY_VIDEO_SERIES_PATH: /media/video-serise
+      LIBRARY_VIDEO_MOVIE_PATH: /media/video-movie
     extra_hosts:
       - "host.docker.internal:host-gateway"
     read_only: true

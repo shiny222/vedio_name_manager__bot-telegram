@@ -35,7 +35,122 @@ def _env_list(name: str) -> list[str]:
 def _environment_config() -> dict[str, Any]:
     """Build the normal configuration shape from Docker environment values."""
     python = sys.executable
-    movie_library = os.environ.get("JELLYFIN_MOVIE_LIBRARY_PATH", "").strip()
+    animation_series = os.environ.get(
+        "LIBRARY_ANIMATION_SERIES_PATH", "/media/animation-serise"
+    ).strip()
+    animation_movie = os.environ.get(
+        "LIBRARY_ANIMATION_MOVIE_PATH", "/media/animation-movie"
+    ).strip()
+    video_series = os.environ.get(
+        "LIBRARY_VIDEO_SERIES_PATH", "/media/video-serise"
+    ).strip()
+    video_movie = os.environ.get(
+        "LIBRARY_VIDEO_MOVIE_PATH", "/media/video-movie"
+    ).strip()
+    legacy_series = os.environ.get("JELLYFIN_LIBRARY_PATH", "").strip()
+    legacy_movie = os.environ.get("JELLYFIN_MOVIE_LIBRARY_PATH", "").strip()
+    libraries = [
+        {
+            "key": "animation_series",
+            "name": os.environ.get(
+                "LIBRARY_ANIMATION_SERIES_NAME", "Animation Series"
+            ).strip(),
+            "media_kind": "series",
+            "path": animation_series,
+        },
+        {
+            "key": "animation_movies",
+            "name": os.environ.get(
+                "LIBRARY_ANIMATION_MOVIE_NAME", "Animation Movies"
+            ).strip(),
+            "media_kind": "movie",
+            "path": animation_movie,
+        },
+        {
+            "key": "video_series",
+            "name": os.environ.get(
+                "LIBRARY_VIDEO_SERIES_NAME", "Video Series"
+            ).strip(),
+            "media_kind": "series",
+            "path": video_series,
+        },
+        {
+            "key": "video_movies",
+            "name": os.environ.get(
+                "LIBRARY_VIDEO_MOVIE_NAME", "Video Movies"
+            ).strip(),
+            "media_kind": "movie",
+            "path": video_movie,
+        },
+    ]
+    has_multi_library_env = any(
+        os.environ.get(name, "").strip()
+        for name in (
+            "LIBRARY_ANIMATION_SERIES_PATH",
+            "LIBRARY_ANIMATION_MOVIE_PATH",
+            "LIBRARY_VIDEO_SERIES_PATH",
+            "LIBRARY_VIDEO_MOVIE_PATH",
+        )
+    )
+    # An older Docker .env may only have the single series/movie variables.
+    # Keep that two-root layout instead of inventing extra destinations.
+    if not has_multi_library_env:
+        libraries = []
+        if legacy_series:
+            libraries.append(
+                {
+                    "key": "series",
+                    "name": "Series",
+                    "media_kind": "series",
+                    "path": legacy_series,
+                }
+            )
+        if legacy_movie:
+            libraries.append(
+                {
+                    "key": "movies",
+                    "name": "Movies",
+                    "media_kind": "movie",
+                    "path": legacy_movie,
+                }
+            )
+    movie_entry = next(
+        (item for item in libraries if item["media_kind"] == "movie"), None
+    )
+    series_entry = next(
+        (item for item in libraries if item["media_kind"] == "series"), None
+    )
+    legacy_series_match = next(
+        (
+            item
+            for item in libraries
+            if legacy_series and str(item["path"]) == legacy_series
+        ),
+        None,
+    )
+    legacy_movie_match = next(
+        (
+            item
+            for item in libraries
+            if legacy_movie and str(item["path"]) == legacy_movie
+        ),
+        None,
+    )
+    explicit_default_key = os.environ.get("DEFAULT_LIBRARY_KEY", "").strip()
+    explicit_default = next(
+        (item for item in libraries if item["key"] == explicit_default_key), None
+    )
+    default_series_entry = (
+        explicit_default
+        if explicit_default and explicit_default["media_kind"] == "series"
+        else legacy_series_match or series_entry
+    )
+    default_movie_entry = (
+        explicit_default
+        if explicit_default and explicit_default["media_kind"] == "movie"
+        else legacy_movie_match or movie_entry
+    )
+    movie_library = str(movie_entry["path"]) if movie_entry else ""
     movie_staging = os.environ.get("MOVIE_STAGING_PATH", "").strip()
     if movie_library and not movie_staging:
         movie_staging = "/app/staging/movies"
@@ -59,8 +174,19 @@ def _environment_config() -> dict[str, Any]:
         "telegram_download_read_timeout_seconds": int(
             os.environ.get("TELEGRAM_DOWNLOAD_READ_TIMEOUT_SECONDS", "1800")
         ),
-        "jellyfin_library_path": os.environ.get("JELLYFIN_LIBRARY_PATH", "").strip(),
+        "jellyfin_library_path": str(series_entry["path"] if series_entry else ""),
         "jellyfin_movie_library_path": movie_library,
+        "media_libraries": libraries,
+        "default_library_key": os.environ.get(
+            "DEFAULT_LIBRARY_KEY",
+            str((legacy_series_match or series_entry or {}).get("key", "")),
+        ).strip(),
+        "default_series_library_key": str(
+            (default_series_entry or {}).get("key", "")
+        ),
+        "default_movie_library_key": str(
+            (default_movie_entry or {}).get("key", "")
+        ),
         "movie_staging_path": movie_staging,
         "data_path": os.environ.get("DATA_PATH", "/app/data").strip(),
         "logs_path": os.environ.get("LOGS_PATH", "/app/logs").strip(),
@@ -122,6 +248,16 @@ def _optional_path(value: Any, base: Path) -> Path | None:
 
 
 @dataclass(frozen=True)
+class MediaLibrary:
+    """One selectable Jellyfin destination exposed to the Telegram bot."""
+
+    key: str
+    name: str
+    media_kind: str
+    path: Path
+
+
+@dataclass(frozen=True)
 class Config:
     bot_token: str
     telegram_api_id: int
@@ -134,6 +270,10 @@ class Config:
     telegram_download_read_timeout_seconds: int
     jellyfin_library_path: Path
     jellyfin_movie_library_path: Path | None
+    media_libraries: tuple[MediaLibrary, ...]
+    default_library_key: str
+    default_series_library_key: str
+    default_movie_library_key: str
     movie_staging_path: Path | None
     data_path: Path
     logs_path: Path
@@ -164,17 +304,50 @@ class Config:
     def file_root(self) -> str:
         return f"{self.local_bot_api_base_file_url.rstrip('/')}{self.bot_token}"
 
-    def target_path(self, folder_name: str) -> Path:
-        return safe_child(self.jellyfin_library_path, folder_name)
+    def library(self, key: str | None = None, media_kind: str | None = None) -> MediaLibrary:
+        if key is None and media_kind == "series":
+            requested = self.default_series_library_key
+        elif key is None and media_kind == "movie":
+            requested = self.default_movie_library_key
+        else:
+            requested = key or self.default_library_key
+        requested = requested.strip()
+        for library in self.media_libraries:
+            if library.key == requested:
+                if media_kind and library.media_kind != media_kind:
+                    if key is not None:
+                        raise ValueError(
+                            f"Library {library.name!r} is for {library.media_kind}, not {media_kind}."
+                        )
+                    break
+                return library
+        if key:
+            raise ValueError(f"Unknown library key: {key}")
+        for library in self.media_libraries:
+            if media_kind is None or library.media_kind == media_kind:
+                return library
+        raise ValueError(f"No {media_kind or 'media'} library is configured.")
+
+    def libraries_for(self, media_kind: str) -> tuple[MediaLibrary, ...]:
+        return tuple(
+            library
+            for library in self.media_libraries
+            if library.media_kind == media_kind
+        )
+
+    def target_path(self, folder_name: str, library_key: str | None = None) -> Path:
+        library = self.library(library_key, "series")
+        return safe_child(library.path, folder_name)
 
     @property
     def movies_configured(self) -> bool:
-        return bool(self.jellyfin_movie_library_path and self.movie_staging_path)
+        return bool(self.libraries_for("movie") and self.movie_staging_path)
 
-    def movie_target_path(self, folder_name: str) -> Path:
-        if self.jellyfin_movie_library_path is None:
-            raise ValueError("jellyfin_movie_library_path is not configured.")
-        return safe_child(self.jellyfin_movie_library_path, folder_name)
+    def movie_target_path(
+        self, folder_name: str, library_key: str | None = None
+    ) -> Path:
+        library = self.library(library_key, "movie")
+        return safe_child(library.path, folder_name)
 
     def movie_staging_job_path(self, pending_id: int) -> Path:
         if self.movie_staging_path is None:
@@ -259,6 +432,73 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
     ):
         raise ValueError("fuzzy_search_command must be a list of arguments.")
     default_folder = str(raw.get("default_target_folder", "")).strip()
+    raw_libraries = raw.get("media_libraries")
+    libraries: list[MediaLibrary] = []
+    if raw_libraries is not None:
+        if not isinstance(raw_libraries, list):
+            raise ValueError("media_libraries must be a list.")
+        seen_keys: set[str] = set()
+        for entry in raw_libraries:
+            if not isinstance(entry, dict):
+                raise ValueError("Each media_libraries entry must be an object.")
+            key = str(entry.get("key", "")).strip()
+            name = str(entry.get("name", "")).strip()
+            media_kind = str(entry.get("media_kind", "")).strip().casefold()
+            path_text = str(entry.get("path", "")).strip()
+            if not re.fullmatch(r"[a-z0-9_]{1,40}", key):
+                raise ValueError(
+                    "Library keys may contain only lowercase letters, numbers, and underscores."
+                )
+            if key in seen_keys:
+                raise ValueError(f"Duplicate media library key: {key}")
+            if not name or media_kind not in {"series", "movie"} or not path_text:
+                raise ValueError(
+                    f"Library {key!r} needs name, media_kind (series/movie), and path."
+                )
+            seen_keys.add(key)
+            libraries.append(
+                MediaLibrary(key, name, media_kind, _path(path_text, base))
+            )
+    if not libraries:
+        libraries.append(
+            MediaLibrary(
+                "series", "Series", "series", _path(str(raw["jellyfin_library_path"]), base)
+            )
+        )
+        movie_path = _optional_path(raw.get("jellyfin_movie_library_path"), base)
+        if movie_path is not None:
+            libraries.append(MediaLibrary("movies", "Movies", "movie", movie_path))
+    default_library_key = str(raw.get("default_library_key", libraries[0].key)).strip()
+    if default_library_key not in {library.key for library in libraries}:
+        raise ValueError(f"default_library_key is not configured: {default_library_key}")
+    default_series = next(
+        (library for library in libraries if library.media_kind == "series"), None
+    )
+    default_movie = next(
+        (library for library in libraries if library.media_kind == "movie"), None
+    )
+    if default_series is None:
+        raise ValueError("At least one series media library is required.")
+    default_series_library_key = str(
+        raw.get("default_series_library_key", default_series.key)
+    ).strip()
+    default_movie_library_key = str(
+        raw.get(
+            "default_movie_library_key",
+            default_movie.key if default_movie else "",
+        )
+    ).strip()
+    by_key = {library.key: library for library in libraries}
+    if (
+        default_series_library_key not in by_key
+        or by_key[default_series_library_key].media_kind != "series"
+    ):
+        raise ValueError("default_series_library_key must identify a series library.")
+    if default_movie_library_key and (
+        default_movie_library_key not in by_key
+        or by_key[default_movie_library_key].media_kind != "movie"
+    ):
+        raise ValueError("default_movie_library_key must identify a movie library.")
     cfg = Config(
         bot_token=str(raw["bot_token"]),
         telegram_api_id=int(raw.get("telegram_api_id", 0)),
@@ -271,10 +511,12 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         telegram_download_read_timeout_seconds=max(
             60, int(raw.get("telegram_download_read_timeout_seconds", 1800))
         ),
-        jellyfin_library_path=_path(str(raw["jellyfin_library_path"]), base),
-        jellyfin_movie_library_path=_optional_path(
-            raw.get("jellyfin_movie_library_path"), base
-        ),
+        jellyfin_library_path=default_series.path,
+        jellyfin_movie_library_path=(default_movie.path if default_movie else None),
+        media_libraries=tuple(libraries),
+        default_library_key=default_library_key,
+        default_series_library_key=default_series_library_key,
+        default_movie_library_key=default_movie_library_key,
         movie_staging_path=_optional_path(raw.get("movie_staging_path"), base),
         data_path=_path(str(raw.get("data_path", "data")), base),
         logs_path=_path(str(raw.get("logs_path", "logs")), base),
@@ -319,17 +561,18 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         ("http://", "https://")
     ):
         raise ValueError("jellyfin_server_url must start with http:// or https://.")
-    if (cfg.jellyfin_movie_library_path is None) != (cfg.movie_staging_path is None):
+    if (not cfg.libraries_for("movie")) != (cfg.movie_staging_path is None):
         raise ValueError(
-            "jellyfin_movie_library_path and movie_staging_path must either both "
-            "be configured or both be empty."
+            "Movie libraries and movie_staging_path must either both be configured "
+            "or both be empty."
         )
     if cfg.movies_configured:
-        assert cfg.jellyfin_movie_library_path is not None
         assert cfg.movie_staging_path is not None
         roots = {
-            "shows library": cfg.jellyfin_library_path.resolve(),
-            "movies library": cfg.jellyfin_movie_library_path.resolve(),
+            **{
+                f"library {library.name!r}": library.path.resolve()
+                for library in cfg.media_libraries
+            },
             "movie staging": cfg.movie_staging_path.resolve(),
         }
         root_items = list(roots.items())
@@ -339,11 +582,13 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
                     raise ValueError(
                         f"{left_name} and {right_name} must be separate, non-nested folders."
                     )
-    directories = [cfg.jellyfin_library_path, cfg.data_path, cfg.logs_path]
+    directories = [
+        *(library.path for library in cfg.media_libraries),
+        cfg.data_path,
+        cfg.logs_path,
+    ]
     if cfg.movies_configured:
-        directories.extend(
-            [cfg.jellyfin_movie_library_path, cfg.movie_staging_path]
-        )
+        directories.append(cfg.movie_staging_path)
     for directory in directories:
         assert directory is not None
         directory.mkdir(parents=True, exist_ok=True)

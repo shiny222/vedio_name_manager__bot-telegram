@@ -116,6 +116,58 @@ class ConfigAndPathTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 safe_child(base, r"..\outside")
 
+    def test_queue_item_library_key_freezes_its_download_destination(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            data = config_data(root)
+            data["media_libraries"] = [
+                {
+                    "key": "animation_series",
+                    "name": "Animation Series",
+                    "media_kind": "series",
+                    "path": str(root / "animation-series"),
+                },
+                {
+                    "key": "video_series",
+                    "name": "Video Series",
+                    "media_kind": "series",
+                    "path": str(root / "video-series"),
+                },
+                {
+                    "key": "video_movies",
+                    "name": "Video Movies",
+                    "media_kind": "movie",
+                    "path": str(root / "video-movies"),
+                },
+            ]
+            data["default_library_key"] = "animation_series"
+            path = root / "config.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            cfg = load_config(path, create_from_example=False)
+            store = StateStore(root / "queue.db")
+            queue = QueueManager(store)
+            try:
+                manager = DownloadManager(cfg, queue, None, None)  # type: ignore[arg-type]
+                item = {
+                    "pending_id": 1,
+                    "target_folder": "Example Show",
+                    "library_key": "video_series",
+                    "media_kind": "series",
+                    "original_filename": "episode.mkv",
+                }
+                destination, _ = manager._destination(item)  # type: ignore[misc]
+                self.assertEqual(
+                    destination,
+                    (root / "video-series" / "Example Show" / "episode.mkv").resolve(),
+                )
+
+                # A later chat selection does not mutate the already queued item.
+                store.set_chat_setting(5, "current_library_key", "animation_series")
+                destination_again, _ = manager._destination(item)  # type: ignore[misc]
+                self.assertEqual(destination_again, destination)
+            finally:
+                store.close()
+
     def test_large_file_timeout_override_is_not_sent_as_bot_api_data(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
@@ -253,6 +305,30 @@ class ConfigAndPathTests(unittest.TestCase):
 
 
 class QueueTests(unittest.TestCase):
+    def test_library_scoped_rename_does_not_change_another_library_chat(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(Path(td) / "state.db")
+            try:
+                for chat_id, library_key in ((10, "animation_series"), (20, "video_series")):
+                    store.set_chat_setting(chat_id, "current_library_key", library_key)
+                    store.set_chat_setting(chat_id, "current_folder", "Same Name")
+                changed = store.replace_chat_setting_value_in_library(
+                    "current_folder",
+                    "Same Name",
+                    "Renamed Animation",
+                    "animation_series",
+                )
+                self.assertEqual(changed, 1)
+                self.assertEqual(
+                    store.get_chat_setting(10, "current_folder"),
+                    "Renamed Animation",
+                )
+                self.assertEqual(
+                    store.get_chat_setting(20, "current_folder"), "Same Name"
+                )
+            finally:
+                store.close()
+
     def test_queue_persists(self):
         with tempfile.TemporaryDirectory() as td:
             db = Path(td) / "state.db"
@@ -717,7 +793,7 @@ class MenuNavigationTests(unittest.TestCase):
             ],
         )
         commands = [item["command"] for item in BOT_COMMANDS]
-        self.assertEqual(len(commands), 44)
+        self.assertEqual(len(commands), 46)
         self.assertEqual(len(commands), len(set(commands)))
 
     def test_bilingual_guide_fits_telegram_and_language_callback_opens_it(self):

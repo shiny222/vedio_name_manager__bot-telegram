@@ -33,11 +33,13 @@ class SorterBridge:
         self.store = store
         self.active = False
 
-    def build_command(self, folder: Path, dry_run: bool = False) -> list[str]:
+    def build_command(
+        self, folder: Path, dry_run: bool = False, library_key: str | None = None
+    ) -> list[str]:
         if not self.config.sorter_command:
             raise ValueError("sorter_command is not configured in config.json.")
         safe_folder = folder.resolve()
-        library = self.config.jellyfin_library_path.resolve()
+        library = self.config.library(library_key, "series").path.resolve()
         if safe_folder != library and library not in safe_folder.parents:
             raise ValueError("Sorter folder is outside the library.")
         command = [
@@ -69,7 +71,9 @@ class SorterBridge:
             command[1] = str(script)
         return command
 
-    def build_undo_command(self, batch_id: str | None = None) -> list[str]:
+    def build_undo_command(
+        self, batch_id: str | None = None, library_key: str | None = None
+    ) -> list[str]:
         if not self.config.sorter_command:
             raise ValueError("sorter_command is not configured in config.json.")
         # Telegram command names cannot inject arguments because subprocess is
@@ -79,16 +83,19 @@ class SorterBridge:
         prefix = list(self.config.sorter_command[:2])
         if len(prefix) < 2:
             raise ValueError("sorter_command must specify Python and organizer.py.")
+        library = self.config.library(library_key, "series").path
         command = prefix + (
-            ["undo-batch", batch_id, "--library", str(self.config.jellyfin_library_path)]
+            ["undo-batch", batch_id, "--library", str(library)]
             if batch_id is not None
-            else ["undo-last", "--library", str(self.config.jellyfin_library_path)]
+            else ["undo-last", "--library", str(library)]
         )
         return self._resolve_program_paths(command)
 
-    def build_rename_command(self, folder: Path, new_name: str) -> list[str]:
+    def build_rename_command(
+        self, folder: Path, new_name: str, library_key: str | None = None
+    ) -> list[str]:
         safe_folder = folder.resolve()
-        library = self.config.jellyfin_library_path.resolve()
+        library = self.config.library(library_key, "series").path.resolve()
         if safe_folder != library and library not in safe_folder.parents:
             raise ValueError("Rename folder is outside the library.")
         if not self.config.sorter_command or len(self.config.sorter_command) < 2:
@@ -100,7 +107,9 @@ class SorterBridge:
         ]
         return self._resolve_program_paths(command)
 
-    def build_series_action_command(self, action: str, folder: Path) -> list[str]:
+    def build_series_action_command(
+        self, action: str, folder: Path, library_key: str | None = None
+    ) -> list[str]:
         allowed = {
             "resort-existing",
             "sort-history",
@@ -112,7 +121,7 @@ class SorterBridge:
         if action not in allowed:
             raise ValueError("Unsupported sorter action.")
         safe_folder = folder.resolve()
-        library = self.config.jellyfin_library_path.resolve()
+        library = self.config.library(library_key, "series").path.resolve()
         if safe_folder == library or library not in safe_folder.parents:
             raise ValueError("Series folder must be inside the Jellyfin library.")
         if not self.config.sorter_command or len(self.config.sorter_command) < 2:
@@ -122,37 +131,74 @@ class SorterBridge:
         )
 
     async def run(
-        self, folder: Path, dry_run: bool = False, chat_id: int | None = None
+        self,
+        folder: Path,
+        dry_run: bool = False,
+        chat_id: int | None = None,
+        library_key: str | None = None,
     ) -> tuple[bool, str]:
-        command = self.build_command(folder, dry_run)
-        return await self._execute(folder, command, chat_id, "series")
-
-    async def undo_batch(
-        self, batch_id: str, chat_id: int | None = None
-    ) -> tuple[bool, str]:
-        command = self.build_undo_command(batch_id)
+        command = self.build_command(folder, dry_run, library_key)
         return await self._execute(
-            self.config.jellyfin_library_path, command, chat_id, "series_undo"
+            folder, command, chat_id, "series", library_key=library_key
         )
 
-    async def undo_last(self, chat_id: int | None = None) -> tuple[bool, str]:
-        command = self.build_undo_command()
+    async def undo_batch(
+        self,
+        batch_id: str,
+        chat_id: int | None = None,
+        library_key: str | None = None,
+    ) -> tuple[bool, str]:
+        command = self.build_undo_command(batch_id, library_key)
+        library = self.config.library(library_key, "series")
         return await self._execute(
-            self.config.jellyfin_library_path, command, chat_id, "series_undo"
+            library.path,
+            command,
+            chat_id,
+            "series_undo",
+            library_key=library.key,
+        )
+
+    async def undo_last(
+        self, chat_id: int | None = None, library_key: str | None = None
+    ) -> tuple[bool, str]:
+        command = self.build_undo_command(library_key=library_key)
+        library = self.config.library(library_key, "series")
+        return await self._execute(
+            library.path,
+            command,
+            chat_id,
+            "series_undo",
+            library_key=library.key,
         )
 
     async def rename_folder(
-        self, folder: Path, new_name: str, chat_id: int | None = None
+        self,
+        folder: Path,
+        new_name: str,
+        chat_id: int | None = None,
+        library_key: str | None = None,
     ) -> tuple[bool, str]:
-        command = self.build_rename_command(folder, new_name)
-        return await self._execute(folder, command, chat_id, "series_maintenance")
+        command = self.build_rename_command(folder, new_name, library_key)
+        return await self._execute(
+            folder,
+            command,
+            chat_id,
+            "series_maintenance",
+            library_key=library_key,
+        )
 
     async def series_action(
-        self, action: str, folder: Path, chat_id: int | None = None
+        self,
+        action: str,
+        folder: Path,
+        chat_id: int | None = None,
+        library_key: str | None = None,
     ) -> tuple[bool, str]:
-        command = self.build_series_action_command(action, folder)
+        command = self.build_series_action_command(action, folder, library_key)
         kind = "series" if action in {"resort-existing", "fix-metadata"} else "series_maintenance"
-        return await self._execute(folder, command, chat_id, kind)
+        return await self._execute(
+            folder, command, chat_id, kind, library_key=library_key
+        )
 
     async def _execute(
         self,
@@ -160,6 +206,7 @@ class SorterBridge:
         command: list[str],
         chat_id: int | None = None,
         operation_kind: str = "series",
+        library_key: str | None = None,
     ) -> tuple[bool, str]:
         if self.active:
             return False, "A sorter operation is already running."
@@ -169,6 +216,7 @@ class SorterBridge:
             json.dumps(command, ensure_ascii=False),
             chat_id=chat_id,
             operation_kind=operation_kind,
+            library_key=library_key,
         )
         process: asyncio.subprocess.Process | None = None
         try:

@@ -28,6 +28,8 @@ you sent the command or file. Opening a category does not create a new topic.
 
 ### 3. Select a series
 
+- Send `/libraries` and choose the correct Series library. This automatically
+  enables series mode for this chat.
 - Send `/folders` to select an existing series.
 - Send `/setfolder SERIES NAME` to search for and create a new series folder.
 - Confirm the IMDb suggestion or select the manual name.
@@ -87,10 +89,10 @@ renaming an organized series directly in Windows Explorer.
 
 ### 8. Import a movie
 
-Movie mode uses a separate Jellyfin Movies library and does not use the current
-series folder.
+Movie mode can use either configured movie library and does not use the current
+series folder. Every queued movie remembers the selected library.
 
-1. Send `/movie_mode`, then send one movie video.
+1. Send `/libraries`, choose the correct Movie library, then send a movie video.
 2. Choose filename search or manual search.
 3. Select the correct IMDb result and confirm the preview. If IMDb is
    unavailable during manual search, you can confirm your manual title.
@@ -128,6 +130,8 @@ and `/movie_undo_last` to return the latest import to staging. Send
 
 ### ۳. انتخاب سریال
 
+- دستور `/libraries` را بفرستید و کتابخانه Series درست را انتخاب کنید. حالت
+  سریال برای همین چت به‌صورت خودکار فعال می‌شود.
 - برای انتخاب یک سریال موجود، `/folders` را ارسال کنید.
 - برای جستجو و ساخت پوشه جدید، `/setfolder SERIES NAME` را ارسال کنید.
 - پیشنهاد IMDb را تأیید کنید یا نام دستی را انتخاب کنید.
@@ -189,10 +193,12 @@ and `/movie_undo_last` to return the latest import to staging. Send
 
 ### ۸. وارد کردن فیلم
 
-حالت فیلم از کتابخانه جداگانه Movies استفاده می‌کند و به پوشه سریال فعلی
-وابسته نیست.
+حالت فیلم می‌تواند از هر یک از کتابخانه‌های Movie تنظیم‌شده استفاده کند و به
+پوشه سریال فعلی وابسته نیست. هر فیلم صف‌شده کتابخانه انتخابی را به خاطر
+می‌سپارد.
 
-1. دستور `/movie_mode` را بفرستید و سپس یک فایل فیلم ارسال کنید.
+1. دستور `/libraries` را بفرستید، کتابخانه Movie درست را انتخاب کنید و سپس
+   یک فایل فیلم ارسال کنید.
 2. جستجو با نام فایل یا جستجوی دستی را انتخاب کنید.
 3. نتیجه صحیح IMDb را انتخاب و پیش‌نمایش نام را تأیید کنید. اگر IMDb هنگام
    جستجوی دستی در دسترس نبود، می‌توانید همان نام دستی را تأیید کنید.
