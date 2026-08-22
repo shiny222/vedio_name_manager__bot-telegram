@@ -85,7 +85,18 @@ class DownloadManager:
                         "error, then use /download to retry."
                     )
                 else:
-                    if completed_series:
+                    automatic_series = sum(
+                        1
+                        for item in completed_items
+                        if item.get("media_kind", "series") == "series"
+                        and item.get("series_episode")
+                    )
+                    manual_series = completed_series - automatic_series
+                    if automatic_series:
+                        notes.append(
+                            "AI-identified series files will now be organized automatically."
+                        )
+                    if manual_series:
                         notes.append(
                             "Use /sort_latest to organize the latest downloaded "
                             "series folder."
@@ -116,7 +127,9 @@ class DownloadManager:
             folder = self.config.target_path(
                 folder_name, str(item.get("library_key") or "") or None
             )
-        filename = validate_original_filename(item["original_filename"])
+        filename = validate_original_filename(
+            item.get("download_filename") or item["original_filename"]
+        )
         return folder / filename, folder_name
 
     async def _download_one(self, item: dict, notify: Notify) -> None:

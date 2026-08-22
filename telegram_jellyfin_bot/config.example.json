@@ -27,6 +27,7 @@
   ],
   "movie_sorter_timeout_seconds": 1800,
   "scan_after_movie_import": true,
+  "scan_after_ai_series_sort": true,
   "allowed_chat_ids": [],
   "allowed_video_extensions": [".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"],
   "max_parallel_downloads": 1,
@@ -42,5 +43,9 @@
     "fuzzy_search\\.venv\\Scripts\\python.exe",
     "fuzzy_search\\imdb_tool.py"
   ],
-  "fuzzy_search_timeout_seconds": 20
+  "fuzzy_search_timeout_seconds": 20,
+  "n8n_agent_enabled": false,
+  "n8n_agent_url": "http://127.0.0.1:5678/webhook/media-identify",
+  "n8n_agent_secret": "",
+  "n8n_agent_timeout_seconds": 45
 }

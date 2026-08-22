@@ -36,6 +36,10 @@ if __package__ in {None, ""}:
         ImdbFuzzySearchBridge, movie_query_from_filename
     )
     from telegram_jellyfin_bot.movie_sorter_bridge import MovieSorterBridge
+    from telegram_jellyfin_bot.n8n_bridge import (
+        MediaIdentification,
+        N8nMediaIdentifier,
+    )
     from telegram_jellyfin_bot.localization import (
         LANGUAGE_MENU,
         language_code,
@@ -56,6 +60,7 @@ else:
     from .jellyfin_bridge import JellyfinBridge
     from .imdb_bridge import ImdbFuzzySearchBridge, movie_query_from_filename
     from .movie_sorter_bridge import MovieSorterBridge
+    from .n8n_bridge import MediaIdentification, N8nMediaIdentifier
     from .localization import (
         LANGUAGE_MENU,
         language_code,
@@ -167,165 +172,132 @@ HELP_FA = """دستورها:
 
 GUIDE_EN = """How to use the Telegram Jellyfin Bot
 
-1. Start the bot on the computer
-• Run run_local_bot_api.bat and leave it open.
-• Run run.bat and leave it open.
+The bot has two workflows:
+• Normal — AI-assisted identification and the shortest everyday path.
+• Advanced — manual correction, sorting, repair, and undo without AI.
 
-2. Open the controls
-• Send /menu.
-• On first use, choose English or فارسی. Use /language to change it later.
-• Private chats and groups get the persistent category keyboard.
-• In a channel, press Command categories in the inline menu.
-• Series and Movies have separate categories and mode buttons.
-• In chats with topics enabled, replies stay in the same existing topic where
-  you sent the command, button, or file. The bot does not create a new topic.
+MAIN MENU
+Send /menu. The main buttons are Downloads, Episodes, Jellyfin, Bot,
+Choose Library, and Advanced. Each chat remembers its own library, queue,
+confirmations, and history. Opening a menu never creates a Telegram topic.
 
-3. Select the library and series folder before sending videos
-• /libraries — choose Animation Series or Video Series. This also sets series mode.
-• Existing series: /folders, then press its folder.
-• New series: /setfolder SERIES NAME
-• Confirm the IMDb suggestion, or choose the manual name.
-• Check the selection with /folder.
+NORMAL WORKFLOW — AI ASSISTED
+1. Press Choose Library once and select Animation Series, Animation Movies,
+   Video Series, or Video Movies. It stays selected until you change it.
+   AI is never allowed to choose or change this destination.
+2. Send one or several supported videos. Multiple files can wait in the queue
+   and download together.
+3. When the n8n connection is enabled, AI reads the untrusted filename/caption
+   and suggests movie title/year or series title/season/episode. The existing
+   IMDb tool finds the official Jellyfin identity.
+4. Review the suggested name, library, folder, file count, and size. Confirm
+   only when they are correct. If uncertain, answer the bot's question or use
+   Advanced. A failed AI/IMDb request must not change the library.
+5. Open Downloads: Queue → Download → Confirm.
+6. Movies are staged and imported safely. AI-confirmed series episodes are
+   organized automatically after their downloads finish.
+7. Use Jellyfin → Scan library if an automatic scan did not run. Use Episodes
+   to inspect the current series or the series libraries.
 
-Each chat has its own current folder, queue, confirmations, status, and undo
-batches. One chat cannot control another chat's queued items. Members of the
-same Telegram group share that group's state.
+ADVANCED WORKFLOW — NO AI REQUIRED
+Use Advanced for unusual filenames, incorrect identity, manual organization,
+conflicts, or interrupted operations.
 
-4. Send episodes
-Send supported video files to the bot chat or channel. The bot adds
-them to the queue; it does not download immediately.
+Folders:
+• /folder, /folders, /setfolder NAME, /usefolder NAME
+• /renamefolder NAME, /unsetfolder
 
-5. Download
-• /queue — review queued files.
-• /download — prepare the download.
-• /confirm_download — start it.
-• If a file exists, use /resolve ID skip, overwrite, or save_with_suffix.
+Manual identification:
+• /imdb_search NAME
+• /imdb_fix_current [NAME]
+• For a waiting movie, choose Enter name manually.
 
-6. Organize the current series
-• /sort_current — sort only new loose files.
-• /resort_current — rename previously sorted episodes after correcting the
-  series folder name.
-• /fix_metadata_current — manually align episode NFO/artwork names.
-• /sort_history — review revisions before undoing anything.
+Sorting and metadata:
+• /sort_current, /sort_latest, /sort_folder PATH, /sort_status
+• /resort_current renames old episodes after correcting the series folder.
+• /fix_metadata_current aligns episode NFO and artwork names.
 
-7. Update Jellyfin
-Use /jellyfin_scan after downloading and sorting. The bot monitors Jellyfin and
-sends another message when the scan completes and the latest library state is
-ready. Use /jellyfin_status to check live progress or diagnose an HTTP error.
+Queue and conflicts:
+• /remove ID, /clearqueue
+• /resolve ID skip|save_with_suffix|overwrite
+• /movie_current, /movie_import ID, /movie_cancel ID
 
-8. Check owned episodes
-• /episodes — current series.
-• /episodes NAME — another series.
-• /library_episodes — the whole library.
+Undo and recovery:
+• /sort_history, /sort_back, /sort_forward, /undo_sort_batch ID
+• /movie_undo_last, /movie_undo_batch ID
+• /recover_current checks only the selected series folder after interruption.
 
-9. Undo and recovery
-• /sort_back — undo the latest applied revision in the current series.
-• /sort_forward — reapply an undone revision.
-• /undo_sort_batch ID — undo a known technical batch.
-• /recover_current — manually reconcile an operation interrupted by a crash or
-  power loss. It checks only the current series folder.
+SAFETY
+Verify the selected library before download and /folder before manual series
+work. Nothing is overwritten silently. Keep staging and .rename_history.json
+files while import or rollback may need them.
 
-10. Import an independent movie
-• /libraries — choose Animation Movies or Video Movies; this sets movie mode.
-• /movie_mode — opens the movie-library choices.
-• Send one movie, choose filename or manual search, select the IMDb result, and
-  confirm the exact name.
-• /download then /confirm_download — download to staging and safely import it.
-• /movie_current — show status; /movie_import ID — retry a staged movie.
-• /movie_undo_last — restore the latest import to staging.
-• /series_mode — return to episode mode.
-
-Safety reminders
-• Check /folder before sending or sorting.
-• The organizer never intentionally overwrites an existing destination.
-• Do not delete .rename_history.json files while you need rollback.
-• Use /renamefolder or /imdb_fix_current instead of renaming a sorted series
-  directly in Windows Explorer."""
+If n8n is unavailable, the bot keeps the item undownloaded and offers the
+existing filename/manual IMDb or current-folder fallback."""
 
 GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
 
-۱. اجرای ربات روی کامپیوتر
-• ابتدا run_local_bot_api.bat را اجرا کنید و پنجره آن را باز نگه دارید.
-• سپس run.bat را اجرا کنید و آن را نیز باز نگه دارید.
+ربات دو روش استفاده دارد:
+• عادی — تشخیص با کمک هوش مصنوعی و مسیر کوتاه روزمره.
+• پیشرفته — اصلاح دستی، مرتب‌سازی، بازیابی و بازگردانی بدون نیاز به AI.
 
-۲. باز کردن کنترل‌ها
-• دستور /menu را ارسال کنید.
-• در اولین استفاده، English یا فارسی را انتخاب کنید. برای تغییر بعدی از
-  /language استفاده کنید.
-• در گفت‌وگوی خصوصی و گروه، صفحه‌کلید دائمی دسته‌بندی‌ها نمایش داده می‌شود.
-• در کانال، دکمه Command categories را در منوی شیشه‌ای انتخاب کنید.
-• سریال‌ها و فیلم‌ها دسته‌بندی و دکمه حالت جداگانه دارند.
-• در چت‌هایی که موضوع (Topic) فعال است، پاسخ‌ها در همان موضوعی می‌مانند که
-  دستور، دکمه یا فایل را در آن فرستادید. ربات موضوع جدیدی ایجاد نمی‌کند.
+منوی اصلی
+/menu را بفرستید. دکمه‌ها: دانلودها، قسمت‌ها، Jellyfin، ربات، انتخاب کتابخانه
+و پیشرفته. هر چت کتابخانه، صف، تأییدها و تاریخچه مستقل خودش را دارد. باز کردن
+منو هیچ Topic جدیدی ایجاد نمی‌کند.
 
-۳. قبل از فرستادن ویدیو، کتابخانه و پوشه سریال را انتخاب کنید
-• با /libraries کتابخانه Animation Series یا Video Series را انتخاب کنید؛
-  حالت سریال نیز خودکار فعال می‌شود.
-• سریال موجود: دستور /folders را بفرستید و پوشه را انتخاب کنید.
-• سریال جدید: /setfolder SERIES NAME
-• پیشنهاد IMDb را تأیید کنید یا نام دستی را انتخاب کنید.
-• با دستور /folder پوشه انتخاب‌شده را بررسی کنید.
+روش عادی — با کمک هوش مصنوعی
+۱. انتخاب کتابخانه را یک بار بزنید و Animation Series، Animation Movies،
+   Video Series یا Video Movies را انتخاب کنید. انتخاب تا تغییر بعدی باقی
+   می‌ماند. AI اجازه انتخاب یا تغییر مقصد را ندارد.
+۲. یک یا چند ویدیو بفرستید. چند فایل می‌توانند با هم در صف بمانند و دانلود
+   شوند.
+۳. پس از فعال شدن اتصال n8n، AI از نام فایل/کپشن نام و سال فیلم یا نام سریال
+   و فصل و قسمت را پیشنهاد می‌دهد. ابزار IMDb نام رسمی Jellyfin را پیدا می‌کند.
+۴. نام، کتابخانه، پوشه، تعداد و حجم را بررسی کنید. فقط اگر درست بود تأیید
+   کنید. اگر نتیجه نامطمئن بود، به سؤال ربات پاسخ دهید یا پیشرفته را باز کنید.
+   خرابی AI یا IMDb نباید کتابخانه را تغییر دهد.
+۵. دانلودها را باز کنید: صف ← دانلود ← تأیید.
+۶. فیلم ابتدا وارد staging و سپس امن وارد کتابخانه می‌شود. در روند فعلی
+   قسمت‌های سریال که با AI تأیید شده‌اند، بعد از پایان دانلود
+   به‌صورت خودکار مرتب می‌شوند.
+۷. اگر اسکن خودکار اجرا نشد، Jellyfin ← اسکن کتابخانه را بزنید. از قسمت‌ها
+   برای بررسی سریال فعلی یا کتابخانه‌های سریال استفاده کنید.
 
-هر چت پوشه فعلی، صف، تأییدها، وضعیت و دسته‌های بازگردانی مستقل خودش را دارد.
-یک چت نمی‌تواند موارد صف چت دیگری را کنترل کند. اعضای یک گروه تلگرام، وضعیت
-همان گروه را با یکدیگر به اشتراک می‌گذارند.
+روش پیشرفته — بدون نیاز به AI
+برای نام غیرعادی، تشخیص اشتباه، کار دستی، تداخل یا عملیات ناقص استفاده کنید.
 
-۴. فرستادن قسمت‌ها
-فایل‌های ویدیویی پشتیبانی‌شده را در چت یا کانال ربات بفرستید. ربات آن‌ها را
-وارد صف می‌کند و دانلود به‌صورت خودکار شروع نمی‌شود.
+پوشه‌ها:
+• /folder، /folders، /setfolder NAME، /usefolder NAME
+• /renamefolder NAME، /unsetfolder
 
-۵. دانلود
-• /queue — مشاهده فایل‌های صف.
-• /download — آماده‌سازی دانلود.
-• /confirm_download — شروع دانلود.
-• اگر فایل از قبل وجود داشت، از /resolve ID همراه با skip یا overwrite یا
-  save_with_suffix استفاده کنید.
+تشخیص دستی:
+• /imdb_search NAME
+• /imdb_fix_current [NAME]
+• برای فیلم منتظر تشخیص، وارد کردن نام دستی را بزنید.
 
-۶. مرتب‌سازی سریال فعلی
-• /sort_current — فقط فایل‌های جدید و مرتب‌نشده را مرتب می‌کند.
-• /resort_current — پس از اصلاح نام پوشه سریال، نام قسمت‌های قبلی را اصلاح
-  می‌کند.
-• /fix_metadata_current — نام NFO و تصویرهای مربوط به قسمت‌ها را به‌صورت دستی
-  هماهنگ می‌کند.
-• /sort_history — قبل از بازگردانی، تاریخچه نسخه‌ها را نشان می‌دهد.
+مرتب‌سازی و متادیتا:
+• /sort_current، /sort_latest، /sort_folder PATH، /sort_status
+• /resort_current نام قسمت‌های قبلی را بعد از اصلاح پوشه تغییر می‌دهد.
+• /fix_metadata_current نام NFO و تصاویر قسمت را هماهنگ می‌کند.
 
-۷. به‌روزرسانی Jellyfin
-بعد از دانلود و مرتب‌سازی از /jellyfin_scan استفاده کنید. ربات وضعیت Jellyfin
-را بررسی می‌کند و پس از پایان اسکن و آماده شدن آخرین وضعیت کتابخانه پیام
-دیگری می‌فرستد. برای مشاهده پیشرفت زنده یا بررسی خطای HTTP، دستور
-/jellyfin_status را اجرا کنید.
+صف و تداخل:
+• /remove ID، /clearqueue
+• /resolve ID skip|save_with_suffix|overwrite
+• /movie_current، /movie_import ID، /movie_cancel ID
 
-۸. بررسی قسمت‌های موجود
-• /episodes — قسمت‌های سریال فعلی.
-• /episodes NAME — قسمت‌های یک سریال دیگر.
-• /library_episodes — خلاصه تمام کتابخانه.
+بازگردانی و بازیابی:
+• /sort_history، /sort_back، /sort_forward، /undo_sort_batch ID
+• /movie_undo_last، /movie_undo_batch ID
+• /recover_current فقط پوشه سریال انتخاب‌شده را پس از توقف ناقص بررسی می‌کند.
 
-۹. بازگردانی و بازیابی
-• /sort_back — آخرین نسخه اعمال‌شده در سریال فعلی را برمی‌گرداند.
-• /sort_forward — نسخه بازگردانده‌شده را دوباره اعمال می‌کند.
-• /undo_sort_batch ID — یک Batch ID مشخص را برمی‌گرداند.
-• /recover_current — عملیات ناقص پس از خاموشی یا توقف ناگهانی را به‌صورت دستی
-  بررسی می‌کند و فقط پوشه سریال فعلی را می‌گردد.
+ایمنی
+پیش از دانلود کتابخانه و پیش از کار دستی سریال /folder را بررسی کنید. هیچ چیز
+بدون اجازه بازنویسی نمی‌شود. تا وقتی انتقال یا بازگردانی ممکن است لازم باشد،
+فایل‌های staging و .rename_history.json را حذف نکنید.
 
-۱۰. وارد کردن فیلم مستقل
-• با /libraries کتابخانه Animation Movies یا Video Movies را انتخاب کنید؛
-  حالت فیلم نیز خودکار فعال می‌شود.
-• دستور /movie_mode فهرست کتابخانه‌های فیلم را باز می‌کند.
-• یک فیلم بفرستید، جستجو با نام فایل یا نام دستی را انتخاب کنید، نتیجه IMDb را
-  انتخاب و نام نهایی را تأیید کنید.
-• با /download و سپس /confirm_download فیلم ابتدا در staging دانلود و بعد
-  به‌صورت امن وارد کتابخانه می‌شود.
-• /movie_current وضعیت را نشان می‌دهد و /movie_import ID انتقال را تکرار می‌کند.
-• /movie_undo_last آخرین انتقال را به staging برمی‌گرداند.
-• برای بازگشت به حالت قسمت‌های سریال از /series_mode استفاده کنید.
-
-نکات ایمنی
-• پیش از ارسال یا مرتب‌سازی همیشه /folder را بررسی کنید.
-• ابزار مرتب‌سازی عمداً هیچ فایل مقصدی را بازنویسی نمی‌کند.
-• تا زمانی که به بازگردانی نیاز دارید فایل‌های .rename_history.json را حذف
-  نکنید.
-• برای تغییر نام سریال مرتب‌شده از /renamefolder یا /imdb_fix_current استفاده
-  کنید و نام پوشه را مستقیماً در Windows Explorer عوض نکنید."""
+اگر n8n در دسترس نباشد، فایل دانلود نمی‌شود و ربات روش نام فایل/IMDb/نام دستی
+یا پوشه فعلی را به‌عنوان جایگزین امن پیشنهاد می‌دهد."""
 
 GUIDE_LANGUAGE_MENU = {
     "inline_keyboard": [
@@ -400,103 +372,38 @@ BOT_COMMANDS = [
 CHANNEL_MENU = {
     "inline_keyboard": [
         [
-            {"text": "Rename sorted files", "callback_data": "menu:resort_current"},
-            {"text": "Sort history", "callback_data": "menu:sort_history"},
+            {"text": "📥 Downloads", "callback_data": "nav:downloads"},
+            {"text": "📺 Episodes", "callback_data": "nav:episodes"},
         ],
         [
-            {"text": "Sort back", "callback_data": "menu:sort_back"},
-            {"text": "Sort forward", "callback_data": "menu:sort_forward"},
+            {"text": "🎬 Jellyfin", "callback_data": "nav:jellyfin"},
+            {"text": "⚙️ Bot", "callback_data": "nav:bot"},
         ],
         [
-            {"text": "Recover current folder", "callback_data": "menu:recover_current"},
-            {"text": "Fix episode metadata", "callback_data": "menu:fix_metadata_current"},
+            {"text": "🗄 Choose Library", "callback_data": "menu:libraries"},
         ],
         [
-            {"text": "📁 Current folder", "callback_data": "menu:folder"},
-            {"text": "📋 Queue", "callback_data": "menu:queue"},
-        ],
-        [
-            {"text": "🗂 Pick existing folder", "callback_data": "menu:folders"},
-        ],
-        [
-            {"text": "⬇️ Download", "callback_data": "menu:download"},
-            {"text": "✅ Confirm download", "callback_data": "menu:confirm"},
-        ],
-        [
-            {"text": "📊 Status", "callback_data": "menu:status"},
-            {"text": "⛔ Cancel", "callback_data": "menu:cancel"},
-        ],
-        [
-            {"text": "🧹 Sort current", "callback_data": "menu:sort_current"},
-            {"text": "🧹 Sort latest", "callback_data": "menu:sort_latest"},
-        ],
-        [
-            {"text": "↩️ Undo latest sort", "callback_data": "menu:undo_sort_last"},
-            {"text": "🔢 Undo by batch ID", "callback_data": "menu:undo_batch_help"},
-        ],
-        [
-            {"text": "🔄 Scan Jellyfin", "callback_data": "menu:jellyfin_scan"},
-            {"text": "🟢 Jellyfin Status", "callback_data": "menu:jellyfin_status"},
-        ],
-        [
-            {"text": "🎞 Episodes", "callback_data": "menu:episodes"},
-            {"text": "📚 All series", "callback_data": "menu:library_episodes"},
-        ],
-        [
-            {"text": "🔎 IMDb title search", "callback_data": "menu:imdb_help"},
-        ],
-        [
-            {"text": "Series", "callback_data": "nav:series"},
-            {"text": "Movies", "callback_data": "nav:movies"},
-        ],
-        [
-            {"text": "Series mode", "callback_data": "menu:series_mode"},
-            {"text": "Movie mode", "callback_data": "menu:movie_mode"},
-        ],
-        [
-            {"text": "🗄 Choose media library", "callback_data": "menu:libraries"},
-        ],
-        [
-            {"text": "✏️ Set/rename folder", "callback_data": "menu:folder_help"},
-            {"text": "❓ Help", "callback_data": "menu:help"},
-        ],
-        [
-            {"text": "📖 How to use (English / فارسی)", "callback_data": "menu:guide"},
-            {"text": "🌐 Language", "callback_data": "menu:language"},
-        ],
-        [
-            {"text": "🗂 Command categories", "callback_data": "nav:categories"},
+            {"text": "🧰 Advanced", "callback_data": "nav:advanced"},
         ],
     ]
 }
 
 # This persistent keyboard appears beside the message input in private chats,
 # groups, and supergroups. Telegram does not support reply keyboards in channels,
-# so CHANNEL_MENU links to the same categories with an inline button.
+# so CHANNEL_MENU presents the same small main menu as inline buttons.
 PERSISTENT_CATEGORY_KEYBOARD = {
     "keyboard": [
         [
             {"text": "📥 Downloads"},
-            {"text": "📁 Folders"},
-        ],
-        [
-            {"text": "🧹 Sorting"},
-            {"text": "↩️ Undo & Recovery"},
+            {"text": "📺 Episodes"},
         ],
         [
             {"text": "🎬 Jellyfin"},
-            {"text": "🔎 IMDb"},
-        ],
-        [
-            {"text": "📺 Episodes"},
             {"text": "⚙️ Bot"},
         ],
         [
-            {"text": "Series"},
-            {"text": "Movies"},
-        ],
-        [
-            {"text": "⚡ Quick Menu"},
+            {"text": "🗄 Choose Library"},
+            {"text": "🧰 Advanced"},
         ],
     ],
     "resize_keyboard": True,
@@ -508,33 +415,28 @@ CATEGORY_MENU = {
     "inline_keyboard": [
         [
             {"text": "📥 Downloads", "callback_data": "nav:downloads"},
-            {"text": "📁 Folders", "callback_data": "nav:folders"},
-        ],
-        [
-            {"text": "🧹 Sorting", "callback_data": "nav:sorting"},
-            {"text": "↩️ Undo & Recovery", "callback_data": "nav:undo"},
+            {"text": "📺 Episodes", "callback_data": "nav:episodes"},
         ],
         [
             {"text": "🎬 Jellyfin", "callback_data": "nav:jellyfin"},
-            {"text": "🔎 IMDb", "callback_data": "nav:imdb"},
-        ],
-        [
-            {"text": "📺 Episodes", "callback_data": "nav:episodes"},
             {"text": "⚙️ Bot", "callback_data": "nav:bot"},
         ],
         [
-            {"text": "Series", "callback_data": "nav:series"},
-            {"text": "Movies", "callback_data": "nav:movies"},
+            {"text": "🗄 Choose Library", "callback_data": "menu:libraries"},
         ],
         [
-            {"text": "⚡ Quick menu", "callback_data": "menu:open"},
+            {"text": "🧰 Advanced", "callback_data": "nav:advanced"},
         ],
     ]
 }
 
 SUBMENU_FOOTER = [
-    {"text": "⬅️ Categories", "callback_data": "nav:categories"},
-    {"text": "⚡ Quick menu", "callback_data": "menu:open"},
+    {"text": "⬅️ Main menu", "callback_data": "nav:categories"},
+]
+
+ADVANCED_SUBMENU_FOOTER = [
+    {"text": "⬅️ Advanced", "callback_data": "nav:advanced"},
+    {"text": "🎛 Main menu", "callback_data": "nav:categories"},
 ]
 
 DOWNLOAD_MENU = {
@@ -581,7 +483,7 @@ FOLDER_MENU = {
                 "copy_text": {"text": "/renamefolder "},
             },
         ],
-        SUBMENU_FOOTER,
+        ADVANCED_SUBMENU_FOOTER,
     ]
 }
 
@@ -605,7 +507,7 @@ SORTING_MENU = {
                 "copy_text": {"text": "/sort_folder "},
             },
         ],
-        SUBMENU_FOOTER,
+        ADVANCED_SUBMENU_FOOTER,
     ]
 }
 
@@ -628,7 +530,7 @@ UNDO_MENU = {
                 "copy_text": {"text": "/undo_sort_batch "},
             },
         ],
-        SUBMENU_FOOTER,
+        ADVANCED_SUBMENU_FOOTER,
     ]
 }
 
@@ -658,7 +560,7 @@ SERIES_MENU = {
         [
             {"text": "All series", "callback_data": "menu:library_episodes"},
         ],
-        SUBMENU_FOOTER,
+        ADVANCED_SUBMENU_FOOTER,
     ]
 }
 
@@ -688,7 +590,7 @@ MOVIE_MENU = {
                 "copy_text": {"text": "/movie_undo_batch "},
             },
         ],
-        SUBMENU_FOOTER,
+        ADVANCED_SUBMENU_FOOTER,
     ]
 }
 
@@ -706,7 +608,7 @@ IMDB_MENU = {
                 "copy_text": {"text": "/imdb_fix_current"},
             },
         ],
-        SUBMENU_FOOTER,
+        ADVANCED_SUBMENU_FOOTER,
     ]
 }
 
@@ -739,12 +641,25 @@ BOT_MENU = {
         [
             {"text": "🌐 Language", "callback_data": "menu:language"},
         ],
+        SUBMENU_FOOTER,
+    ]
+}
+
+ADVANCED_MENU = {
+    "inline_keyboard": [
         [
-            {"text": "⚡ Quick menu", "callback_data": "menu:open"},
+            {"text": "📁 Folders", "callback_data": "nav:folders"},
+            {"text": "🧹 Sorting", "callback_data": "nav:sorting"},
         ],
         [
-            {"text": "⬅️ Categories", "callback_data": "nav:categories"},
+            {"text": "↩️ Undo & Recovery", "callback_data": "nav:undo"},
+            {"text": "🔎 IMDb", "callback_data": "nav:imdb"},
         ],
+        [
+            {"text": "📺 Series tools", "callback_data": "nav:series"},
+            {"text": "🎬 Movie tools", "callback_data": "nav:movies"},
+        ],
+        SUBMENU_FOOTER,
     ]
 }
 
@@ -759,6 +674,7 @@ CATEGORY_SUBMENUS = {
     "nav:imdb": ("IMDb fuzzy-search commands:", IMDB_MENU),
     "nav:episodes": ("Episode inventory commands:", EPISODE_MENU),
     "nav:bot": ("Bot information and help:", BOT_MENU),
+    "nav:advanced": ("Advanced commands:", ADVANCED_MENU),
 }
 
 REPLY_CATEGORY_ACTIONS = {
@@ -770,6 +686,8 @@ REPLY_CATEGORY_ACTIONS = {
     "🔎 IMDb": "nav:imdb",
     "📺 Episodes": "nav:episodes",
     "⚙️ Bot": "nav:bot",
+    "🗄 Choose Library": "menu:libraries",
+    "🧰 Advanced": "nav:advanced",
     "Series": "nav:series",
     "Movies": "nav:movies",
 }
@@ -907,6 +825,7 @@ class BotApp:
         self.api: TelegramAPI | None = None
         self.downloader: DownloadManager | None = None
         self.jellyfin: JellyfinBridge | None = None
+        self.ai_identifier: N8nMediaIdentifier | None = None
         self.sorter = SorterBridge(config, self.store)
         self.movie_sorter = MovieSorterBridge(config, self.store)
         self.catalog = EpisodeCatalog(config.allowed_video_extensions)
@@ -914,6 +833,7 @@ class BotApp:
         self.imdb_choices: dict[str, dict] = {}
         self.movie_choices: dict[str, dict] = {}
         self.movie_manual_pending: dict[int, int] = {}
+        self.series_manual_pending: dict[int, int] = {}
         self.background_tasks: set[asyncio.Task] = set()
         self.task_chat_ids: dict[asyncio.Task, int] = {}
         self.chat_types: dict[int, str] = {}
@@ -959,6 +879,7 @@ class BotApp:
                 self.config, self.queue, self.api.call, session
             )
             self.jellyfin = JellyfinBridge(self.config, self.store, session)
+            self.ai_identifier = N8nMediaIdentifier(self.config, session)
             me = await self.api.call("getMe")
             LOG.info("Bot connected as @%s", me.get("username", "unknown"))
             try:
@@ -1065,6 +986,13 @@ class BotApp:
             "⚡ منوی سریع",
         }:
             await self.handle_reply_category(chat_id, text)
+        elif text and chat_id in self.series_manual_pending:
+            pending_id = self.series_manual_pending.pop(chat_id)
+            self.track_task(
+                self._run_manual_series_identification(chat_id, pending_id, text),
+                f"series-manual-identification:{chat_id}:{pending_id}",
+                chat_id,
+            )
         elif text and chat_id in self.movie_manual_pending:
             pending_id = self.movie_manual_pending.pop(chat_id)
             self.track_task(
@@ -1145,7 +1073,7 @@ class BotApp:
             }]
             for library in libraries
         ]
-        rows.append([{"text": "⬅️ Categories", "callback_data": "nav:categories"}])
+        rows.append([{"text": "⬅️ Main menu", "callback_data": "nav:categories"}])
         return {"inline_keyboard": rows}
 
     async def _require_library_kind(
@@ -1430,6 +1358,76 @@ class BotApp:
                 "Movie queue item cancelled." if removed else "Movie could not be cancelled.",
             )
             return
+        if action.startswith("seriesidentify:"):
+            _, method, pending_text = action.split(":", 2)
+            try:
+                pending_id = int(pending_text)
+            except ValueError:
+                return
+            item = self._series_item_for_chat(pending_id, int(chat_id))
+            if not item or item.get("status") != "awaiting_identification":
+                await self.send(
+                    int(chat_id),
+                    "This episode is no longer waiting for identification.",
+                )
+                return
+            if method == "manual":
+                self.series_manual_pending[int(chat_id)] = pending_id
+                await self.send(
+                    int(chat_id),
+                    "Send the series details in this format:\n"
+                    "Series Title | Season | Episode\n"
+                    "Example: Dr. Stone | 4 | 25",
+                )
+                return
+            if method != "current":
+                return
+            current_library = self._selected_library(int(chat_id), "series")
+            current_folder = self._chat_setting(int(chat_id), "current_folder")
+            if (
+                not current_folder
+                or str(item.get("library_key") or "") != current_library.key
+            ):
+                await self.send(
+                    int(chat_id),
+                    "No compatible current series folder is selected. Open "
+                    "Advanced → Folders, select one, then press this button again.",
+                    self._series_identification_markup(pending_id),
+                )
+                return
+            self.series_manual_pending.pop(int(chat_id), None)
+            self.store.update_item(
+                pending_id,
+                target_folder=current_folder,
+                status="queued",
+                error=None,
+            )
+            await self.send(
+                int(chat_id),
+                f"Episode #{pending_id} will use the current folder without AI:\n"
+                f"{current_folder}\n\nUse /download to review the destination.",
+            )
+            return
+        if action.startswith("seriescancel:"):
+            try:
+                pending_id = int(action.partition(":")[2])
+            except ValueError:
+                return
+            item = self._series_item_for_chat(pending_id, int(chat_id))
+            removed = bool(
+                item
+                and item.get("status") == "awaiting_identification"
+                and self.queue.remove(pending_id, chat_id=int(chat_id))
+            )
+            if self.series_manual_pending.get(int(chat_id)) == pending_id:
+                self.series_manual_pending.pop(int(chat_id), None)
+            await self.send(
+                int(chat_id),
+                "Episode queue item cancelled."
+                if removed
+                else "Episode could not be cancelled.",
+            )
+            return
         if action.startswith("folders:"):
             try:
                 page = max(0, int(action.partition(":")[2]))
@@ -1477,6 +1475,9 @@ class BotApp:
                 await self.send(int(chat_id), "This confirmation expired. Please try again.")
                 return
             self.imdb_choices.pop(token, None)
+            if choice.get("mode") == "queue":
+                await self._confirm_series_queue_choice(int(chat_id), choice)
+                return
             choice_library_key = str(choice.get("library_key") or "")
             if (
                 choice_library_key
@@ -1526,7 +1527,16 @@ class BotApp:
             choice = self.imdb_choices.get(token)
             if choice and int(choice.get("chat_id", 0)) == int(chat_id):
                 self.imdb_choices.pop(token, None)
-            await self.send(int(chat_id), "Folder change cancelled.", CHANNEL_MENU)
+            if choice and choice.get("mode") == "queue":
+                pending_id = int(choice.get("pending_id") or 0)
+                await self.send(
+                    int(chat_id),
+                    "Episode destination was not confirmed. Choose a manual "
+                    "fallback or cancel the queued episode.",
+                    self._series_identification_markup(pending_id),
+                )
+            else:
+                await self.send(int(chat_id), "Folder change cancelled.", CHANNEL_MENU)
             return
         handler = handlers.get(action)
         if handler:
@@ -1538,6 +1548,9 @@ class BotApp:
             await self.cmd_quick_menu(chat_id, "")
             return
         action = reply_category_action(text, REPLY_CATEGORY_ACTIONS)
+        if action == "menu:libraries":
+            await self.cmd_libraries(chat_id, "")
+            return
         submenu = CATEGORY_SUBMENUS.get(action or "")
         if submenu:
             title, markup = submenu
@@ -1564,10 +1577,18 @@ class BotApp:
         except ValueError as exc:
             await self.send(chat_id, f"The file was not added to the queue: {exc}")
             return
+        caption = str(message.get("caption") or "").strip()
         if self._media_mode(chat_id) == "movie":
-            await self._queue_movie_for_identification(chat_id, message, media, filename)
+            await self._queue_movie_for_identification(
+                chat_id, message, media, filename, caption
+            )
             return
         library = self._selected_library(chat_id, "series")
+        if self.config.n8n_agent_enabled:
+            await self._queue_series_for_identification(
+                chat_id, message, media, filename, caption, library
+            )
+            return
         pending_id = self.queue.add(
             message_id=int(message["message_id"]),
             chat_id=chat_id,
@@ -1608,7 +1629,12 @@ class BotApp:
         return "movie" if mode == "movie" else "series"
 
     async def _queue_movie_for_identification(
-        self, chat_id: int, message: dict, media: dict, filename: str
+        self,
+        chat_id: int,
+        message: dict,
+        media: dict,
+        filename: str,
+        caption: str = "",
     ) -> None:
         if not self.config.movies_configured:
             await self.send(
@@ -1634,13 +1660,28 @@ class BotApp:
         if pending_id is None:
             await self.send(chat_id, "This movie is already registered in the queue.")
             return
-        await self.send(
-            chat_id,
-            f"Movie received but not downloaded yet.\n"
-            f"Queue ID: #{pending_id}\nFilename: {filename}\n\n"
-            "How should I identify it?",
-            self._movie_identification_markup(pending_id),
-        )
+        if self.config.n8n_agent_enabled:
+            await self.send(
+                chat_id,
+                f"Movie received but not downloaded yet.\n"
+                f"Queue ID: #{pending_id}\nFilename: {filename}\n\n"
+                "AI identification started.",
+            )
+            self.track_task(
+                self._run_ai_movie_identification(
+                    chat_id, pending_id, caption
+                ),
+                f"movie-ai-identification:{chat_id}:{pending_id}",
+                chat_id,
+            )
+        else:
+            await self.send(
+                chat_id,
+                f"Movie received but not downloaded yet.\n"
+                f"Queue ID: #{pending_id}\nFilename: {filename}\n\n"
+                "How should I identify it?",
+                self._movie_identification_markup(pending_id),
+            )
 
     @staticmethod
     def _movie_identification_markup(pending_id: int) -> dict:
@@ -1660,6 +1701,300 @@ class BotApp:
                 }],
             ]
         }
+
+    @staticmethod
+    def _series_identification_markup(pending_id: int) -> dict:
+        return {
+            "inline_keyboard": [
+                [{
+                    "text": "Enter series details manually",
+                    "callback_data": f"seriesidentify:manual:{pending_id}",
+                }],
+                [{
+                    "text": "Use current folder without AI",
+                    "callback_data": f"seriesidentify:current:{pending_id}",
+                }],
+                [{
+                    "text": "Cancel episode",
+                    "callback_data": f"seriescancel:{pending_id}",
+                }],
+            ]
+        }
+
+    def _ai_identifier(self) -> N8nMediaIdentifier:
+        if self.ai_identifier is None or not self.ai_identifier.configured:
+            raise RuntimeError(
+                "AI identification is enabled but the n8n webhook client is not ready."
+            )
+        return self.ai_identifier
+
+    async def _run_ai_movie_identification(
+        self, chat_id: int, pending_id: int, caption: str = ""
+    ) -> None:
+        item = self._movie_item_for_chat(pending_id, chat_id)
+        if not item or item.get("status") != "awaiting_identification":
+            return
+        try:
+            result = await self._ai_identifier().identify(
+                chat_id=chat_id,
+                media_kind="movie",
+                library_key=str(item.get("library_key") or ""),
+                filename=str(item["original_filename"]),
+                caption=caption,
+            )
+        except Exception as exc:
+            LOG.warning("n8n movie identification failed for #%s: %s", pending_id, exc)
+            await self.send(
+                chat_id,
+                f"AI identification is unavailable for movie #{pending_id}: {exc}\n\n"
+                "Use filename search or enter the title manually.",
+                self._movie_identification_markup(pending_id),
+            )
+            return
+
+        if result.needs_user_input or not result.title_query:
+            self.movie_manual_pending[chat_id] = pending_id
+            await self.send(
+                chat_id,
+                f"AI needs more information for movie #{pending_id}.\n"
+                f"{result.question or 'Send the full movie title and year.'}\n\n"
+                "Reply with the full movie title, preferably followed by its year.",
+            )
+            return
+
+        query = result.title_query
+        if result.year is not None:
+            query = f"{query} {result.year}"
+        await self.send(
+            chat_id,
+            "AI filename suggestion:\n"
+            f"Title query: {result.title_query}\n"
+            f"Year: {result.year or 'unknown'}\n"
+            f"Confidence: {result.confidence:.0%}\n\n"
+            "Checking the existing IMDb title tool now...",
+        )
+        await self._run_movie_search(
+            chat_id, pending_id, query, manual_query=False
+        )
+
+    async def _queue_series_for_identification(
+        self,
+        chat_id: int,
+        message: dict,
+        media: dict,
+        filename: str,
+        caption: str,
+        library: MediaLibrary,
+    ) -> None:
+        pending_id = self.queue.add(
+            message_id=int(message["message_id"]),
+            chat_id=chat_id,
+            file_id=media["file_id"],
+            file_unique_id=media["file_unique_id"],
+            original_filename=filename,
+            file_size=media.get("file_size"),
+            received_at=datetime.now(timezone.utc).isoformat(),
+            target_folder=None,
+            library_key=library.key,
+            media_kind="series",
+            status="awaiting_identification",
+        )
+        if pending_id is None:
+            await self.send(chat_id, "This video is already registered in the queue.")
+            return
+        await self.send(
+            chat_id,
+            f"Episode received but not downloaded yet.\n"
+            f"Queue ID: #{pending_id}\nFilename: {filename}\n"
+            f"Library: {library.name}\n\nAI identification started.",
+        )
+        self.track_task(
+            self._run_ai_series_identification(
+                chat_id, pending_id, caption
+            ),
+            f"series-ai-identification:{chat_id}:{pending_id}",
+            chat_id,
+        )
+
+    def _series_item_for_chat(
+        self, pending_id: int, chat_id: int
+    ) -> dict | None:
+        item = self.store.get_item(pending_id, chat_id=chat_id)
+        if (
+            not item
+            or item.get("media_kind") != "series"
+            or int(item.get("chat_id") or 0) != chat_id
+        ):
+            return None
+        return item
+
+    async def _run_ai_series_identification(
+        self, chat_id: int, pending_id: int, caption: str = ""
+    ) -> None:
+        item = self._series_item_for_chat(pending_id, chat_id)
+        if not item or item.get("status") != "awaiting_identification":
+            return
+        try:
+            result = await self._ai_identifier().identify(
+                chat_id=chat_id,
+                media_kind="series",
+                library_key=str(item.get("library_key") or ""),
+                filename=str(item["original_filename"]),
+                caption=caption,
+            )
+        except Exception as exc:
+            LOG.warning("n8n series identification failed for #%s: %s", pending_id, exc)
+            await self.send(
+                chat_id,
+                f"AI identification is unavailable for episode #{pending_id}: {exc}\n\n"
+                "Use manual series details or the already selected current folder.",
+                self._series_identification_markup(pending_id),
+            )
+            return
+
+        if (
+            result.needs_user_input
+            or not result.title_query
+            or result.episode is None
+        ):
+            self.series_manual_pending[chat_id] = pending_id
+            await self.send(
+                chat_id,
+                f"AI needs more information for episode #{pending_id}.\n"
+                f"{result.question or 'Send the series title, season, and episode.'}\n\n"
+                "Reply in this format:\nSeries Title | Season | Episode\n"
+                "Example: Dr. Stone | 4 | 25",
+                self._series_identification_markup(pending_id),
+            )
+            return
+
+        await self._continue_series_identification(chat_id, pending_id, result)
+
+    async def _continue_series_identification(
+        self,
+        chat_id: int,
+        pending_id: int,
+        result: MediaIdentification,
+    ) -> None:
+        item = self._series_item_for_chat(pending_id, chat_id)
+        if not item or item.get("status") != "awaiting_identification":
+            return
+        query = str(result.title_query or "").strip()
+        if result.year is not None:
+            query = f"{query} {result.year}"
+        await self.send(
+            chat_id,
+            "AI filename suggestion:\n"
+            f"Series query: {result.title_query}\n"
+            f"Season: {result.season or 1}\n"
+            f"Episode: {result.episode}\n"
+            f"Year: {result.year or 'unknown'}\n"
+            f"Confidence: {result.confidence:.0%}\n\n"
+            "Checking the existing IMDb title tool now...",
+        )
+        await self._run_imdb_search(
+            chat_id,
+            query,
+            "queue",
+            pending_id=pending_id,
+            identity=result,
+        )
+
+    async def _confirm_series_queue_choice(
+        self, chat_id: int, choice: dict
+    ) -> None:
+        pending_id = int(choice.get("pending_id") or 0)
+        item = self._series_item_for_chat(pending_id, chat_id)
+        if not item or item.get("status") != "awaiting_identification":
+            await self.send(chat_id, "This episode is no longer waiting for a folder.")
+            return
+        library_key = str(choice.get("library_key") or "")
+        if str(item.get("library_key") or "") != library_key:
+            await self.send(
+                chat_id,
+                "The queued episode's library changed unexpectedly. Nothing was changed.",
+            )
+            return
+        season = int(choice.get("series_season") or 1)
+        episode = int(choice.get("series_episode") or 0)
+        if episode < 1:
+            await self.send(
+                chat_id,
+                "The episode number is still unknown. Enter the series details manually.",
+                self._series_identification_markup(pending_id),
+            )
+            return
+        try:
+            folder_name = sanitize_folder_name(str(choice["folder_name"]))
+            folder = self.config.target_path(folder_name, library_key)
+            folder.mkdir(parents=True, exist_ok=True)
+            suffix = Path(str(item["original_filename"])).suffix.lower()
+            download_filename = validate_original_filename(
+                f"Incoming - S{season:02d}E{episode:02d}{suffix}"
+            )
+        except (OSError, ValueError) as exc:
+            await self.send(chat_id, f"Could not prepare the series destination: {exc}")
+            return
+        self.series_manual_pending.pop(chat_id, None)
+        self.store.update_item(
+            pending_id,
+            target_folder=folder_name,
+            series_title=str(choice.get("series_title") or "") or None,
+            series_year=choice.get("series_year"),
+            series_season=season,
+            series_episode=episode,
+            download_filename=download_filename,
+            imdb_id=str(choice.get("imdb_id") or "") or None,
+            status="queued",
+            error=None,
+        )
+        if self._chat_setting(chat_id, "current_library_key") == library_key:
+            self._set_chat_setting(chat_id, "current_folder", folder_name)
+        await self.send(
+            chat_id,
+            "Episode identity confirmed.\n"
+            f"Folder: {folder_name}\n"
+            f"Detected: S{season:02d}E{episode:02d}\n"
+            f"Safe incoming name: {download_filename}\n\n"
+            "Use /download to review the destination, then /confirm_download.",
+        )
+
+    async def _run_manual_series_identification(
+        self, chat_id: int, pending_id: int, text: str
+    ) -> None:
+        item = self._series_item_for_chat(pending_id, chat_id)
+        if not item or item.get("status") != "awaiting_identification":
+            await self.send(chat_id, "This episode is no longer waiting for identification.")
+            return
+        parts = [part.strip() for part in text.split("|")]
+        title = ""
+        season: int | None = None
+        episode: int | None = None
+        if len(parts) == 3 and parts[0]:
+            try:
+                season = int(parts[1])
+                episode = int(parts[2])
+            except ValueError:
+                season = episode = None
+            title = parts[0]
+        if not title or not season or not episode or season < 1 or episode < 1:
+            await self.send(
+                chat_id,
+                "I could not read those series details. Use exactly:\n"
+                "Series Title | Season | Episode\nExample: Dr. Stone | 4 | 25",
+                self._series_identification_markup(pending_id),
+            )
+            return
+        result = MediaIdentification(
+            title_query=title[:300],
+            season=season,
+            episode=episode,
+            year=None,
+            confidence=1.0,
+            needs_user_input=False,
+            question=None,
+        )
+        await self._continue_series_identification(chat_id, pending_id, result)
 
     def _movie_item_for_chat(self, pending_id: int, chat_id: int) -> dict | None:
         item = self.store.get_item(pending_id, chat_id=chat_id)
@@ -2111,7 +2446,7 @@ class BotApp:
     async def cmd_quick_menu(self, chat_id: int, _: str) -> None:
         await self.send(
             chat_id,
-            "Download and sorting control menu:",
+            "Main control menu:",
             CHANNEL_MENU,
         )
 
@@ -2513,9 +2848,36 @@ class BotApp:
                 continue
             if await self._import_movie_item(chat_id, current):
                 imported += 1
+        series_targets: set[tuple[str, str]] = set()
+        for original in items:
+            if (
+                original.get("media_kind") != "series"
+                or not original.get("series_episode")
+            ):
+                continue
+            current = self.store.get_item(
+                int(original["pending_id"]), chat_id=chat_id
+            )
+            if not current or current.get("status") != "completed":
+                continue
+            series_targets.add((
+                str(current.get("library_key") or ""),
+                str(current.get("target_folder") or ""),
+            ))
+        series_sorted = False
+        for library_key, folder_name in sorted(series_targets):
+            if folder_name and await self._run_sorter(
+                chat_id, folder_name, library_key
+            ):
+                series_sorted = True
         if (
-            imported
-            and self.config.scan_after_movie_import
+            (
+                (imported and self.config.scan_after_movie_import)
+                or (
+                    series_sorted
+                    and self.config.scan_after_ai_series_sort
+                )
+            )
             and self.jellyfin
             and self.jellyfin.configured
         ):
@@ -2632,7 +2994,9 @@ class BotApp:
         part_count = 0
         for item in all_items:
             try:
-                filename = validate_original_filename(item["original_filename"])
+                filename = validate_original_filename(
+                    item.get("download_filename") or item["original_filename"]
+                )
                 if item.get("media_kind") == "movie":
                     part = self.config.movie_staging_job_path(
                         int(item["pending_id"])
@@ -2652,13 +3016,15 @@ class BotApp:
             1 for owner in self.task_chat_ids.values() if owner == chat_id
         )
         selected_library = self._selected_library(chat_id)
+        ai_status = "enabled" if self.config.n8n_agent_enabled else "disabled"
         await self.send(
             chat_id,
             f"Current library: {selected_library.name}\n"
             f"Mode: {selected_library.media_kind}\n"
             + (text or "No files have been registered yet.")
             + f"\nIncomplete .part files: {part_count}"
-            + f"\nTracked background tasks: {active}",
+            + f"\nTracked background tasks: {active}"
+            + f"\nAI identification: {ai_status}",
         )
 
     async def cmd_cancel(self, chat_id: int, _: str) -> None:
@@ -2698,7 +3064,7 @@ class BotApp:
 
     async def _run_sorter(
         self, chat_id: int, folder_name: str, library_key: str | None = None
-    ) -> None:
+    ) -> bool:
         try:
             library = self.config.library(
                 library_key or self._selected_library(chat_id, "series").key,
@@ -2707,7 +3073,7 @@ class BotApp:
             folder = self.config.target_path(folder_name, library.key)
             if not folder.is_dir():
                 await self.send(chat_id, f"Folder not found:\n{folder}")
-                return
+                return False
             await self.send(chat_id, f"Sorting started:\n{folder}")
             ok, output = await self.sorter.run(
                 folder, chat_id=chat_id, library_key=library.key
@@ -2716,9 +3082,11 @@ class BotApp:
                 chat_id,
                 ("Sorting completed successfully.\n" if ok else "Sorting finished with errors.\n") + output[-3000:],
             )
+            return ok
         except Exception as exc:
             LOG.exception("Sorter error")
             await self.send(chat_id, f"Sorter error: {exc}")
+            return False
 
     async def cmd_sort_current(self, chat_id: int, _: str) -> None:
         if await self._require_library_kind(chat_id, "series") is None:
@@ -3100,10 +3468,28 @@ class BotApp:
             )
 
     async def _run_imdb_search(
-        self, chat_id: int, query: str, mode: str
+        self,
+        chat_id: int,
+        query: str,
+        mode: str,
+        *,
+        pending_id: int | None = None,
+        identity: MediaIdentification | None = None,
     ) -> None:
-        if await self._require_library_kind(chat_id, "series") is None:
-            return
+        queue_item: dict | None = None
+        if mode == "queue":
+            if pending_id is None or identity is None:
+                raise ValueError("Queue IMDb search requires an episode identity.")
+            queue_item = self._series_item_for_chat(pending_id, chat_id)
+            if not queue_item or queue_item.get("status") != "awaiting_identification":
+                return
+            library = self.config.library(
+                str(queue_item.get("library_key") or ""), "series"
+            )
+        else:
+            if await self._require_library_kind(chat_id, "series") is None:
+                return
+            library = self._selected_library(chat_id, "series")
         if not query.strip():
             command = "/imdb_fix_current" if mode == "rename" else "/imdb_search"
             await self.send(chat_id, f"Correct format:\n{command} dr ston")
@@ -3111,7 +3497,6 @@ class BotApp:
         source_folder = (
             self._chat_setting(chat_id, "current_folder") if mode == "rename" else ""
         )
-        library = self._selected_library(chat_id, "series")
         try:
             await self.send(chat_id, f"Searching IMDb for: {query}")
             results, source = await self.imdb.search(query, media_type="series")
@@ -3123,6 +3508,8 @@ class BotApp:
                     "IMDb did not return any results.",
                     source_folder,
                     library.key,
+                    pending_id,
+                    identity,
                 )
                 return
             now = time.time()
@@ -3141,6 +3528,12 @@ class BotApp:
                     "source": source,
                     "source_folder": source_folder,
                     "library_key": library.key,
+                    "pending_id": pending_id,
+                    "series_title": identity.title_query if identity else None,
+                    "series_year": identity.year if identity else None,
+                    "series_season": identity.season if identity else None,
+                    "series_episode": identity.episode if identity else None,
+                    "imdb_id": result.get("imdb_id"),
                 }
                 title = str(result["title"])
                 year = result.get("year") or "?"
@@ -3172,13 +3565,21 @@ class BotApp:
                 f"Optional IMDb search is not available: {exc}",
                 source_folder,
                 library.key,
+                pending_id,
+                identity,
             )
 
     async def _offer_folder_confirmation(
         self, chat_id: int, token: str, choice: dict
     ) -> None:
         source = choice.get("source", "IMDb fuzzy search")
-        action = "Rename current folder" if choice["mode"] == "rename" else "Set destination"
+        action = (
+            "Rename current folder"
+            if choice["mode"] == "rename"
+            else "Queue episode in this destination"
+            if choice["mode"] == "queue"
+            else "Set destination"
+        )
         await self.send(
             chat_id,
             f"Suggested folder name:\n{choice['folder_name']}\n\n"
@@ -3205,6 +3606,8 @@ class BotApp:
         reason: str,
         source_folder: str = "",
         library_key: str = "",
+        pending_id: int | None = None,
+        identity: MediaIdentification | None = None,
     ) -> None:
         try:
             manual_name = sanitize_folder_name(entered_name)
@@ -3221,6 +3624,11 @@ class BotApp:
             "source_folder": source_folder,
             "library_key": library_key
             or self._selected_library(chat_id, "series").key,
+            "pending_id": pending_id,
+            "series_title": identity.title_query if identity else None,
+            "series_year": identity.year if identity else None,
+            "series_season": identity.season if identity else None,
+            "series_episode": identity.episode if identity else None,
         }
         self.imdb_choices[token] = choice
         await self.send(

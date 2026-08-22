@@ -25,6 +25,7 @@ class ImdbFuzzySearchBridge:
     def __init__(self, config: Config):
         self.config = config
         self.active = False
+        self._lock = asyncio.Lock()
 
     def build_command(
         self, query: str, limit: int = 8, media_type: str = "any"
@@ -59,9 +60,11 @@ class ImdbFuzzySearchBridge:
     async def search(
         self, query: str, limit: int = 8, media_type: str = "any"
     ) -> tuple[list[dict], str]:
-        if self.active:
-            raise RuntimeError("Another IMDb search is already running.")
+        # Multiple Telegram files may finish AI identification together. Queue
+        # their optional IMDb lookups instead of turning concurrency into a
+        # false search failure and forcing the user into manual mode.
         command = self.build_command(query, limit, media_type)
+        await self._lock.acquire()
         self.active = True
         process: asyncio.subprocess.Process | None = None
         try:
@@ -95,6 +98,7 @@ class ImdbFuzzySearchBridge:
             raise
         finally:
             self.active = False
+            self._lock.release()
 
 
 _RELEASE_CUTOFF = re.compile(

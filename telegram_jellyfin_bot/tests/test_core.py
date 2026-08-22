@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from telegram_jellyfin_bot.config import load_config
 from telegram_jellyfin_bot.bot import (
+    ADVANCED_MENU,
     BOT_COMMANDS,
     BotApp,
     CHANNEL_MENU,
@@ -31,6 +32,7 @@ from telegram_jellyfin_bot.episode_catalog import (
 )
 from telegram_jellyfin_bot.jellyfin_bridge import JellyfinBridge
 from telegram_jellyfin_bot.imdb_bridge import movie_query_from_filename
+from telegram_jellyfin_bot.n8n_bridge import MediaIdentification
 from telegram_jellyfin_bot.queue_manager import QueueManager
 from telegram_jellyfin_bot.sorter_bridge import SorterBridge
 from telegram_jellyfin_bot.state_store import StateStore
@@ -768,6 +770,222 @@ class MovieWorkflowTests(unittest.TestCase):
         asyncio.run(exercise())
 
 
+class AiIdentificationWorkflowTests(unittest.TestCase):
+    def test_completed_ai_series_download_is_sorted_automatically(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sorted_targets = []
+
+                pending_id = app.queue.add(
+                    message_id=3,
+                    chat_id=987654321,
+                    file_id="series-file",
+                    file_unique_id="series-unique",
+                    original_filename="episode.mkv",
+                    file_size=100,
+                    target_folder="Dr. Stone (2019) [imdbid-tt9679542]",
+                    library_key="series",
+                    media_kind="series",
+                    status="queued",
+                )
+                app.store.update_item(
+                    pending_id,
+                    series_season=4,
+                    series_episode=25,
+                    download_filename="Incoming - S04E25.mkv",
+                )
+
+                class FakeDownloader:
+                    async def run(self, items, notify):
+                        app.store.update_item(pending_id, status="completed")
+
+                async def fake_sorter(chat_id, folder_name, library_key=None):
+                    sorted_targets.append((chat_id, folder_name, library_key))
+                    return True
+
+                app.downloader = FakeDownloader()
+                app._run_sorter = fake_sorter
+                try:
+                    await app._run_downloads_and_movie_imports(
+                        987654321, [app.store.get_item(pending_id)]
+                    )
+                    self.assertEqual(
+                        sorted_targets,
+                        [(
+                            987654321,
+                            "Dr. Stone (2019) [imdbid-tt9679542]",
+                            "series",
+                        )],
+                    )
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_ai_series_identity_becomes_a_confirmed_sorter_safe_queue_item(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                data = config_data(root)
+                data.update({
+                    "n8n_agent_enabled": True,
+                    "n8n_agent_url": "http://n8n:5678/webhook/media-identify",
+                    "n8n_agent_secret": "test-secret",
+                })
+                path = root / "config.json"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                class FakeIdentifier:
+                    configured = True
+
+                    async def identify(self, **kwargs):
+                        self.kwargs = kwargs
+                        return MediaIdentification(
+                            title_query="Dr. Stone",
+                            season=4,
+                            episode=25,
+                            year=2026,
+                            confidence=0.96,
+                            needs_user_input=False,
+                            question=None,
+                        )
+
+                class FakeIMDb:
+                    async def search(self, query, media_type="any"):
+                        self.query = query
+                        self.media_type = media_type
+                        return ([{
+                            "title": "Dr. Stone",
+                            "year": 2019,
+                            "score": 98,
+                            "imdb_id": "tt9679542",
+                            "folder_name": "Dr. Stone (2019) [imdbid-tt9679542]",
+                        }], "test IMDb")
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append((text, reply_markup))
+
+                app.ai_identifier = FakeIdentifier()
+                app.imdb = FakeIMDb()
+                app.send = fake_send
+                try:
+                    pending_id = app.queue.add(
+                        message_id=1,
+                        chat_id=987654321,
+                        file_id="file-id",
+                        file_unique_id="unique-id",
+                        original_filename="[AWHT] Dr. Stone S4 - 25 [480p].mkv",
+                        file_size=100,
+                        received_at="2026-08-22T00:00:00+00:00",
+                        target_folder=None,
+                        library_key="series",
+                        media_kind="series",
+                        status="awaiting_identification",
+                    )
+                    await app._run_ai_series_identification(
+                        987654321, pending_id, ""
+                    )
+                    self.assertEqual(len(app.imdb_choices), 1)
+                    choice = next(iter(app.imdb_choices.values()))
+                    await app._confirm_series_queue_choice(987654321, choice)
+
+                    item = app.store.get_item(pending_id, chat_id=987654321)
+                    self.assertEqual(item["status"], "queued")
+                    self.assertEqual(item["series_season"], 4)
+                    self.assertEqual(item["series_episode"], 25)
+                    self.assertEqual(item["download_filename"], "Incoming - S04E25.mkv")
+                    self.assertEqual(
+                        item["target_folder"],
+                        "Dr. Stone (2019) [imdbid-tt9679542]",
+                    )
+                    self.assertTrue(cfg.target_path(item["target_folder"]).is_dir())
+                    self.assertTrue(any("Episode identity confirmed" in text for text, _ in sent))
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_ai_movie_identity_is_handed_to_existing_imdb_confirmation(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                data = config_data(root)
+                data.update({
+                    "n8n_agent_enabled": True,
+                    "n8n_agent_url": "http://n8n:5678/webhook/media-identify",
+                })
+                path = root / "config.json"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+
+                class FakeIdentifier:
+                    configured = True
+
+                    async def identify(self, **kwargs):
+                        return MediaIdentification(
+                            title_query="The Last Whale Singer",
+                            season=None,
+                            episode=None,
+                            year=2025,
+                            confidence=0.93,
+                            needs_user_input=False,
+                            question=None,
+                        )
+
+                class FakeIMDb:
+                    async def search(self, query, media_type="any"):
+                        self.query = query
+                        return ([{
+                            "title": "The Last Whale Singer",
+                            "year": 2025,
+                            "score": 97,
+                            "imdb_id": "tt13518550",
+                            "folder_name": (
+                                "The Last Whale Singer (2025) "
+                                "[imdbid-tt13518550]"
+                            ),
+                        }], "test IMDb")
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    return None
+
+                app.ai_identifier = FakeIdentifier()
+                app.imdb = FakeIMDb()
+                app.send = fake_send
+                try:
+                    pending_id = app.queue.add(
+                        message_id=2,
+                        chat_id=987654321,
+                        file_id="movie-file",
+                        file_unique_id="movie-unique",
+                        original_filename="The.Last.Whale.Singer.1080p.mkv",
+                        file_size=100,
+                        received_at="2026-08-22T00:00:00+00:00",
+                        target_folder=None,
+                        library_key="movies",
+                        media_kind="movie",
+                        status="awaiting_identification",
+                    )
+                    await app._run_ai_movie_identification(
+                        987654321, pending_id, ""
+                    )
+                    self.assertIn("The Last Whale Singer 2025", app.imdb.query)
+                    self.assertEqual(len(app.movie_choices), 1)
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+
 class MenuNavigationTests(unittest.TestCase):
     def test_native_command_menu_is_grouped_by_related_function(self):
         labels = [
@@ -800,7 +1018,12 @@ class MenuNavigationTests(unittest.TestCase):
         self.assertLessEqual(len(GUIDE_EN), 4000)
         self.assertLessEqual(len(GUIDE_FA), 4000)
         self.assertIn("How to use", GUIDE_EN)
+        self.assertIn("NORMAL WORKFLOW", GUIDE_EN)
+        self.assertIn("ADVANCED WORKFLOW", GUIDE_EN)
+        self.assertIn("If n8n is unavailable", GUIDE_EN)
         self.assertIn("راهنمای استفاده", GUIDE_FA)
+        self.assertIn("روش عادی", GUIDE_FA)
+        self.assertIn("روش پیشرفته", GUIDE_FA)
 
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
@@ -895,9 +1118,8 @@ class MenuNavigationTests(unittest.TestCase):
                         for row in markup.get("keyboard", markup.get("inline_keyboard", []))
                         for button in row
                     }
-                    self.assertIn("سریال‌ها", all_button_texts)
-                    self.assertIn("فیلم‌ها", all_button_texts)
-                    self.assertIn("⚡ منوی سریع", all_button_texts)
+                    self.assertIn("🗄 انتخاب کتابخانه", all_button_texts)
+                    self.assertIn("🧰 پیشرفته", all_button_texts)
 
                     await app.handle_reply_category(
                         987654321, "🧹 مرتب‌سازی"
@@ -978,13 +1200,13 @@ class MenuNavigationTests(unittest.TestCase):
                     await app.cmd_menu(-100123, "")
                     self.assertEqual(len(sent), 1)
                     self.assertIs(sent[0][2], CHANNEL_MENU)
-                    self.assertTrue(
-                        any(
-                            button.get("callback_data") == "nav:categories"
-                            for row in CHANNEL_MENU["inline_keyboard"]
-                            for button in row
-                        )
-                    )
+                    callbacks = {
+                        button.get("callback_data")
+                        for row in CHANNEL_MENU["inline_keyboard"]
+                        for button in row
+                    }
+                    self.assertIn("nav:advanced", callbacks)
+                    self.assertIn("menu:libraries", callbacks)
                 finally:
                     app.store.close()
         asyncio.run(exercise())
@@ -1023,14 +1245,66 @@ class MenuNavigationTests(unittest.TestCase):
                     app.store.close()
         asyncio.run(exercise())
 
-    def test_series_category_is_available_beside_movies(self):
+    def test_reply_keyboard_choose_library_opens_picker(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    sent.append((chat_id, text, reply_markup))
+
+                app.send = fake_send
+                try:
+                    await app.handle_update(
+                        {
+                            "message": {
+                                "message_id": 1,
+                                "chat": {
+                                    "id": 987654321,
+                                    "type": "private",
+                                },
+                                "text": "🗄 Choose Library",
+                            }
+                        }
+                    )
+                    self.assertEqual(len(sent), 1)
+                    self.assertIn("Current library:", sent[0][1])
+                    callbacks = {
+                        button.get("callback_data")
+                        for row in sent[0][2]["inline_keyboard"]
+                        for button in row
+                    }
+                    self.assertTrue(any(
+                        callback and callback.startswith("library:")
+                        for callback in callbacks
+                    ))
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_series_and_movie_tools_are_inside_advanced(self):
         labels = [
             button["text"]
             for row in PERSISTENT_CATEGORY_KEYBOARD["keyboard"]
             for button in row
         ]
-        self.assertIn("Series", labels)
-        self.assertIn("Movies", labels)
+        self.assertEqual(
+            labels,
+            [
+                "📥 Downloads",
+                "📺 Episodes",
+                "🎬 Jellyfin",
+                "⚙️ Bot",
+                "🗄 Choose Library",
+                "🧰 Advanced",
+            ],
+        )
 
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
@@ -1054,18 +1328,19 @@ class MenuNavigationTests(unittest.TestCase):
                                     "id": 987654321,
                                     "type": "private",
                                 },
-                                "text": "Series",
+                                "text": "🧰 Advanced",
                             }
                         }
                     )
                     self.assertEqual(len(sent), 1)
-                    self.assertIs(sent[0][2], SERIES_MENU)
+                    self.assertIs(sent[0][2], ADVANCED_MENU)
                     callbacks = {
                         button.get("callback_data")
-                        for row in SERIES_MENU["inline_keyboard"]
+                        for row in ADVANCED_MENU["inline_keyboard"]
                         for button in row
                     }
-                    self.assertIn("menu:series_mode", callbacks)
+                    self.assertIn("nav:series", callbacks)
+                    self.assertIn("nav:movies", callbacks)
                 finally:
                     app.store.close()
 

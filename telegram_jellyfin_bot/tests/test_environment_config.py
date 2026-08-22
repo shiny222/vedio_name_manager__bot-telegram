@@ -91,6 +91,21 @@ class EnvironmentConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "CONFIRM_BEFORE_DOWNLOAD"):
                 load_config(create_from_example=False)
 
+    def test_rejects_n8n_workflow_editor_url(self) -> None:
+        environment = {
+            "VIDEO_MANAGER_CONFIG_MODE": "env",
+            "BOT_TOKEN": "123456:test-token",
+            "JELLYFIN_LIBRARY_PATH": tempfile.gettempdir(),
+            "N8N_AGENT_ENABLED": "true",
+            "N8N_AGENT_URL": (
+                "http://192.168.40.240:5678/workflow/abxzYfInm2MCIULx"
+                "?projectId=5q0624YYLioV2fru"
+            ),
+        }
+        with mock.patch.dict(os.environ, environment, clear=True):
+            with self.assertRaisesRegex(ValueError, "n8n editor"):
+                load_config(create_from_example=False)
+
 
 if __name__ == "__main__":
     unittest.main()

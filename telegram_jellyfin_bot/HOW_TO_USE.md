@@ -1,212 +1,319 @@
 # How to Use the Telegram Jellyfin Bot
 
-The same guide is available inside Telegram with `/guide`.
+The same short guide is available inside Telegram with `/guide`. Use
+`/language` to select English or فارسی for the current chat.
 
-Use `/language` at any time to choose English or فارسی for the current chat.
-The bot remembers the choice after a restart.
+The bot has two ways to work:
+
+1. **Normal — AI assisted:** select a library, send media, review the suggested
+   identity and destination, confirm, and download.
+2. **Advanced — manual and recovery tools:** correct a wrong identity, manage
+   folders, sort or rename files, repair metadata, resolve conflicts, and undo
+   changes. These tools do not depend on AI.
+
+AI identification must be enabled in the deployment `.env`. If n8n is
+unavailable, the bot keeps the item undownloaded and offers the existing manual
+fallback instead of guessing or changing the selected library.
 
 ## English
 
-### 1. Start the services
+### Main menu
 
-On the computer running the bot:
+Send `/menu`. The main buttons are:
 
-1. Start `run_local_bot_api.bat` and leave it open.
-2. Start `run.bat` and leave it open.
+- **Downloads** — inspect the queue, prepare downloads, confirm, or cancel.
+- **Episodes** — see which episodes are already in a series or library.
+- **Jellyfin** — scan the libraries or check the Jellyfin connection.
+- **Bot** — status, language, command list, and this guide.
+- **Choose Library** — choose the destination that this chat will remember.
+- **Advanced** — open manual, correction, and recovery tools.
 
-### 2. Open the controls
+Private chats and groups receive these as a persistent keyboard. Channels get
+the same choices as inline buttons. Opening a menu does not create a Telegram
+topic, and replies remain in the topic where the request originated.
 
-Send `/menu`. Private chats, groups, and supergroups receive the persistent
-category keyboard. Telegram does not support that keyboard in channels, so a
-channel uses the **Command categories** inline button instead.
+Each chat has independent settings, queue, confirmations, and history. Members
+of one Telegram group share that group's state.
 
-Use **Series** to return to episode mode or access common series actions. Use
-**Movies** for the independent movie workflow.
+## Normal workflow — AI assisted
 
-In chats with topics enabled, the bot replies in the same existing topic where
-you sent the command or file. Opening a category does not create a new topic.
+### 1. Choose the destination once
 
-### 3. Select a series
+Press **Choose Library** and select one of:
 
-- Send `/libraries` and choose the correct Series library. This automatically
-  enables series mode for this chat.
-- Send `/folders` to select an existing series.
-- Send `/setfolder SERIES NAME` to search for and create a new series folder.
-- Confirm the IMDb suggestion or select the manual name.
-- Send `/folder` to verify the current selection.
+- Animation Series
+- Animation Movies
+- Video Series
+- Video Movies
 
-Every chat has its own current folder, queue, confirmations, status, and undo
-batches. No chat can remove, cancel, download, or undo another chat's items.
-Members inside one Telegram group share that group's state.
+The selection remains active for this chat until you change it. Selecting a
+series library also selects series mode; selecting a movie library selects
+movie mode. AI is never allowed to choose or change the library.
 
-### 4. Queue and download episodes
+### 2. Send media
 
-Send supported video files to the bot chat or channel. Then use:
+Send one or several supported videos. You can queue multiple files before
+downloading them together.
 
-```text
-/queue
-/download
-/confirm_download
-```
+When AI integration is enabled, the bot sends only the filename, optional
+caption, media kind, and selected library key to the n8n identification
+workflow. The AI suggests:
 
-If the destination exists, use:
+- movie title and year; or
+- series title, season, and episode.
 
-```text
-/resolve ID skip
-/resolve ID overwrite
-/resolve ID save_with_suffix
-```
+The existing IMDb fuzzy-search tool can then find the official Jellyfin folder
+identity. The AI does not download, move, rename, delete, or scan anything.
 
-### 5. Organize the series
+### 3. Review and confirm
 
-- `/sort_current` sorts new loose files.
-- `/resort_current` corrects previously sorted episode names after the series
-  folder has been renamed.
-- `/fix_metadata_current` manually aligns episode NFO and artwork names.
-- `/sort_history` shows the current series revisions.
+Before downloading, review the bot's proposed identity, clean name, destination
+library, folder, file count, and approximate size.
 
-Afterward, use `/jellyfin_scan`. The bot monitors Jellyfin and sends another
-message when the scan completes and the latest library state is ready. Use
-`/jellyfin_status` to check live progress.
+- If correct, confirm it.
+- If uncertain, the bot should ask one short question.
+- If the AI or IMDb service is unavailable, use the offered manual name or open
+  **Advanced**. Failure must not silently select a different library.
 
-### 6. Check episodes
+### 4. Download the queue
 
-- `/episodes` shows the current series.
-- `/episodes NAME` shows another series.
-- `/library_episodes` summarizes the complete library.
+Open **Downloads**:
 
-### 7. Undo and recover
+1. **Queue** — verify every item.
+2. **Download** — build the final plan.
+3. **Confirm** — start only after reviewing the destination.
 
-- `/sort_back` undoes the latest applied current-series revision.
-- `/sort_forward` reapplies an undone revision.
-- `/undo_sort_batch ID` undoes one technical batch.
-- `/recover_current` manually checks only the current series for operations
-  interrupted by a crash or power loss.
+The bot downloads incomplete data as `.part`, verifies the completed file, and
+never overwrites silently. Movies are staged and then imported safely.
+AI-confirmed series episodes are organized automatically after their downloads
+finish.
 
-Always check `/folder` first. Do not delete `.rename_history.json` files while
-you need rollback, and use `/renamefolder` or `/imdb_fix_current` instead of
-renaming an organized series directly in Windows Explorer.
+### 5. Refresh and check
 
-### 8. Import a movie
+- Open **Jellyfin → Scan library** when an automatic scan did not run.
+- The bot reports when Jellyfin finishes scanning.
+- Open **Episodes** to check the current series or all series libraries.
 
-Movie mode can use either configured movie library and does not use the current
-series folder. Every queued movie remembers the selected library.
+You normally need to choose the library only again when you want a different
+destination.
 
-1. Send `/libraries`, choose the correct Movie library, then send a movie video.
-2. Choose filename search or manual search.
-3. Select the correct IMDb result and confirm the preview. If IMDb is
-   unavailable during manual search, you can confirm your manual title.
-4. Send `/download`, then `/confirm_download`.
-5. The bot downloads to staging, verifies the import plan, moves the movie with
-   no overwrite, and can scan Jellyfin automatically.
+## Advanced workflow — no AI required
 
-Use `/movie_current` for its status, `/movie_import ID` to retry a staged file,
-and `/movie_undo_last` to return the latest import to staging. Send
-`/series_mode` before sending episodes again.
+Open **Advanced** when identification is wrong, a filename is unusual, a folder
+needs correction, or an interrupted operation needs repair.
+
+### Folders
+
+- **Current folder** or `/folder` — check the active series folder.
+- **Pick existing** or `/folders` — add episodes to an existing series.
+- `/setfolder NAME` — manually create/select a series folder.
+- `/usefolder NAME` — select an existing folder by name.
+- `/renamefolder NAME` — safely rename the current series folder.
+- `/unsetfolder` — clear the current folder selection.
+
+Choosing or changing a folder is for series. Movies remember their library and
+receive their own folder during import.
+
+### Manual title correction
+
+- `/imdb_search NAME` — search for an official title manually.
+- `/imdb_fix_current [NAME]` — repair the current series folder name.
+- For a movie awaiting identification, choose **Enter name manually** and
+  provide a title, optionally with a year.
+
+Use manual input when the filename contains no usable title or the AI/IMDb
+result is wrong. Always review the proposed folder name before confirming.
+
+### Sorting and metadata repair
+
+- `/sort_current` — organize new loose episodes in the current folder.
+- `/sort_latest` — organize the latest downloaded series folder.
+- `/sort_folder PATH` — run the sorter for a specific valid folder.
+- `/resort_current` — rename previously sorted episodes after fixing the
+  series folder name. The year and IMDb ID stay in the folder name, not in
+  episode filenames.
+- `/fix_metadata_current` — manually align episode NFO and artwork names.
+- `/sort_status` — show the latest sorter result.
+
+### Conflicts and queue repair
+
+- `/remove ID` — remove one queued item.
+- `/clearqueue` — remove eligible queued items for this chat.
+- `/resolve ID skip` — leave an existing destination untouched.
+- `/resolve ID save_with_suffix` — keep both files safely.
+- `/resolve ID overwrite` — replace only after explicit confirmation.
+- `/movie_current` — show the latest movie job.
+- `/movie_import ID` — retry a movie that is safely waiting in staging.
+- `/movie_cancel ID` — cancel an unprocessed movie job.
+
+### Undo and recovery
+
+- `/sort_history` — inspect current-folder revisions.
+- `/sort_back` — undo one applied revision.
+- `/sort_forward` — reapply one undone revision.
+- `/undo_sort_batch ID` — undo a known sorter batch.
+- `/movie_undo_last` — return the latest movie import to staging.
+- `/movie_undo_batch ID` — undo a known movie-import batch.
+- `/recover_current` — manually inspect and reconcile only the current series
+  after a crash or power loss.
+
+Undo never overwrites the original path. Keep every `.rename_history.json`
+while rollback may be needed.
+
+### Safety checklist
+
+- Verify **Choose Library** before confirming a download.
+- For manual series work, verify `/folder` before sorting or renaming.
+- Use the bot's rename and IMDb-fix commands instead of renaming an organized
+  series directly in the file manager.
+- Do not delete staging files or history files while an import or undo may need
+  them.
+- If a result is uncertain, stop before download and use Advanced tools.
 
 ---
 
 ## فارسی
 
-### ۱. اجرای سرویس‌ها
+ربات دو روش استفاده دارد:
 
-روی کامپیوتری که ربات را اجرا می‌کند:
+1. **عادی — با کمک هوش مصنوعی:** کتابخانه را انتخاب کنید، فایل را بفرستید،
+   نتیجه و مقصد پیشنهادی را بررسی و تأیید کنید و سپس دانلود را شروع کنید.
+2. **پیشرفته — ابزار دستی و بازیابی:** برای اصلاح تشخیص اشتباه، مدیریت پوشه،
+   مرتب‌سازی، اصلاح متادیتا، حل تداخل و بازگردانی تغییرات. این ابزارها به هوش
+   مصنوعی وابسته نیستند.
 
-1. فایل `run_local_bot_api.bat` را اجرا کنید و باز نگه دارید.
-2. فایل `run.bat` را اجرا کنید و باز نگه دارید.
+تشخیص AI باید در فایل `.env` استقرار فعال شود. اگر n8n در دسترس نباشد، ربات
+فایل را دانلود نمی‌کند و به‌جای حدس زدن یا تغییر کتابخانه، روش دستی موجود را
+پیشنهاد می‌دهد.
 
-### ۲. باز کردن کنترل‌ها
+### منوی اصلی
 
-دستور `/menu` را ارسال کنید. در گفت‌وگوی خصوصی، گروه و سوپرگروه، صفحه‌کلید
-دائمی دسته‌بندی‌ها نمایش داده می‌شود. تلگرام این صفحه‌کلید را در کانال
-پشتیبانی نمی‌کند؛ بنابراین در کانال از دکمه **Command categories** استفاده
-کنید.
+دستور `/menu` را ارسال کنید. دکمه‌های اصلی عبارت‌اند از:
 
-برای بازگشت به حالت قسمت‌ها و دسترسی به کارهای رایج سریال از **سریال‌ها** و
-برای روند مستقل فیلم از **فیلم‌ها** استفاده کنید.
+- **دانلودها** — مشاهده صف، آماده‌سازی، تأیید یا لغو دانلود.
+- **قسمت‌ها** — مشاهده قسمت‌های موجود سریال‌ها.
+- **Jellyfin** — اسکن کتابخانه یا بررسی اتصال.
+- **ربات** — وضعیت، زبان، فهرست دستورها و راهنما.
+- **انتخاب کتابخانه** — انتخاب مقصدی که برای همین چت ذخیره می‌شود.
+- **پیشرفته** — ابزارهای دستی، اصلاح و بازیابی.
 
-در چت‌هایی که موضوع (Topic) فعال است، ربات در همان موضوعی پاسخ می‌دهد که
-دستور یا فایل را در آن فرستادید. باز کردن دسته‌بندی موضوع جدیدی ایجاد نمی‌کند.
+در چت خصوصی و گروه این گزینه‌ها به‌صورت صفحه‌کلید دائمی و در کانال به‌صورت
+دکمه شیشه‌ای نمایش داده می‌شوند. ربات موضوع جدیدی ایجاد نمی‌کند و پاسخ را در
+همان موضوعی می‌فرستد که درخواست از آن آمده است.
 
-### ۳. انتخاب سریال
+## روش عادی — با کمک هوش مصنوعی
 
-- دستور `/libraries` را بفرستید و کتابخانه Series درست را انتخاب کنید. حالت
-  سریال برای همین چت به‌صورت خودکار فعال می‌شود.
-- برای انتخاب یک سریال موجود، `/folders` را ارسال کنید.
-- برای جستجو و ساخت پوشه جدید، `/setfolder SERIES NAME` را ارسال کنید.
-- پیشنهاد IMDb را تأیید کنید یا نام دستی را انتخاب کنید.
-- با `/folder` انتخاب فعلی را بررسی کنید.
+### ۱. یک بار کتابخانه را انتخاب کنید
 
-هر چت پوشه فعلی، صف، تأییدها، وضعیت و دسته‌های بازگردانی مستقل خودش را دارد.
-هیچ چتی نمی‌تواند موارد چت دیگر را حذف، لغو، دانلود یا بازگردانی کند. اعضای
-یک گروه تلگرام، وضعیت همان گروه را با یکدیگر به اشتراک می‌گذارند.
+**انتخاب کتابخانه** را بزنید و یکی از چهار مقصد را انتخاب کنید:
 
-### ۴. صف و دانلود قسمت‌ها
+- Animation Series
+- Animation Movies
+- Video Series
+- Video Movies
 
-فایل‌های ویدیویی پشتیبانی‌شده را در چت یا کانال ربات ارسال کنید. سپس:
+این انتخاب تا زمانی که خودتان آن را تغییر ندهید برای همان چت باقی می‌ماند.
+کتابخانه سریال حالت سریال و کتابخانه فیلم حالت فیلم را فعال می‌کند. هوش
+مصنوعی اجازه انتخاب یا تغییر کتابخانه را ندارد.
 
-```text
-/queue
-/download
-/confirm_download
-```
+### ۲. فایل‌ها را ارسال کنید
 
-اگر فایل مقصد از قبل وجود داشت:
+یک یا چند فایل ویدیویی پشتیبانی‌شده بفرستید. می‌توانید چند فایل را وارد صف
+کنید و همه را با هم دانلود کنید.
 
-```text
-/resolve ID skip
-/resolve ID overwrite
-/resolve ID save_with_suffix
-```
+پس از فعال شدن اتصال AI، ربات فقط نام فایل، کپشن اختیاری، نوع رسانه و کلید
+کتابخانه انتخاب‌شده را برای تشخیص به n8n می‌فرستد. نتیجه پیشنهادی شامل نام و
+سال فیلم یا نام سریال و شماره فصل و قسمت است. سپس ابزار جستجوی تقریبی IMDb
+می‌تواند نام رسمی مناسب Jellyfin را پیدا کند. هوش مصنوعی اجازه دانلود، جابه‌جایی،
+تغییر نام، حذف یا اسکن را ندارد.
 
-### ۵. مرتب‌سازی سریال
+### ۳. نتیجه را بررسی و تأیید کنید
 
-- `/sort_current` فایل‌های جدید و مرتب‌نشده را مرتب می‌کند.
-- `/resort_current` بعد از اصلاح نام پوشه سریال، نام قسمت‌های قبلی را اصلاح
-  می‌کند.
-- `/fix_metadata_current` نام NFO و تصویرهای مربوط به قسمت‌ها را به‌صورت دستی
-  هماهنگ می‌کند.
-- `/sort_history` نسخه‌های مرتب‌سازی سریال فعلی را نمایش می‌دهد.
+پیش از دانلود، نام تشخیص‌داده‌شده، نام تمیز، کتابخانه و پوشه مقصد، تعداد
+فایل‌ها و حجم تقریبی را بررسی کنید.
 
-بعد از آن از `/jellyfin_scan` استفاده کنید. ربات وضعیت Jellyfin را بررسی
-می‌کند و پس از پایان اسکن و آماده شدن آخرین وضعیت کتابخانه، پیام دیگری
-می‌فرستد. برای مشاهده پیشرفت زنده از `/jellyfin_status` استفاده کنید.
+- اگر درست بود تأیید کنید.
+- اگر اطلاعات کافی نبود، ربات باید فقط یک سؤال کوتاه بپرسد.
+- اگر AI یا IMDb در دسترس نبود، نام دستی را وارد کنید یا **پیشرفته** را باز
+  کنید. خرابی سرویس نباید کتابخانه دیگری را خودکار انتخاب کند.
 
-### ۶. بررسی قسمت‌ها
+### ۴. دانلود را شروع کنید
 
-- `/episodes` قسمت‌های سریال فعلی را نشان می‌دهد.
-- `/episodes NAME` قسمت‌های یک سریال دیگر را نشان می‌دهد.
-- `/library_episodes` خلاصه کل کتابخانه را نمایش می‌دهد.
+در **دانلودها** به‌ترتیب **صف**، **دانلود** و سپس **تأیید** را بزنید. ربات
+فایل ناقص را با پسوند `.part` نگه می‌دارد، فایل کامل را بررسی می‌کند و بدون
+اجازه بازنویسی نمی‌کند. فیلم‌ها ابتدا وارد staging و سپس به‌صورت امن وارد
+کتابخانه می‌شوند. قسمت‌های سریال که با AI تأیید شده‌اند، بعد از پایان دانلود
+به‌صورت خودکار مرتب می‌شوند.
 
-### ۷. بازگردانی و بازیابی
+### ۵. Jellyfin و قسمت‌ها را بررسی کنید
 
-- `/sort_back` آخرین نسخه اعمال‌شده در سریال فعلی را برمی‌گرداند.
-- `/sort_forward` نسخه بازگردانده‌شده را دوباره اعمال می‌کند.
-- `/undo_sort_batch ID` یک Batch ID مشخص را برمی‌گرداند.
-- `/recover_current` فقط پوشه سریال فعلی را برای عملیات ناقص پس از خاموشی یا
-  توقف ناگهانی بررسی می‌کند.
+- اگر اسکن خودکار انجام نشد، **Jellyfin ← اسکن کتابخانه** را بزنید.
+- ربات بعد از پایان اسکن Jellyfin پیام می‌فرستد.
+- از **قسمت‌ها** برای مشاهده سریال فعلی یا همه کتابخانه‌های سریال استفاده کنید.
 
-همیشه ابتدا `/folder` را بررسی کنید. تا زمانی که به قابلیت بازگردانی نیاز
-دارید، فایل‌های `.rename_history.json` را حذف نکنید. برای تغییر نام سریال
-مرتب‌شده از `/renamefolder` یا `/imdb_fix_current` استفاده کنید و پوشه را
-مستقیماً در Windows Explorer تغییر نام ندهید.
+تا وقتی مقصد تغییر نکرده است لازم نیست دوباره کتابخانه را انتخاب کنید.
 
-### ۸. وارد کردن فیلم
+## روش پیشرفته — بدون نیاز به هوش مصنوعی
 
-حالت فیلم می‌تواند از هر یک از کتابخانه‌های Movie تنظیم‌شده استفاده کند و به
-پوشه سریال فعلی وابسته نیست. هر فیلم صف‌شده کتابخانه انتخابی را به خاطر
-می‌سپارد.
+وقتی تشخیص اشتباه است، نام فایل غیرعادی است، پوشه نیاز به اصلاح دارد یا یک
+عملیات ناقص مانده است، **پیشرفته** را باز کنید.
 
-1. دستور `/libraries` را بفرستید، کتابخانه Movie درست را انتخاب کنید و سپس
-   یک فایل فیلم ارسال کنید.
-2. جستجو با نام فایل یا جستجوی دستی را انتخاب کنید.
-3. نتیجه صحیح IMDb را انتخاب و پیش‌نمایش نام را تأیید کنید. اگر IMDb هنگام
-   جستجوی دستی در دسترس نبود، می‌توانید همان نام دستی را تأیید کنید.
-4. ابتدا `/download` و سپس `/confirm_download` را ارسال کنید.
-5. ربات فیلم را ابتدا در staging دانلود می‌کند، برنامه انتقال را بررسی می‌کند،
-   بدون بازنویسی وارد کتابخانه می‌کند و در صورت تنظیم بودن Jellyfin را اسکن
-   می‌کند.
+### پوشه‌ها
 
-برای دیدن وضعیت از `/movie_current`، برای تلاش دوباره فایل staging از
-`/movie_import ID` و برای برگرداندن آخرین انتقال از `/movie_undo_last` استفاده
-کنید. پیش از فرستادن قسمت‌های سریال دوباره `/series_mode` را بفرستید.
+- `/folder` — بررسی پوشه سریال فعلی.
+- `/folders` — انتخاب یک سریال موجود برای افزودن قسمت جدید.
+- `/setfolder NAME` — ساخت یا انتخاب دستی پوشه سریال.
+- `/usefolder NAME` — انتخاب پوشه موجود با نام.
+- `/renamefolder NAME` — تغییر امن نام پوشه سریال فعلی.
+- `/unsetfolder` — پاک کردن انتخاب پوشه فعلی.
+
+### اصلاح دستی عنوان
+
+- `/imdb_search NAME` — جستجوی دستی عنوان رسمی.
+- `/imdb_fix_current [NAME]` — اصلاح نام پوشه سریال فعلی.
+- برای فیلمی که منتظر تشخیص است، **وارد کردن نام دستی** را انتخاب کنید و نام
+  فیلم و در صورت نیاز سال را بنویسید.
+
+### مرتب‌سازی و اصلاح متادیتا
+
+- `/sort_current` — مرتب‌سازی قسمت‌های جدید پوشه فعلی.
+- `/sort_latest` — مرتب‌سازی آخرین پوشه دانلودشده.
+- `/sort_folder PATH` — مرتب‌سازی یک پوشه معتبر مشخص.
+- `/resort_current` — اصلاح نام قسمت‌های قبلی بعد از اصلاح نام پوشه سریال.
+- `/fix_metadata_current` — هماهنگ کردن دستی نام NFO و تصویرهای قسمت‌ها.
+- `/sort_status` — نمایش نتیجه آخرین مرتب‌سازی.
+
+### صف و حل تداخل
+
+- `/remove ID` — حذف یک مورد صف.
+- `/clearqueue` — پاک کردن موارد مجاز صف همین چت.
+- `/resolve ID skip` — دست نزدن به فایل مقصد موجود.
+- `/resolve ID save_with_suffix` — نگه داشتن امن هر دو فایل.
+- `/resolve ID overwrite` — جایگزینی فقط پس از تأیید صریح.
+- `/movie_current` — وضعیت آخرین عملیات فیلم.
+- `/movie_import ID` — تلاش دوباره برای فیلم موجود در staging.
+- `/movie_cancel ID` — لغو فیلم پردازش‌نشده.
+
+### بازگردانی و بازیابی
+
+- `/sort_history` — مشاهده نسخه‌های پوشه فعلی.
+- `/sort_back` — یک نسخه به عقب.
+- `/sort_forward` — اجرای دوباره نسخه بازگردانده‌شده.
+- `/undo_sort_batch ID` — بازگردانی یک Batch ID مرتب‌سازی.
+- `/movie_undo_last` — برگرداندن آخرین فیلم به staging.
+- `/movie_undo_batch ID` — بازگردانی Batch ID فیلم.
+- `/recover_current` — بررسی و اصلاح دستی فقط پوشه سریال فعلی پس از خاموشی یا
+  توقف ناگهانی.
+
+بازگردانی هیچ‌وقت مسیر اصلی موجود را بازنویسی نمی‌کند. تا زمانی که احتمال
+نیاز به بازگردانی وجود دارد فایل‌های `.rename_history.json` را حذف نکنید.
+
+### بررسی ایمنی
+
+- پیش از تأیید دانلود، کتابخانه انتخاب‌شده را بررسی کنید.
+- پیش از مرتب‌سازی یا تغییر نام دستی سریال، `/folder` را بررسی کنید.
+- پوشه سریال مرتب‌شده را مستقیماً در فایل‌منیجر تغییر نام ندهید.
+- تا وقتی انتقال یا بازگردانی ممکن است به staging یا history نیاز داشته باشد،
+  آن فایل‌ها را حذف نکنید.
+- اگر نتیجه نامطمئن است، پیش از دانلود توقف کنید و از ابزارهای پیشرفته استفاده
+  کنید.

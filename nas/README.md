@@ -202,9 +202,32 @@ and original `N8N_ENCRYPTION_KEY` have been copied. Losing that key makes stored
 credentials unreadable. Pin `N8N_IMAGE` to the existing n8n version for the
 first migration rather than changing versions at the same time.
 
-n8n is deployed now but is not yet connected to Telegram. The current bot keeps
-using polling. A later phase will switch exactly once from polling to an n8n
-webhook; both receivers must not be active together.
+n8n does not receive Telegram updates. The Python bot remains the only Telegram
+receiver and keeps using polling. When AI-assisted filename identification is
+enabled, the bot calls a passive n8n webhook only for that task. This avoids two
+services competing for the same Telegram updates.
+
+An importable starter workflow is available at:
+
+```text
+source/nas/n8n-workflows/media-filename-agent.json
+```
+
+Read `source/nas/n8n-workflows/README.md` before importing it. The workflow is
+inactive and contains no credentials. Give it an AI model credential and
+webhook authentication, activate it, then add these values to
+`video-manager-compose/.env`:
+
+```env
+N8N_AGENT_ENABLED=true
+N8N_AGENT_URL=http://n8n:5678/webhook/media-identify
+N8N_AGENT_SECRET=the-same-header-secret-configured-in-n8n
+N8N_AGENT_TIMEOUT_SECONDS=45
+SCAN_AFTER_AI_SERIES_SORT=true
+```
+
+Do not use the browser address containing `/workflow/` and `projectId`; that is
+the editor page, not a callable webhook.
 
 ## Status and troubleshooting
 

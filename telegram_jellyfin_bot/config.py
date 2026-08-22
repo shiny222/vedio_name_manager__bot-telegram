@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .utils import safe_child
 
@@ -208,6 +209,9 @@ def _environment_config() -> dict[str, Any]:
             os.environ.get("MOVIE_SORTER_TIMEOUT_SECONDS", "1800")
         ),
         "scan_after_movie_import": _env_bool("SCAN_AFTER_MOVIE_IMPORT", True),
+        "scan_after_ai_series_sort": _env_bool(
+            "SCAN_AFTER_AI_SERIES_SORT", True
+        ),
         "allowed_chat_ids": _env_list("ALLOWED_CHAT_IDS"),
         "allowed_video_extensions": _env_list("ALLOWED_VIDEO_EXTENSIONS"),
         "max_parallel_downloads": int(os.environ.get("MAX_PARALLEL_DOWNLOADS", "1")),
@@ -233,6 +237,14 @@ def _environment_config() -> dict[str, Any]:
         ],
         "fuzzy_search_timeout_seconds": int(
             os.environ.get("FUZZY_SEARCH_TIMEOUT_SECONDS", "20")
+        ),
+        "n8n_agent_enabled": _env_bool("N8N_AGENT_ENABLED", False),
+        "n8n_agent_url": os.environ.get(
+            "N8N_AGENT_URL", "http://n8n:5678/webhook/media-identify"
+        ).strip(),
+        "n8n_agent_secret": os.environ.get("N8N_AGENT_SECRET", "").strip(),
+        "n8n_agent_timeout_seconds": int(
+            os.environ.get("N8N_AGENT_TIMEOUT_SECONDS", "45")
         ),
     }
 
@@ -282,6 +294,7 @@ class Config:
     movie_sorter_command: list[str]
     movie_sorter_timeout_seconds: int
     scan_after_movie_import: bool
+    scan_after_ai_series_sort: bool
     allowed_chat_ids: set[int]
     allowed_video_extensions: set[str]
     max_parallel_downloads: int
@@ -295,6 +308,10 @@ class Config:
     jellyfin_scan_monitor_timeout_seconds: int
     fuzzy_search_command: list[str]
     fuzzy_search_timeout_seconds: int
+    n8n_agent_enabled: bool
+    n8n_agent_url: str
+    n8n_agent_secret: str
+    n8n_agent_timeout_seconds: int
 
     @property
     def api_root(self) -> str:
@@ -527,6 +544,9 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
             1, int(raw.get("movie_sorter_timeout_seconds", 1800))
         ),
         scan_after_movie_import=bool(raw.get("scan_after_movie_import", True)),
+        scan_after_ai_series_sort=bool(
+            raw.get("scan_after_ai_series_sort", True)
+        ),
         allowed_chat_ids={int(x) for x in raw.get("allowed_chat_ids", [])},
         allowed_video_extensions=extensions or {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"},
         max_parallel_downloads=max(1, int(raw.get("max_parallel_downloads", 1))),
@@ -554,6 +574,12 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
                 )
             ),
         ),
+        n8n_agent_enabled=bool(raw.get("n8n_agent_enabled", False)),
+        n8n_agent_url=str(raw.get("n8n_agent_url", "")).strip(),
+        n8n_agent_secret=str(raw.get("n8n_agent_secret", "")).strip(),
+        n8n_agent_timeout_seconds=max(
+            2, int(raw.get("n8n_agent_timeout_seconds", 45))
+        ),
     )
     if default_folder:
         cfg.target_path(default_folder)
@@ -561,6 +587,20 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         ("http://", "https://")
     ):
         raise ValueError("jellyfin_server_url must start with http:// or https://.")
+    if cfg.n8n_agent_enabled:
+        parsed_n8n = urlparse(cfg.n8n_agent_url)
+        if parsed_n8n.scheme not in {"http", "https"} or not parsed_n8n.netloc:
+            raise ValueError("n8n_agent_url must be a complete http:// or https:// URL.")
+        normalized_path = parsed_n8n.path.rstrip("/")
+        if "/workflow/" in normalized_path or normalized_path.startswith("/workflow/"):
+            raise ValueError(
+                "n8n_agent_url points to the n8n editor. Use the Webhook node's "
+                "production URL ending in /webhook/media-identify."
+            )
+        if not normalized_path.endswith(("/webhook/media-identify", "/webhook-test/media-identify")):
+            raise ValueError(
+                "n8n_agent_url must be the media-identify Webhook URL, not the workflow editor URL."
+            )
     if (not cfg.libraries_for("movie")) != (cfg.movie_staging_path is None):
         raise ValueError(
             "Movie libraries and movie_staging_path must either both be configured "

@@ -59,6 +59,11 @@ class StateStore:
                     media_kind TEXT NOT NULL DEFAULT 'series',
                     movie_title TEXT,
                     movie_year INTEGER,
+                    series_title TEXT,
+                    series_year INTEGER,
+                    series_season INTEGER,
+                    series_episode INTEGER,
+                    download_filename TEXT,
                     imdb_id TEXT,
                     movie_batch_id TEXT,
                     status TEXT NOT NULL DEFAULT 'queued',
@@ -95,6 +100,11 @@ class StateStore:
                 "library_key": "TEXT",
                 "movie_title": "TEXT",
                 "movie_year": "INTEGER",
+                "series_title": "TEXT",
+                "series_year": "INTEGER",
+                "series_season": "INTEGER",
+                "series_episode": "INTEGER",
+                "download_filename": "TEXT",
                 "imdb_id": "TEXT",
                 "movie_batch_id": "TEXT",
             }
@@ -362,8 +372,9 @@ class StateStore:
                     INSERT INTO queue_items(
                       message_id,chat_id,file_id,file_unique_id,original_filename,
                       file_size,received_at,target_folder,library_key,media_kind,movie_title,
-                      movie_year,imdb_id,movie_batch_id,status,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                      movie_year,series_title,series_year,series_season,series_episode,
+                      download_filename,imdb_id,movie_batch_id,status,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         values["message_id"], values["chat_id"], values["file_id"],
@@ -374,6 +385,11 @@ class StateStore:
                         values.get("media_kind", "series"),
                         values.get("movie_title") or None,
                         values.get("movie_year"),
+                        values.get("series_title") or None,
+                        values.get("series_year"),
+                        values.get("series_season"),
+                        values.get("series_episode"),
+                        values.get("download_filename") or None,
                         values.get("imdb_id") or None,
                         values.get("movie_batch_id") or None,
                         values.get("status", "queued"), now, now,

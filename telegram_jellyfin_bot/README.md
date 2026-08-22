@@ -108,39 +108,24 @@ new topic for the category menu.
 To restrict access later, add the desired IDs to `allowed_chat_ids`; `/chatid`
 shows the current one.
 
-## Normal usage
+## Two usage workflows
 
-Set or choose a destination folder:
+The main menu separates routine use from maintenance:
 
-```text
-/libraries
-/setfolder My Anime
-/folders
-/usefolder Existing Anime Folder
-```
+- **Normal, AI assisted:** choose one of the four libraries once, send one or
+  more videos, review the proposed identity and destination, then use
+  **Downloads → Download → Confirm**. The chosen library persists for that
+  chat until explicitly changed, and AI is never allowed to select it.
+- **Advanced, no AI required:** manually select or create series folders,
+  correct IMDb identity, sort/resort episodes, repair metadata, resolve queue
+  conflicts, and use history/undo/recovery tools.
 
-Send videos to the bot in the allowed group or channel. The bot adds them to the queue but does not download immediately.
-
-Review and start downloads:
-
-```text
-/download
-/confirm_download
-```
-
-Sort files after download:
-
-```text
-/sort_current
-/sort_latest
-/resort_current
-```
-
-Trigger Jellyfin scan:
-
-```text
-/jellyfin_scan
-```
+The n8n identification workflow is tracked in `nas/n8n-workflows`. Enable its
+bot-side client with `N8N_AGENT_ENABLED`, `N8N_AGENT_URL`, and the optional
+shared header secret. If the webhook fails, the queued item remains
+undownloaded and the existing manual fallback remains available.
+The detailed English and Persian instructions are in `HOW_TO_USE.md` and inside
+Telegram under `/guide`.
 
 ## Movie mode
 
@@ -223,15 +208,15 @@ Telegram channels cannot pre-fill editable slash commands the same way normal ch
 ## Persistent category keyboard
 
 In a private chat, group, or supergroup, send `/menu` once to enable a persistent
-keyboard beside the message box. Its category buttons open smaller inline menus
-for downloads, folders, sorting, undo/recovery, Jellyfin, IMDb, episodes, and
-bot information. Series and Movies each have their own category and mode
-button. The existing quick-access inline menu is still sent and has not been
-replaced.
+keyboard beside the message box. The main keyboard intentionally contains only
+**Downloads**, **Episodes**, **Jellyfin**, **Bot**, **Choose Library**, and
+**Advanced**. Choose Library opens the four configured destinations directly.
+Advanced contains the less-frequent folder, sorting, undo/recovery, IMDb,
+series-workflow, and movie-workflow menus. Commands remain available by slash
+command even when their buttons are under Advanced.
 
 Telegram does not support persistent reply keyboards in channels. In a channel,
-use the **Command categories** button at the bottom of the existing inline menu;
-it opens the same categorized submenus.
+`/menu` sends the same small main menu as inline buttons.
 
 ## Duplicate files
 
