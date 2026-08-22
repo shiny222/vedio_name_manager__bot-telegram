@@ -11,6 +11,16 @@ telegram_jellyfin_bot/temp/
 *.db-shm
 *.db-wal
 
+# Docker/NAS runtime configuration and persistent state
+nas/**/.env
+nas/**/data/*
+nas/**/logs/*
+nas/**/staging/*
+!nas/**/data/.gitkeep
+!nas/**/data/**/.gitkeep
+!nas/**/logs/.gitkeep
+!nas/**/staging/.gitkeep
+
 # Python
 .venv/
 __pycache__/

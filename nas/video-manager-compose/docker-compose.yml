@@ -1,0 +1,79 @@
+name: video-manager
+
+services:
+  video-manager:
+    build:
+      context: ${VIDEO_MANAGER_SOURCE_ROOT:?Set VIDEO_MANAGER_SOURCE_ROOT in .env}
+      dockerfile: Dockerfile
+    image: local/video-manager:${VIDEO_MANAGER_IMAGE_TAG:-latest}
+    container_name: video-manager
+    init: true
+    restart: unless-stopped
+    user: "${PUID:-0}:${PGID:-0}"
+    env_file:
+      - ${VIDEO_MANAGER_ENV_FILE:-.env}
+    environment:
+      VIDEO_MANAGER_CONFIG_MODE: env
+      LOCAL_BOT_API_BASE_URL: http://telegram-bot-api:8081/bot
+      LOCAL_BOT_API_BASE_FILE_URL: http://telegram-bot-api:8081/file/bot
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+      - type: bind
+        source: ./data/fuzzy-search
+        target: /app/fuzzy_search/data
+      - type: bind
+        source: ./logs
+        target: /app/logs
+      - type: bind
+        source: ./staging
+        target: /app/staging
+      - type: bind
+        source: ${TELEGRAM_BOT_API_DATA_PATH:?Set TELEGRAM_BOT_API_DATA_PATH in .env}
+        target: /var/lib/telegram-bot-api
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_ANIMATION_MOVIE_PATH:?Set HOST_ANIMATION_MOVIE_PATH in .env}
+        target: /media/animation-movie
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_ANIMATION_SERIES_PATH:?Set HOST_ANIMATION_SERIES_PATH in .env}
+        target: /media/animation-serise
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_VIDEO_MOVIE_PATH:?Set HOST_VIDEO_MOVIE_PATH in .env}
+        target: /media/video-movie
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_VIDEO_SERIES_PATH:?Set HOST_VIDEO_SERIES_PATH in .env}
+        target: /media/video-serise
+        bind:
+          create_host_path: false
+    networks:
+      - media-automation
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+networks:
+  media-automation:
+    name: media-automation
+    external: true

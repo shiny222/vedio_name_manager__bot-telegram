@@ -1,0 +1,30 @@
+FROM ubuntu:24.04
+
+LABEL org.opencontainers.image.title="Local Telegram Bot API"
+LABEL org.opencontainers.image.description="Runtime image for the repository's Linux amd64 telegram-bot-api binary"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/var/lib/telegram-bot-api
+
+RUN test "$(dpkg --print-architecture)" = "amd64" \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3t64 \
+        libstdc++6 \
+        zlib1g \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/telegram-bot-api /tmp/telegram-bot-api \
+    && chown -R 1000:1000 /var/lib/telegram-bot-api /tmp/telegram-bot-api
+
+COPY telegram-bot-api telegram-bot-api.sha256 /tmp/
+
+RUN cd /tmp \
+    && sha256sum -c telegram-bot-api.sha256 \
+    && install -m 0755 telegram-bot-api /usr/local/bin/telegram-bot-api \
+    && rm telegram-bot-api telegram-bot-api.sha256
+
+WORKDIR /var/lib/telegram-bot-api
+USER 1000:1000
+
+ENTRYPOINT ["/usr/local/bin/telegram-bot-api"]

@@ -1,0 +1,40 @@
+name: n8n
+
+services:
+  n8n:
+    image: ${N8N_IMAGE:-docker.n8n.io/n8nio/n8n:latest}
+    container_name: n8n
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${N8N_BIND_ADDRESS:-0.0.0.0}:${N8N_PORT:-5678}:5678"
+    env_file:
+      - ${N8N_ENV_FILE:-.env}
+    environment:
+      N8N_LISTEN_ADDRESS: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://n8n:5678/}
+      GENERIC_TIMEZONE: Asia/Tehran
+      TZ: Asia/Tehran
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_RUNNERS_ENABLED: "true"
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: ./data
+        target: /home/node/.n8n
+    networks:
+      - media-automation
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+networks:
+  media-automation:
+    name: media-automation
+    external: true

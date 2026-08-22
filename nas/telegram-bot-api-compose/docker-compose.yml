@@ -1,0 +1,58 @@
+name: telegram-bot-api
+
+services:
+  telegram-bot-api:
+    build:
+      context: ${VIDEO_MANAGER_SOURCE_ROOT:?Set VIDEO_MANAGER_SOURCE_ROOT in .env}
+      dockerfile: Dockerfile.telegram-bot-api
+    image: local/telegram-bot-api:${TELEGRAM_BOT_API_IMAGE_TAG:-latest}
+    container_name: telegram-bot-api
+    init: true
+    restart: unless-stopped
+    user: "${PUID:-0}:${PGID:-0}"
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:?Set TELEGRAM_API_ID in .env}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?Set TELEGRAM_API_HASH in .env}
+    command:
+      - --local
+      - --http-ip-address=0.0.0.0
+      - --http-port=8081
+      - --dir=/var/lib/telegram-bot-api
+      - --temp-dir=/tmp/telegram-bot-api
+      - --verbosity=2
+    ports:
+      - "127.0.0.1:${TELEGRAM_BOT_API_PORT:-8081}:8081"
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - type: bind
+        source: ./data
+        target: /var/lib/telegram-bot-api
+    networks:
+      - media-automation
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/8081'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+networks:
+  media-automation:
+    name: media-automation
+    external: true

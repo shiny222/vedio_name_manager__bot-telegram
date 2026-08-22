@@ -29,6 +29,15 @@ folder into a separate Jellyfin Movies library. Run its `install.bat` once to
 enable the bot's movie mode. The movie organizer can also be used directly and
 does not import bot code or contact IMDb.
 
+## NAS Docker deployment
+
+The repository now includes separate NAS Compose projects for Video Manager,
+Local Telegram Bot API, and n8n. The two custom images are built locally from a
+Git clone on the NAS, while runtime secrets and state remain outside Git.
+
+See [`nas/README.md`](nas/README.md) for the exact OpenMediaVault paths, initial
+build commands, shared Docker network, persistent mounts, and update procedure.
+
 ## Updating on another PC
 
 Clone the repository once instead of downloading a ZIP:
