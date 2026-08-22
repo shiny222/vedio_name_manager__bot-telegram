@@ -17,12 +17,12 @@ RUN test "$(dpkg --print-architecture)" = "amd64" \
     && mkdir -p /var/lib/telegram-bot-api /tmp/telegram-bot-api \
     && chown -R 1000:1000 /var/lib/telegram-bot-api /tmp/telegram-bot-api
 
-COPY telegram-bot-api telegram-bot-api.sha256 /tmp/
+COPY telegram-bot-api telegram-bot-api.sha256 /opt/telegram-bot-api-build/
 
-RUN cd /tmp \
+RUN cd /opt/telegram-bot-api-build \
     && sha256sum -c telegram-bot-api.sha256 \
     && install -m 0755 telegram-bot-api /usr/local/bin/telegram-bot-api \
-    && rm telegram-bot-api telegram-bot-api.sha256
+    && rm -rf /opt/telegram-bot-api-build
 
 WORKDIR /var/lib/telegram-bot-api
 USER 1000:1000
