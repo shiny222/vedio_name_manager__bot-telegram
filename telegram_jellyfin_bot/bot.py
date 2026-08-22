@@ -74,6 +74,36 @@ else:
     from .utils import format_size, sanitize_folder_name, setup_logging, validate_original_filename
 
 LOG = logging.getLogger(__name__)
+SERIES_BATCH_WINDOW_SECONDS = 2.0
+TRANSIENT_SCAN_RESULT_SECONDS = 8.0
+IMDB_FOLDER_ID_RE = re.compile(r"\[imdbid-(tt\d+)\]", re.IGNORECASE)
+FOLDER_YEAR_RE = re.compile(r"\s*[\(\[]((?:19|20)\d{2})[\)\]]\s*$")
+
+
+def _series_file_title(folder_name: str) -> str:
+    """Return the episode-file title used by the standalone organizer."""
+    title = re.sub(
+        r"\s*\[(?:imdbid|tmdbid|tvdbid)-[^\]]+\]\s*",
+        " ",
+        folder_name,
+        flags=re.IGNORECASE,
+    )
+    title = FOLDER_YEAR_RE.sub(" ", title)
+    return re.sub(r"\s+", " ", title).strip() or folder_name
+
+
+def _normalized_title(value: str) -> str:
+    """Normalize a title only for conservative existing-folder matching."""
+    value = re.sub(
+        r"\s*\[(?:imdbid|tmdbid|tvdbid)-[^\]]+\]\s*",
+        " ",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = FOLDER_YEAR_RE.sub(" ", value)
+    return re.sub(r"[^\w]+", "", value, flags=re.UNICODE).casefold()
+
+
 HELP = """Commands:
 /menu - Show the button menu
 /libraries - Choose one of the configured media libraries
@@ -185,19 +215,21 @@ NORMAL WORKFLOW — AI ASSISTED
 1. Press Choose Library once and select Animation Series, Animation Movies,
    Video Series, or Video Movies. It stays selected until you change it.
    AI is never allowed to choose or change this destination.
-2. Send one or several supported videos. Multiple files can wait in the queue
-   and download together.
+2. Send one or several supported videos. A short burst is identified as one
+   compact batch; mixed series are routed independently.
 3. When the n8n connection is enabled, AI reads the untrusted filename/caption
    and suggests movie title/year or series title/season/episode. The existing
    IMDb tool finds the official Jellyfin identity.
-4. Review the suggested name, library, folder, file count, and size. Confirm
-   only when they are correct. If uncertain, answer the bot's question or use
-   Advanced. A failed AI/IMDb request must not change the library.
+4. An existing reliable series-folder match is used automatically. A new
+   series asks once for all matching episodes. Download review shows the final
+   saved filenames, file count, and size. A failed AI/IMDb request must not
+   change the library.
 5. Open Downloads: Queue → Download → Confirm.
 6. Movies are staged and imported safely. AI-confirmed series episodes are
    organized automatically after their downloads finish.
-7. Use Jellyfin → Scan library if an automatic scan did not run. Use Episodes
-   to inspect the current series or the series libraries.
+7. Use Jellyfin → Scan library if an automatic scan did not run. Its one status
+   message disappears shortly after Jellyfin is ready. Use Episodes to inspect
+   the current series or the series libraries.
 
 ADVANCED WORKFLOW — NO AI REQUIRED
 Use Advanced for unusual filenames, incorrect identity, manual organization,
@@ -250,19 +282,21 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
 ۱. انتخاب کتابخانه را یک بار بزنید و Animation Series، Animation Movies،
    Video Series یا Video Movies را انتخاب کنید. انتخاب تا تغییر بعدی باقی
    می‌ماند. AI اجازه انتخاب یا تغییر مقصد را ندارد.
-۲. یک یا چند ویدیو بفرستید. چند فایل می‌توانند با هم در صف بمانند و دانلود
-   شوند.
+۲. یک یا چند ویدیو بفرستید. فایل‌هایی که با فاصله کوتاه ارسال شوند در یک دسته
+   کم‌پیام شناسایی می‌شوند و سریال‌های متفاوت جداگانه هدایت می‌شوند.
 ۳. پس از فعال شدن اتصال n8n، AI از نام فایل/کپشن نام و سال فیلم یا نام سریال
    و فصل و قسمت را پیشنهاد می‌دهد. ابزار IMDb نام رسمی Jellyfin را پیدا می‌کند.
-۴. نام، کتابخانه، پوشه، تعداد و حجم را بررسی کنید. فقط اگر درست بود تأیید
-   کنید. اگر نتیجه نامطمئن بود، به سؤال ربات پاسخ دهید یا پیشرفته را باز کنید.
-   خرابی AI یا IMDb نباید کتابخانه را تغییر دهد.
+۴. پوشه سریال موجود با تطبیق معتبر خودکار استفاده می‌شود. برای سریال جدید فقط
+   یک بار برای همه قسمت‌های مطابق تأیید گرفته می‌شود. بررسی دانلود نام نهایی
+   فایل‌ها، تعداد و حجم را نشان می‌دهد. خرابی AI یا IMDb نباید کتابخانه را
+   تغییر دهد.
 ۵. دانلودها را باز کنید: صف ← دانلود ← تأیید.
 ۶. فیلم ابتدا وارد staging و سپس امن وارد کتابخانه می‌شود. در روند فعلی
    قسمت‌های سریال که با AI تأیید شده‌اند، بعد از پایان دانلود
    به‌صورت خودکار مرتب می‌شوند.
-۷. اگر اسکن خودکار اجرا نشد، Jellyfin ← اسکن کتابخانه را بزنید. از قسمت‌ها
-   برای بررسی سریال فعلی یا کتابخانه‌های سریال استفاده کنید.
+۷. اگر اسکن خودکار اجرا نشد، Jellyfin ← اسکن کتابخانه را بزنید. پیام وضعیت کمی
+   پس از آماده شدن Jellyfin حذف می‌شود. از قسمت‌ها برای بررسی سریال فعلی یا
+   کتابخانه‌های سریال استفاده کنید.
 
 روش پیشرفته — بدون نیاز به AI
 برای نام غیرعادی، تشخیص اشتباه، کار دستی، تداخل یا عملیات ناقص استفاده کنید.
@@ -803,7 +837,7 @@ class TelegramAPI:
         *,
         message_thread_id: int | None = None,
         direct_messages_topic_id: int | None = None,
-    ) -> None:
+    ) -> Any:
         params: dict[str, str] = {"chat_id": str(chat_id), "text": text[:4000]}
         if message_thread_id is not None:
             params["message_thread_id"] = str(int(message_thread_id))
@@ -813,7 +847,22 @@ class TelegramAPI:
             )
         if reply_markup is not None:
             params["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
-        await self.call("sendMessage", **params)
+        return await self.call("sendMessage", **params)
+
+    async def edit(self, chat_id: int, message_id: int, text: str) -> Any:
+        return await self.call(
+            "editMessageText",
+            chat_id=str(chat_id),
+            message_id=str(message_id),
+            text=text[:4000],
+        )
+
+    async def delete(self, chat_id: int, message_id: int) -> Any:
+        return await self.call(
+            "deleteMessage",
+            chat_id=str(chat_id),
+            message_id=str(message_id),
+        )
 
 
 class BotApp:
@@ -834,6 +883,10 @@ class BotApp:
         self.movie_choices: dict[str, dict] = {}
         self.movie_manual_pending: dict[int, int] = {}
         self.series_manual_pending: dict[int, int] = {}
+        self.series_manual_groups: dict[int, list[dict]] = {}
+        self.series_identification_batches: dict[
+            tuple[int, int, str], dict[str, Any]
+        ] = {}
         self.background_tasks: set[asyncio.Task] = set()
         self.task_chat_ids: dict[asyncio.Task, int] = {}
         self.chat_types: dict[int, str] = {}
@@ -1012,13 +1065,13 @@ class BotApp:
         reply_markup: dict | None = None,
         *,
         force_language: str | None = None,
-    ) -> None:
+    ) -> Any:
         assert self.api
         language = language_code(force_language or self._language(chat_id))
         text = translate_text(text, language)
         reply_markup = translate_markup(reply_markup, language)
         try:
-            await self.api.send(
+            return await self.api.send(
                 chat_id,
                 text,
                 reply_markup,
@@ -1027,6 +1080,37 @@ class BotApp:
             )
         except Exception:
             LOG.exception("Could not send Telegram message")
+            return None
+
+    async def edit_message(self, chat_id: int, message_id: int, text: str) -> bool:
+        """Edit one status message instead of posting repeated updates."""
+        assert self.api
+        text = translate_text(text, self._language(chat_id))
+        try:
+            await self.api.edit(chat_id, message_id, text)
+            return True
+        except Exception:
+            LOG.exception("Could not edit Telegram message %s", message_id)
+            return False
+
+    async def delete_message(self, chat_id: int, message_id: int) -> bool:
+        assert self.api
+        try:
+            await self.api.delete(chat_id, message_id)
+            return True
+        except Exception:
+            LOG.exception("Could not delete Telegram message %s", message_id)
+            return False
+
+    @staticmethod
+    def _sent_message_id(result: Any) -> int | None:
+        if not isinstance(result, dict):
+            return None
+        value = result.get("message_id")
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def _language(self, chat_id: int) -> str:
         return language_code(
@@ -1528,12 +1612,16 @@ class BotApp:
             if choice and int(choice.get("chat_id", 0)) == int(chat_id):
                 self.imdb_choices.pop(token, None)
             if choice and choice.get("mode") == "queue":
-                pending_id = int(choice.get("pending_id") or 0)
+                entries = choice.get("queue_entries")
+                if not isinstance(entries, list) or not entries:
+                    entries = [choice]
+                pending_id = int(entries[0].get("pending_id") or 0)
+                self.series_manual_pending[int(chat_id)] = pending_id
+                self.series_manual_groups[int(chat_id)] = entries
                 await self.send(
                     int(chat_id),
-                    "Episode destination was not confirmed. Choose a manual "
-                    "fallback or cancel the queued episode.",
-                    self._series_identification_markup(pending_id),
+                    "Send the correct series title. The detected season and "
+                    "episode numbers will be kept for all matching files.",
                 )
             else:
                 await self.send(int(chat_id), "Folder change cancelled.", CHANNEL_MENU)
@@ -1802,19 +1890,60 @@ class BotApp:
         if pending_id is None:
             await self.send(chat_id, "This video is already registered in the queue.")
             return
-        await self.send(
-            chat_id,
-            f"Episode received but not downloaded yet.\n"
-            f"Queue ID: #{pending_id}\nFilename: {filename}\n"
-            f"Library: {library.name}\n\nAI identification started.",
+        sender = message.get("from") or {}
+        sender_id = int(sender.get("id") or chat_id)
+        key = (chat_id, sender_id, library.key)
+        batch = self.series_identification_batches.setdefault(
+            key, {"items": [], "task": None}
         )
-        self.track_task(
-            self._run_ai_series_identification(
-                chat_id, pending_id, caption
-            ),
-            f"series-ai-identification:{chat_id}:{pending_id}",
+        batch["items"].append((pending_id, caption))
+        previous = batch.get("task")
+        if isinstance(previous, asyncio.Task) and not previous.done():
+            previous.cancel()
+        batch["task"] = self.track_task(
+            self._flush_series_identification_batch(key),
+            f"series-identification-batch:{chat_id}:{sender_id}:{library.key}",
             chat_id,
         )
+
+    async def _flush_series_identification_batch(
+        self, key: tuple[int, int, str]
+    ) -> None:
+        """Identify a burst of episodes with one compact Telegram status."""
+        await asyncio.sleep(SERIES_BATCH_WINDOW_SECONDS)
+        batch = self.series_identification_batches.pop(key, None)
+        if not batch:
+            return
+        chat_id = key[0]
+        items = list(batch.get("items") or [])
+        if not items:
+            return
+        status_result = await self.send(
+            chat_id, f"Identifying {len(items)} episode(s)…"
+        )
+        status_message_id = self._sent_message_id(status_result)
+
+        # Free AI endpoints are commonly rate-limited. Sequential requests keep
+        # a multi-episode Telegram upload reliable while still batching its UI.
+        for pending_id, caption in items:
+            await self._run_ai_series_identification(
+                chat_id, int(pending_id), str(caption)
+            )
+
+        ready = 0
+        needs_attention = 0
+        for pending_id, _ in items:
+            item = self.store.get_item(int(pending_id), chat_id=chat_id)
+            if item and item.get("status") == "queued":
+                ready += 1
+            else:
+                needs_attention += 1
+        final_text = (
+            f"Checked {len(items)} episode(s): {ready} ready, "
+            f"{needs_attention} need attention."
+        )
+        if status_message_id is not None:
+            await self.edit_message(chat_id, status_message_id, final_text)
 
     def _series_item_for_chat(
         self, pending_id: int, chat_id: int
@@ -1857,13 +1986,11 @@ class BotApp:
             or not result.title_query
             or result.episode is None
         ):
-            self.series_manual_pending[chat_id] = pending_id
             await self.send(
                 chat_id,
-                f"AI needs more information for episode #{pending_id}.\n"
-                f"{result.question or 'Send the series title, season, and episode.'}\n\n"
-                "Reply in this format:\nSeries Title | Season | Episode\n"
-                "Example: Dr. Stone | 4 | 25",
+                f"Could not identify episode #{pending_id}: "
+                f"{item['original_filename']}\n"
+                "Choose manual details or use the current folder.",
                 self._series_identification_markup(pending_id),
             )
             return
@@ -1882,16 +2009,6 @@ class BotApp:
         query = str(result.title_query or "").strip()
         if result.year is not None:
             query = f"{query} {result.year}"
-        await self.send(
-            chat_id,
-            "AI filename suggestion:\n"
-            f"Series query: {result.title_query}\n"
-            f"Season: {result.season or 1}\n"
-            f"Episode: {result.episode}\n"
-            f"Year: {result.year or 'unknown'}\n"
-            f"Confidence: {result.confidence:.0%}\n\n"
-            "Checking the existing IMDb title tool now...",
-        )
         await self._run_imdb_search(
             chat_id,
             query,
@@ -1901,63 +2018,94 @@ class BotApp:
         )
 
     async def _confirm_series_queue_choice(
-        self, chat_id: int, choice: dict
+        self, chat_id: int, choice: dict, *, notify: bool = True
     ) -> None:
-        pending_id = int(choice.get("pending_id") or 0)
-        item = self._series_item_for_chat(pending_id, chat_id)
-        if not item or item.get("status") != "awaiting_identification":
-            await self.send(chat_id, "This episode is no longer waiting for a folder.")
-            return
         library_key = str(choice.get("library_key") or "")
-        if str(item.get("library_key") or "") != library_key:
-            await self.send(
-                chat_id,
-                "The queued episode's library changed unexpectedly. Nothing was changed.",
+        entries = choice.get("queue_entries")
+        if not isinstance(entries, list) or not entries:
+            entries = [choice]
+        has_waiting_item = any(
+            (
+                item := self._series_item_for_chat(
+                    int(entry.get("pending_id") or 0), chat_id
+                )
             )
-            return
-        season = int(choice.get("series_season") or 1)
-        episode = int(choice.get("series_episode") or 0)
-        if episode < 1:
-            await self.send(
-                chat_id,
-                "The episode number is still unknown. Enter the series details manually.",
-                self._series_identification_markup(pending_id),
-            )
+            and item.get("status") == "awaiting_identification"
+            and str(item.get("library_key") or "") == library_key
+            for entry in entries
+        )
+        if not has_waiting_item:
+            if notify:
+                await self.send(
+                    chat_id,
+                    "No waiting episodes could use this series folder.",
+                )
             return
         try:
             folder_name = sanitize_folder_name(str(choice["folder_name"]))
             folder = self.config.target_path(folder_name, library_key)
             folder.mkdir(parents=True, exist_ok=True)
-            suffix = Path(str(item["original_filename"])).suffix.lower()
-            download_filename = validate_original_filename(
-                f"Incoming - S{season:02d}E{episode:02d}{suffix}"
-            )
         except (OSError, ValueError) as exc:
             await self.send(chat_id, f"Could not prepare the series destination: {exc}")
             return
+
+        queued = 0
+        for entry in entries:
+            pending_id = int(entry.get("pending_id") or 0)
+            item = self._series_item_for_chat(pending_id, chat_id)
+            if not item or item.get("status") != "awaiting_identification":
+                continue
+            if str(item.get("library_key") or "") != library_key:
+                LOG.warning(
+                    "Episode #%s changed library while IMDb identification was running.",
+                    pending_id,
+                )
+                continue
+            season = int(entry.get("series_season") or 1)
+            episode = int(entry.get("series_episode") or 0)
+            if episode < 1:
+                continue
+            try:
+                suffix = Path(str(item["original_filename"])).suffix.lower()
+                download_filename = validate_original_filename(
+                    f"Incoming - S{season:02d}E{episode:02d}{suffix}"
+                )
+            except ValueError:
+                LOG.exception(
+                    "Could not create a safe name for episode #%s", pending_id
+                )
+                continue
+            self.store.update_item(
+                pending_id,
+                target_folder=folder_name,
+                series_title=str(entry.get("series_title") or "") or None,
+                series_year=entry.get("series_year"),
+                series_season=season,
+                series_episode=episode,
+                download_filename=download_filename,
+                imdb_id=str(entry.get("imdb_id") or choice.get("imdb_id") or "")
+                or None,
+                status="queued",
+                error=None,
+            )
+            queued += 1
+
+        if not queued:
+            if notify:
+                await self.send(
+                    chat_id,
+                    "No waiting episodes could use this series folder.",
+                )
+            return
         self.series_manual_pending.pop(chat_id, None)
-        self.store.update_item(
-            pending_id,
-            target_folder=folder_name,
-            series_title=str(choice.get("series_title") or "") or None,
-            series_year=choice.get("series_year"),
-            series_season=season,
-            series_episode=episode,
-            download_filename=download_filename,
-            imdb_id=str(choice.get("imdb_id") or "") or None,
-            status="queued",
-            error=None,
-        )
         if self._chat_setting(chat_id, "current_library_key") == library_key:
             self._set_chat_setting(chat_id, "current_folder", folder_name)
-        await self.send(
-            chat_id,
-            "Episode identity confirmed.\n"
-            f"Folder: {folder_name}\n"
-            f"Detected: S{season:02d}E{episode:02d}\n"
-            f"Safe incoming name: {download_filename}\n\n"
-            "Use /download to review the destination, then /confirm_download.",
-        )
+        if notify:
+            await self.send(
+                chat_id,
+                f"Series confirmed: {folder_name}\n"
+                f"{queued} episode(s) ready. Use /download when finished sending.",
+            )
 
     async def _run_manual_series_identification(
         self, chat_id: int, pending_id: int, text: str
@@ -1966,10 +2114,16 @@ class BotApp:
         if not item or item.get("status") != "awaiting_identification":
             await self.send(chat_id, "This episode is no longer waiting for identification.")
             return
+        grouped_entries = self.series_manual_groups.pop(chat_id, [])
         parts = [part.strip() for part in text.split("|")]
         title = ""
         season: int | None = None
         episode: int | None = None
+        if grouped_entries and len(parts) == 1 and parts[0]:
+            title = parts[0]
+            first = grouped_entries[0]
+            season = int(first.get("series_season") or 1)
+            episode = int(first.get("series_episode") or 0)
         if len(parts) == 3 and parts[0]:
             try:
                 season = int(parts[1])
@@ -1978,12 +2132,39 @@ class BotApp:
                 season = episode = None
             title = parts[0]
         if not title or not season or not episode or season < 1 or episode < 1:
+            if grouped_entries:
+                self.series_manual_groups[chat_id] = grouped_entries
+                self.series_manual_pending[chat_id] = pending_id
             await self.send(
                 chat_id,
                 "I could not read those series details. Use exactly:\n"
                 "Series Title | Season | Episode\nExample: Dr. Stone | 4 | 25",
                 self._series_identification_markup(pending_id),
             )
+            return
+        if grouped_entries:
+            for entry in grouped_entries:
+                grouped_pending_id = int(entry.get("pending_id") or 0)
+                grouped_item = self._series_item_for_chat(
+                    grouped_pending_id, chat_id
+                )
+                if (
+                    not grouped_item
+                    or grouped_item.get("status") != "awaiting_identification"
+                ):
+                    continue
+                result = MediaIdentification(
+                    title_query=title[:300],
+                    season=int(entry.get("series_season") or 1),
+                    episode=int(entry.get("series_episode") or 0),
+                    year=None,
+                    confidence=1.0,
+                    needs_user_input=False,
+                    question=None,
+                )
+                await self._continue_series_identification(
+                    chat_id, grouped_pending_id, result
+                )
             return
         result = MediaIdentification(
             title_query=title[:300],
@@ -2730,6 +2911,23 @@ class BotApp:
             else "No removable item was found.",
         )
 
+    @staticmethod
+    def _final_saved_filename(item: dict) -> str:
+        """Preview the library filename, not Telegram's release filename."""
+        original = str(
+            item.get("download_filename") or item.get("original_filename") or ""
+        )
+        suffix = Path(original).suffix.lower()
+        if item.get("media_kind", "series") == "movie":
+            folder_name = str(item.get("target_folder") or "").strip()
+            return f"{folder_name}{suffix}" if folder_name else original
+        episode = item.get("series_episode")
+        if episode and item.get("target_folder"):
+            season = int(item.get("series_season") or 1)
+            title = _series_file_title(str(item["target_folder"]))
+            return f"{title} - S{season:02d}E{int(episode):02d}{suffix}"
+        return original
+
     def _prepare_download_items(self, chat_id: int) -> list[dict]:
         current = self._chat_setting(chat_id, "current_folder")
         current_library = self._selected_library(chat_id)
@@ -2780,26 +2978,15 @@ class BotApp:
                 + "\nSend /setfolder NAME first."
             )
             return
-        destinations = sorted({
-            str(
-                self.config.movie_target_path(
-                    x["target_folder"], str(x.get("library_key") or "") or None
-                )
-                if x.get("media_kind") == "movie"
-                else self.config.target_path(
-                    x["target_folder"], str(x.get("library_key") or "") or None
-                )
-            )
-            for x in items
-        })
         total = sum(int(x.get("file_size") or 0) for x in items)
-        names = "\n".join(f"• {x['original_filename']}" for x in items[:10])
-        summary = (
-            "Final download destination:\n" + "\n".join(destinations)
-            + f"\n\nCount: {len(items)}\nApprox size: {format_size(total)}\n{names}"
+        names = "\n".join(
+            f"• {self._final_saved_filename(x)}" for x in items[:12]
         )
-        if len(items) > 10:
-            summary += f"\n... and {len(items)-10} more file(s)"
+        summary = (
+            f"Ready to save {len(items)} file(s) — {format_size(total)}:\n{names}"
+        )
+        if len(items) > 12:
+            summary += f"\n... and {len(items)-12} more file(s)"
         if self.config.confirm_before_download:
             self._set_chat_setting(chat_id, "download_confirmation", "1")
             await self.send(chat_id, summary + "\n\nSend /confirm_download to start, or /cancel.")
@@ -2867,7 +3054,7 @@ class BotApp:
         series_sorted = False
         for library_key, folder_name in sorted(series_targets):
             if folder_name and await self._run_sorter(
-                chat_id, folder_name, library_key
+                chat_id, folder_name, library_key, quiet_success=True
             ):
                 series_sorted = True
         if (
@@ -3063,7 +3250,12 @@ class BotApp:
         await self.send(chat_id, "Decision saved. Send /download to continue.")
 
     async def _run_sorter(
-        self, chat_id: int, folder_name: str, library_key: str | None = None
+        self,
+        chat_id: int,
+        folder_name: str,
+        library_key: str | None = None,
+        *,
+        quiet_success: bool = False,
     ) -> bool:
         try:
             library = self.config.library(
@@ -3074,14 +3266,20 @@ class BotApp:
             if not folder.is_dir():
                 await self.send(chat_id, f"Folder not found:\n{folder}")
                 return False
-            await self.send(chat_id, f"Sorting started:\n{folder}")
+            if not quiet_success:
+                await self.send(chat_id, f"Sorting: {folder_name}")
             ok, output = await self.sorter.run(
                 folder, chat_id=chat_id, library_key=library.key
             )
-            await self.send(
-                chat_id,
-                ("Sorting completed successfully.\n" if ok else "Sorting finished with errors.\n") + output[-3000:],
-            )
+            if ok:
+                if not quiet_success:
+                    await self.send(chat_id, "Sorting completed.")
+            else:
+                LOG.error("Sorter failed for %s:\n%s", folder, output)
+                await self.send(
+                    chat_id,
+                    "Sorting failed. Use /sort_status for the detailed output.",
+                )
             return ok
         except Exception as exc:
             LOG.exception("Sorter error")
@@ -3346,10 +3544,26 @@ class BotApp:
             chat_id,
         )
 
+    async def _delete_message_after(
+        self, chat_id: int, message_id: int, delay: float
+    ) -> None:
+        await asyncio.sleep(delay)
+        await self.delete_message(chat_id, message_id)
+
     async def _run_jellyfin_scan(self, chat_id: int) -> None:
         if not self.jellyfin:
             await self.send(chat_id, "Jellyfin connection is not ready yet.")
             return
+
+        status_result = await self.send(chat_id, "Jellyfin scan started…")
+        status_message_id = self._sent_message_id(status_result)
+        last_status = "Jellyfin scan started…"
+
+        async def set_status(text: str) -> None:
+            nonlocal last_status
+            if status_message_id is not None and text != last_status:
+                if await self.edit_message(chat_id, status_message_id, text):
+                    last_status = text
 
         async def report_scan_update(update: dict) -> None:
             phase = update.get("phase")
@@ -3360,63 +3574,65 @@ class BotApp:
                 else ""
             )
             if phase == "accepted":
-                await self.send(
-                    chat_id,
-                    "Jellyfin accepted the scan request. I will notify you "
-                    "when the library scan finishes.",
-                )
+                await set_status("Jellyfin scan is running…")
             elif phase == "already-running":
-                await self.send(
-                    chat_id,
-                    "A Jellyfin library scan is already running. I will monitor "
-                    "it and notify you when it finishes.",
-                )
+                await set_status("Jellyfin scan is already running…")
             elif phase == "running":
-                await self.send(
-                    chat_id,
-                    f"Jellyfin library scan is running{progress_text}.",
-                )
+                await set_status(f"Jellyfin scan is running{progress_text}…")
             elif phase == "progress":
-                await self.send(
-                    chat_id,
-                    f"Jellyfin scan progress: {float(progress):.0f}%",
-                )
+                await set_status(f"Jellyfin scan is running ({float(progress):.0f}%)…")
 
         try:
-            await self.send(chat_id, "Sending Jellyfin library scan request...")
             result = await self.jellyfin.scan_library_and_wait(
                 report_scan_update
             )
             status = str(result.get("status", "unknown"))
             completed_at = result.get("completed_at") or "unknown"
             if status.casefold() == "completed":
-                await self.send(
-                    chat_id,
-                    "✅ Jellyfin library scan completed.\n"
-                    "The latest library state is ready.\n"
-                    f"Completed at: {completed_at}",
-                )
+                if status_message_id is not None:
+                    await set_status("✅ Jellyfin is ready.")
+                    self.track_task(
+                        self._delete_message_after(
+                            chat_id,
+                            status_message_id,
+                            TRANSIENT_SCAN_RESULT_SECONDS,
+                        ),
+                        f"delete-jellyfin-scan-status:{chat_id}:{status_message_id}",
+                        chat_id,
+                    )
+                else:
+                    await self.send(chat_id, "✅ Jellyfin is ready.")
             else:
-                await self.send(
-                    chat_id,
+                message = (
                     "⚠️ Jellyfin stopped scanning, but it did not report a "
                     "successful completion.\n"
                     f"Result: {status}\n"
                     f"Stopped at: {completed_at}\n"
-                    "Check the Jellyfin dashboard or server logs.",
+                    "Check the Jellyfin dashboard or server logs."
                 )
+                if status_message_id is not None:
+                    await set_status(message)
+                else:
+                    await self.send(chat_id, message)
         except TimeoutError as exc:
             LOG.warning("Jellyfin scan monitoring timed out: %s", exc)
-            await self.send(
-                chat_id,
+            message = (
                 "Jellyfin accepted the scan, but the bot stopped waiting before "
                 "Jellyfin reported completion.\n"
                 f"{exc}\n"
-                "The scan was not cancelled. Use /jellyfin_status to check it.",
+                "The scan was not cancelled. Use /jellyfin_status to check it."
             )
+            if status_message_id is not None:
+                await set_status(message)
+            else:
+                await self.send(chat_id, message)
         except Exception as exc:
             LOG.exception("Jellyfin scan request failed")
-            await self.send(chat_id, f"Jellyfin scan error: {exc}")
+            message = f"Jellyfin scan error: {exc}"
+            if status_message_id is not None:
+                await set_status(message)
+            else:
+                await self.send(chat_id, message)
 
     async def cmd_jellyfin_scan(self, chat_id: int, _: str) -> None:
         self.track_task(
@@ -3467,6 +3683,191 @@ class BotApp:
                 f"{self.jellyfin.last_scan_summary()}",
             )
 
+    def _safe_series_folders(self, library: MediaLibrary) -> list[Path]:
+        folders: list[Path] = []
+        try:
+            candidates = list(library.path.iterdir())
+        except OSError:
+            return folders
+        for folder in candidates:
+            if not folder.is_dir() or folder.name.startswith("_"):
+                continue
+            try:
+                safe = self.config.target_path(folder.name, library.key)
+            except ValueError:
+                continue
+            if safe == folder.resolve():
+                folders.append(folder)
+        return folders
+
+    def _existing_series_result(
+        self, library: MediaLibrary, results: list[dict]
+    ) -> tuple[dict, str] | None:
+        """Match only IMDb's best result to one reliable existing folder."""
+        folders = self._safe_series_folders(library)
+        if not folders:
+            return None
+
+        by_imdb: dict[str, list[Path]] = {}
+        by_name: dict[str, list[Path]] = {}
+        for folder in folders:
+            by_name.setdefault(folder.name.casefold(), []).append(folder)
+            match = IMDB_FOLDER_ID_RE.search(folder.name)
+            if match:
+                by_imdb.setdefault(match.group(1).casefold(), []).append(folder)
+
+        # Provider IDs are authoritative, even if the folder was renamed later.
+        # Lower-ranked search results never trigger automatic routing.
+        for result in results[:1]:
+            imdb_id = str(result.get("imdb_id") or "").casefold()
+            matches = by_imdb.get(imdb_id, [])
+            if len(matches) == 1:
+                return result, matches[0].name
+
+        # The exact Jellyfin folder format is the next safest match.
+        for result in results[:1]:
+            expected = str(result.get("folder_name") or "").casefold()
+            matches = by_name.get(expected, [])
+            if len(matches) == 1:
+                return result, matches[0].name
+
+        # Older/manual folders may not have an ID. Only accept a normalized
+        # title when it identifies exactly one folder; ambiguity still asks.
+        for result in results[:1]:
+            title_key = _normalized_title(str(result.get("title") or ""))
+            if not title_key:
+                continue
+            matches = [
+                folder for folder in folders
+                if _normalized_title(folder.name) == title_key
+            ]
+            year = result.get("year")
+            if year is not None and len(matches) > 1:
+                year_text = f"({int(year)})"
+                matches = [folder for folder in matches if year_text in folder.name]
+            if len(matches) == 1:
+                return result, matches[0].name
+        return None
+
+    @staticmethod
+    def _series_queue_entry(
+        pending_id: int, identity: MediaIdentification, result: dict
+    ) -> dict:
+        return {
+            "pending_id": pending_id,
+            "series_title": str(result.get("title") or identity.title_query or ""),
+            "series_year": result.get("year") or identity.year,
+            "series_season": identity.season or 1,
+            "series_episode": identity.episode,
+            "imdb_id": str(result.get("imdb_id") or "") or None,
+        }
+
+    def _series_queue_choice(
+        self,
+        chat_id: int,
+        library: MediaLibrary,
+        pending_id: int,
+        identity: MediaIdentification,
+        result: dict,
+        source: str,
+        *,
+        folder_name: str | None = None,
+    ) -> dict:
+        entry = self._series_queue_entry(pending_id, identity, result)
+        return {
+            "chat_id": chat_id,
+            "folder_name": folder_name or result["folder_name"],
+            "mode": "queue",
+            "created_at": time.time(),
+            "source": source,
+            "source_folder": "",
+            "library_key": library.key,
+            **entry,
+            "queue_entries": [entry],
+        }
+
+    def _merge_series_queue_choice(self, choice: dict) -> tuple[str, bool]:
+        """Merge matching new-series episodes into one confirmation prompt."""
+        now = time.time()
+        self.imdb_choices = {
+            key: value for key, value in self.imdb_choices.items()
+            if now - value["created_at"] <= 600
+        }
+        for token, existing in self.imdb_choices.items():
+            if (
+                existing.get("mode") == "queue"
+                and int(existing.get("chat_id") or 0) == int(choice["chat_id"])
+                and str(existing.get("library_key") or "")
+                == str(choice.get("library_key") or "")
+                and str(existing.get("folder_name") or "").casefold()
+                == str(choice.get("folder_name") or "").casefold()
+            ):
+                existing.setdefault("queue_entries", []).extend(
+                    choice.get("queue_entries") or []
+                )
+                return token, False
+        token = uuid.uuid4().hex[:16]
+        self.imdb_choices[token] = choice
+        return token, True
+
+    async def _route_series_ai_fallback(
+        self,
+        chat_id: int,
+        library: MediaLibrary,
+        pending_id: int,
+        identity: MediaIdentification,
+        source: str,
+    ) -> None:
+        """Use the AI title conservatively when IMDb has no usable response."""
+        fallback_name = str(identity.title_query or "").strip()
+        if identity.year is not None:
+            fallback_name = f"{fallback_name} ({identity.year})"
+        try:
+            fallback_name = sanitize_folder_name(fallback_name)
+        except ValueError:
+            await self.send(
+                chat_id,
+                f"Series not found for episode #{pending_id}. Choose manual "
+                "series details.",
+                self._series_identification_markup(pending_id),
+            )
+            return
+        fallback_result = {
+            "title": identity.title_query,
+            "year": identity.year,
+            "folder_name": fallback_name,
+            "imdb_id": "",
+        }
+        existing = self._existing_series_result(library, [fallback_result])
+        if existing is not None:
+            result, folder_name = existing
+            choice = self._series_queue_choice(
+                chat_id,
+                library,
+                pending_id,
+                identity,
+                result,
+                source,
+                folder_name=folder_name,
+            )
+            await self._confirm_series_queue_choice(
+                chat_id, choice, notify=False
+            )
+            return
+        choice = self._series_queue_choice(
+            chat_id,
+            library,
+            pending_id,
+            identity,
+            fallback_result,
+            source,
+        )
+        token, created = self._merge_series_queue_choice(choice)
+        if created:
+            await self._offer_folder_confirmation(
+                chat_id, token, self.imdb_choices[token]
+            )
+
     async def _run_imdb_search(
         self,
         chat_id: int,
@@ -3498,9 +3899,23 @@ class BotApp:
             self._chat_setting(chat_id, "current_folder") if mode == "rename" else ""
         )
         try:
-            await self.send(chat_id, f"Searching IMDb for: {query}")
+            if mode != "queue":
+                await self.send(chat_id, f"Searching IMDb for: {query}")
             results, source = await self.imdb.search(query, media_type="series")
             if not results:
+                if (
+                    mode == "queue"
+                    and pending_id is not None
+                    and identity is not None
+                ):
+                    await self._route_series_ai_fallback(
+                        chat_id,
+                        library,
+                        pending_id,
+                        identity,
+                        "AI title (IMDb returned no results)",
+                    )
+                    return
                 await self._offer_manual_folder_fallback(
                     chat_id,
                     query,
@@ -3511,6 +3926,41 @@ class BotApp:
                     pending_id,
                     identity,
                 )
+                return
+            if mode == "queue":
+                assert pending_id is not None and identity is not None
+                existing = self._existing_series_result(library, results)
+                if existing is not None:
+                    result, folder_name = existing
+                    choice = self._series_queue_choice(
+                        chat_id,
+                        library,
+                        pending_id,
+                        identity,
+                        result,
+                        source,
+                        folder_name=folder_name,
+                    )
+                    await self._confirm_series_queue_choice(
+                        chat_id, choice, notify=False
+                    )
+                    return
+
+                # No known folder: offer the best IMDb result once. Additional
+                # episodes resolving to the same series join this confirmation.
+                choice = self._series_queue_choice(
+                    chat_id,
+                    library,
+                    pending_id,
+                    identity,
+                    results[0],
+                    source,
+                )
+                token, created = self._merge_series_queue_choice(choice)
+                if created:
+                    await self._offer_folder_confirmation(
+                        chat_id, token, self.imdb_choices[token]
+                    )
                 return
             now = time.time()
             self.imdb_choices = {
@@ -3558,6 +4008,15 @@ class BotApp:
             )
         except Exception as exc:
             LOG.warning("Optional IMDb fuzzy search failed: %s", exc)
+            if mode == "queue" and pending_id is not None and identity is not None:
+                await self._route_series_ai_fallback(
+                    chat_id,
+                    library,
+                    pending_id,
+                    identity,
+                    "AI title fallback",
+                )
+                return
             await self._offer_manual_folder_fallback(
                 chat_id,
                 query,
@@ -3572,6 +4031,25 @@ class BotApp:
     async def _offer_folder_confirmation(
         self, chat_id: int, token: str, choice: dict
     ) -> None:
+        if choice.get("mode") == "queue":
+            await self.send(
+                chat_id,
+                f"New series: {choice['folder_name']}\n"
+                "Is this name correct for the matching queued episodes?",
+                {
+                    "inline_keyboard": [[
+                        {
+                            "text": "✅ Confirm",
+                            "callback_data": f"folderconfirm:{token}",
+                        },
+                        {
+                            "text": "❌ Cancel",
+                            "callback_data": f"foldercancel:{token}",
+                        },
+                    ]]
+                },
+            )
+            return
         source = choice.get("source", "IMDb fuzzy search")
         action = (
             "Rename current folder"

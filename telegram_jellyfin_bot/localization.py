@@ -222,11 +222,22 @@ TEXT_FA = {
     "Movie received but not downloaded yet.": "فیلم دریافت شد اما هنوز دانلود نشده است.",
     "Episode received but not downloaded yet.": "قسمت دریافت شد اما هنوز دانلود نشده است.",
     "AI identification started.": "تشخیص با هوش مصنوعی شروع شد.",
+    "New series:": "سریال جدید:",
+    "Is this name correct for the matching queued episodes?": "آیا این نام برای قسمت‌های مطابق در صف درست است؟",
+    "Series confirmed:": "سریال تأیید شد:",
+    "Use /download when finished sending.": "پس از پایان ارسال، /download را اجرا کنید.",
+    "Send the correct series title. The detected season and episode numbers will be kept for all matching files.": "نام صحیح سریال را ارسال کنید. شماره فصل و قسمت تشخیص‌داده‌شده برای همه فایل‌های مطابق حفظ می‌شود.",
+    "Enter the series title, season, and episode manually.": "نام سریال، فصل و قسمت را به‌صورت دستی وارد کنید.",
+    "No waiting episodes could use this series folder.": "هیچ قسمت منتظری نتوانست از این پوشه سریال استفاده کند.",
     "AI filename suggestion:": "پیشنهاد هوش مصنوعی برای نام فایل:",
     "AI identification is unavailable for movie": "تشخیص هوش مصنوعی برای فیلم در دسترس نیست",
     "AI identification is unavailable for episode": "تشخیص هوش مصنوعی برای قسمت در دسترس نیست",
     "AI needs more information for movie": "هوش مصنوعی برای فیلم به اطلاعات بیشتری نیاز دارد",
     "AI needs more information for episode": "هوش مصنوعی برای قسمت به اطلاعات بیشتری نیاز دارد",
+    "Could not identify episode": "قسمت شناسایی نشد",
+    "Choose manual details or use the current folder.": "اطلاعات دستی را انتخاب کنید یا از پوشه فعلی استفاده کنید.",
+    "Series not found for episode": "سریال برای قسمت پیدا نشد",
+    "Choose manual series details.": "اطلاعات دستی سریال را انتخاب کنید.",
     "Checking the existing IMDb title tool now...": "اکنون ابزار موجود IMDb بررسی می‌شود…",
     "Enter the series details in this format:": "اطلاعات سریال را با این قالب وارد کنید:",
     "Send the series details in this format:": "اطلاعات سریال را با این قالب ارسال کنید:",
@@ -350,6 +361,9 @@ TEXT_FA = {
     "Format: /resolve ID skip|overwrite|save_with_suffix": "فرمت: /resolve ID skip|overwrite|save_with_suffix",
     "Files cannot be restored while a download is running.": "هنگام اجرای دانلود نمی‌توان فایل‌ها را بازگرداند.",
     "Sorting started:": "مرتب‌سازی شروع شد:",
+    "Sorting:": "در حال مرتب‌سازی:",
+    "Sorting completed.": "مرتب‌سازی کامل شد.",
+    "Sorting failed. Use /sort_status for the detailed output.": "مرتب‌سازی ناموفق بود. برای جزئیات از /sort_status استفاده کنید.",
     "Sorting completed successfully.": "مرتب‌سازی با موفقیت کامل شد.",
     "Sorting finished with errors.": "مرتب‌سازی با خطا پایان یافت.",
     "Sorter error:": "خطای مرتب‌ساز:",
@@ -365,6 +379,10 @@ TEXT_FA = {
     "Could not complete the action.": "عملیات کامل نشد.",
     "Scanning library files...": "در حال بررسی فایل‌های کتابخانه…",
     "Sending Jellyfin library scan request...": "در حال ارسال درخواست اسکن کتابخانه Jellyfin…",
+    "Jellyfin scan started…": "اسکن Jellyfin شروع شد…",
+    "Jellyfin scan is running…": "اسکن Jellyfin در حال اجراست…",
+    "Jellyfin scan is already running…": "اسکن Jellyfin از قبل در حال اجراست…",
+    "✅ Jellyfin is ready.": "✅ Jellyfin آماده است.",
     "A Jellyfin library scan is already running.": "اسکن کتابخانه Jellyfin از قبل در حال اجراست.",
     "Jellyfin library scan is running": "اسکن کتابخانه Jellyfin در حال اجراست",
     "Jellyfin scan progress:": "پیشرفت اسکن Jellyfin:",
@@ -450,6 +468,36 @@ STATUS_FA = {
 
 def _translate_dynamic_text(text: str) -> str:
     """Translate count/status sentences without modifying names or paths."""
+    text = re.sub(
+        r"Identifying (\d+) episode\(s\)…",
+        lambda match: f"در حال شناسایی {match.group(1)} قسمت…",
+        text,
+    )
+    text = re.sub(
+        r"Checked (\d+) episode\(s\): (\d+) ready, (\d+) need attention\.",
+        lambda match: (
+            f"{match.group(1)} قسمت بررسی شد: {match.group(2)} آماده، "
+            f"{match.group(3)} نیازمند بررسی."
+        ),
+        text,
+    )
+    text = re.sub(
+        r"Ready to save (\d+) file\(s\) — ([^:]+):",
+        lambda match: (
+            f"{match.group(1)} فایل آماده ذخیره است — {match.group(2)}:"
+        ),
+        text,
+    )
+    text = re.sub(
+        r"(\d+) episode\(s\) ready\.",
+        lambda match: f"{match.group(1)} قسمت آماده است.",
+        text,
+    )
+    text = re.sub(
+        r"Jellyfin scan is running \((\d+)%\)…",
+        lambda match: f"اسکن Jellyfin در حال اجراست ({match.group(1)}٪)…",
+        text,
+    )
     text = re.sub(
         r"Downloads finished\. (\d+) of (\d+) file\(s\) completed\.",
         lambda match: (

@@ -53,7 +53,8 @@ movie mode. AI is never allowed to choose or change the library.
 ### 2. Send media
 
 Send one or several supported videos. You can queue multiple files before
-downloading them together.
+downloading them together. Episodes sent within a short burst are identified as
+one compact batch. Mixed series are identified and routed independently.
 
 When AI integration is enabled, the bot sends only the filename, optional
 caption, media kind, and selected library key to the n8n identification
@@ -63,12 +64,16 @@ workflow. The AI suggests:
 - series title, season, and episode.
 
 The existing IMDb fuzzy-search tool can then find the official Jellyfin folder
-identity. The AI does not download, move, rename, delete, or scan anything.
+identity. If a reliable IMDb ID or unique exact-title match already exists in
+the selected library, the bot uses that folder automatically. A new series is
+confirmed once and all matching queued episodes share that answer. The AI does
+not download, move, rename, delete, or scan anything.
 
 ### 3. Review and confirm
 
-Before downloading, review the bot's proposed identity, clean name, destination
-library, folder, file count, and approximate size.
+Before downloading, the compact review shows the filenames that will actually
+be saved, together with file count and approximate size. Original release names
+and internal temporary names are not used in this review.
 
 - If correct, confirm it.
 - If uncertain, the bot should ask one short question.
@@ -86,12 +91,14 @@ Open **Downloads**:
 The bot downloads incomplete data as `.part`, verifies the completed file, and
 never overwrites silently. Movies are staged and then imported safely.
 AI-confirmed series episodes are organized automatically after their downloads
-finish.
+finish. A successful automatic sort stays quiet; detailed output remains
+available through `/sort_status` when troubleshooting is needed.
 
 ### 5. Refresh and check
 
 - Open **Jellyfin → Scan library** when an automatic scan did not run.
-- The bot reports when Jellyfin finishes scanning.
+- The bot updates one scan-status message. After showing that Jellyfin is ready,
+  the completed status message is removed automatically.
 - Open **Episodes** to check the current series or all series libraries.
 
 You normally need to choose the library only again when you want a different
@@ -219,7 +226,9 @@ while rollback may be needed.
 ### ۲. فایل‌ها را ارسال کنید
 
 یک یا چند فایل ویدیویی پشتیبانی‌شده بفرستید. می‌توانید چند فایل را وارد صف
-کنید و همه را با هم دانلود کنید.
+کنید و همه را با هم دانلود کنید. قسمت‌هایی که با فاصله کوتاه ارسال شوند در یک
+دسته کم‌پیام بررسی می‌شوند. اگر فایل‌ها مربوط به چند سریال باشند، هر سریال
+به‌صورت مستقل شناسایی و به پوشه درست هدایت می‌شود.
 
 پس از فعال شدن اتصال AI، ربات فقط نام فایل، کپشن اختیاری، نوع رسانه و کلید
 کتابخانه انتخاب‌شده را برای تشخیص به n8n می‌فرستد. نتیجه پیشنهادی شامل نام و
@@ -227,10 +236,16 @@ while rollback may be needed.
 می‌تواند نام رسمی مناسب Jellyfin را پیدا کند. هوش مصنوعی اجازه دانلود، جابه‌جایی،
 تغییر نام، حذف یا اسکن را ندارد.
 
+اگر پوشه‌ای با IMDb ID معتبر یا تطبیق یکتای نام دقیق در کتابخانه انتخاب‌شده
+وجود داشته باشد، ربات بدون تأیید دوباره از همان پوشه استفاده می‌کند. برای یک
+سریال جدید فقط یک بار تأیید گرفته می‌شود و همه قسمت‌های مطابق همان پاسخ را
+استفاده می‌کنند.
+
 ### ۳. نتیجه را بررسی و تأیید کنید
 
-پیش از دانلود، نام تشخیص‌داده‌شده، نام تمیز، کتابخانه و پوشه مقصد، تعداد
-فایل‌ها و حجم تقریبی را بررسی کنید.
+پیش از دانلود، نام‌هایی که واقعاً در کتابخانه ذخیره خواهند شد، تعداد فایل‌ها
+و حجم تقریبی را بررسی کنید. نام اولیه انتشار و نام موقت داخلی نمایش داده
+نمی‌شوند.
 
 - اگر درست بود تأیید کنید.
 - اگر اطلاعات کافی نبود، ربات باید فقط یک سؤال کوتاه بپرسد.
@@ -244,11 +259,14 @@ while rollback may be needed.
 اجازه بازنویسی نمی‌کند. فیلم‌ها ابتدا وارد staging و سپس به‌صورت امن وارد
 کتابخانه می‌شوند. قسمت‌های سریال که با AI تأیید شده‌اند، بعد از پایان دانلود
 به‌صورت خودکار مرتب می‌شوند.
+مرتب‌سازی خودکار موفق پیام طولانی نمی‌فرستد؛ در صورت نیاز جزئیات با
+`/sort_status` در دسترس است.
 
 ### ۵. Jellyfin و قسمت‌ها را بررسی کنید
 
 - اگر اسکن خودکار انجام نشد، **Jellyfin ← اسکن کتابخانه** را بزنید.
-- ربات بعد از پایان اسکن Jellyfin پیام می‌فرستد.
+- ربات فقط یک پیام وضعیت اسکن را به‌روزرسانی می‌کند و پس از اعلام آماده بودن
+  Jellyfin، آن پیام به‌صورت خودکار حذف می‌شود.
 - از **قسمت‌ها** برای مشاهده سریال فعلی یا همه کتابخانه‌های سریال استفاده کنید.
 
 تا وقتی مقصد تغییر نکرده است لازم نیست دوباره کتابخانه را انتخاب کنید.

@@ -113,9 +113,12 @@ shows the current one.
 The main menu separates routine use from maintenance:
 
 - **Normal, AI assisted:** choose one of the four libraries once, send one or
-  more videos, review the proposed identity and destination, then use
+  more videos, review the final saved filenames, then use
   **Downloads → Download → Confirm**. The chosen library persists for that
-  chat until explicitly changed, and AI is never allowed to select it.
+  chat until explicitly changed, and AI is never allowed to select it. A short
+  burst of episodes is handled as one compact batch. Mixed series are routed
+  independently; an existing reliable folder match is automatic, while a new
+  series asks for one shared confirmation.
 - **Advanced, no AI required:** manually select or create series folders,
   correct IMDb identity, sort/resort episodes, repair metadata, resolve queue
   conflicts, and use history/undo/recovery tools.
@@ -250,9 +253,9 @@ video in the same directory. Series/season artwork and NFO files are left alone.
 ## Jellyfin scan completion
 
 `/jellyfin_scan` triggers the scan and then checks Jellyfin's `RefreshLibrary`
-scheduled task only for that requested operation. The bot reports when Jellyfin
-accepts the request, when the task starts, progress milestones when available,
-and the final `Completed`, `Failed`, or cancelled result.
+scheduled task only for that requested operation. The bot edits one status
+message as the task progresses. On success it briefly shows that Jellyfin is
+ready and then deletes that completed status message. Failures remain visible.
 
 If the monitoring timeout is reached, the scan is not cancelled. Use
 `/jellyfin_status` to see Jellyfin's live task state and progress. No continuous

@@ -804,7 +804,9 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                     async def run(self, items, notify):
                         app.store.update_item(pending_id, status="completed")
 
-                async def fake_sorter(chat_id, folder_name, library_key=None):
+                async def fake_sorter(
+                    chat_id, folder_name, library_key=None, **kwargs
+                ):
                     sorted_targets.append((chat_id, folder_name, library_key))
                     return True
 
@@ -907,7 +909,348 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                         "Dr. Stone (2019) [imdbid-tt9679542]",
                     )
                     self.assertTrue(cfg.target_path(item["target_folder"]).is_dir())
-                    self.assertTrue(any("Episode identity confirmed" in text for text, _ in sent))
+                    self.assertTrue(any("Series confirmed" in text for text, _ in sent))
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_ai_series_reuses_existing_imdb_folder_without_confirmation(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                data = config_data(root)
+                data.update({
+                    "n8n_agent_enabled": True,
+                    "n8n_agent_url": "http://n8n:5678/webhook/media-identify",
+                })
+                path = root / "config.json"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                folder_name = "Dr. Stone (2019) [imdbid-tt9679542]"
+                cfg.target_path(folder_name, "series").mkdir(parents=True)
+                sent = []
+
+                class FakeIdentifier:
+                    configured = True
+
+                    async def identify(self, **kwargs):
+                        return MediaIdentification(
+                            title_query="Dr. Stone",
+                            season=4,
+                            episode=25,
+                            year=2019,
+                            confidence=0.96,
+                            needs_user_input=False,
+                            question=None,
+                        )
+
+                class FakeIMDb:
+                    async def search(self, query, media_type="any"):
+                        return ([{
+                            "title": "Dr. Stone",
+                            "year": 2019,
+                            "score": 98,
+                            "imdb_id": "tt9679542",
+                            "folder_name": folder_name,
+                        }], "test IMDb")
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append(text)
+
+                app.ai_identifier = FakeIdentifier()
+                app.imdb = FakeIMDb()
+                app.send = fake_send
+                try:
+                    pending_id = app.queue.add(
+                        message_id=1,
+                        chat_id=987654321,
+                        file_id="file-id",
+                        file_unique_id="existing-series-episode",
+                        original_filename="Dr.Stone.S04E25.mkv",
+                        file_size=100,
+                        received_at="2026-08-22T00:00:00+00:00",
+                        target_folder=None,
+                        library_key="series",
+                        media_kind="series",
+                        status="awaiting_identification",
+                    )
+                    await app._run_ai_series_identification(
+                        987654321, pending_id, ""
+                    )
+                    item = app.store.get_item(pending_id, chat_id=987654321)
+                    self.assertEqual(item["status"], "queued")
+                    self.assertEqual(item["target_folder"], folder_name)
+                    self.assertEqual(app.imdb_choices, {})
+                    self.assertEqual(sent, [])
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_mixed_existing_series_are_routed_independently(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                destinations = {
+                    "Witch Hat Atelier": (
+                        "Witch Hat Atelier (2026) [imdbid-tt32550889]",
+                        "tt32550889",
+                    ),
+                    "Solo Leveling": (
+                        "Solo Leveling (2024) [imdbid-tt21209876]",
+                        "tt21209876",
+                    ),
+                }
+                for folder_name, _ in destinations.values():
+                    cfg.target_path(folder_name, "series").mkdir(parents=True)
+
+                class FakeIMDb:
+                    async def search(self, query, media_type="any"):
+                        title = next(name for name in destinations if name in query)
+                        folder_name, imdb_id = destinations[title]
+                        return ([{
+                            "title": title,
+                            "year": 2026 if title.startswith("Witch") else 2024,
+                            "score": 99,
+                            "imdb_id": imdb_id,
+                            "folder_name": folder_name,
+                        }], "test IMDb")
+
+                app.imdb = FakeIMDb()
+                try:
+                    ids = []
+                    for index, (title, episode) in enumerate(
+                        (("Witch Hat Atelier", 1), ("Solo Leveling", 7)), 1
+                    ):
+                        pending_id = app.queue.add(
+                            message_id=index,
+                            chat_id=987654321,
+                            file_id=f"file-{index}",
+                            file_unique_id=f"mixed-{index}",
+                            original_filename=f"episode-{index}.mkv",
+                            file_size=100,
+                            received_at="2026-08-22T00:00:00+00:00",
+                            target_folder=None,
+                            library_key="series",
+                            media_kind="series",
+                            status="awaiting_identification",
+                        )
+                        ids.append((pending_id, title))
+                        await app._continue_series_identification(
+                            987654321,
+                            pending_id,
+                            MediaIdentification(
+                                title_query=title,
+                                season=1,
+                                episode=episode,
+                                year=None,
+                                confidence=0.95,
+                                needs_user_input=False,
+                                question=None,
+                            ),
+                        )
+                    for pending_id, title in ids:
+                        item = app.store.get_item(pending_id, chat_id=987654321)
+                        self.assertEqual(item["status"], "queued")
+                        self.assertEqual(
+                            item["target_folder"], destinations[title][0]
+                        )
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_new_series_episodes_share_one_folder_confirmation(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                class FakeIMDb:
+                    async def search(self, query, media_type="any"):
+                        return ([{
+                            "title": "Witch Hat Atelier",
+                            "year": 2026,
+                            "score": 99,
+                            "imdb_id": "tt32550889",
+                            "folder_name": (
+                                "Witch Hat Atelier (2026) "
+                                "[imdbid-tt32550889]"
+                            ),
+                        }], "test IMDb")
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append((text, reply_markup))
+
+                app.imdb = FakeIMDb()
+                app.send = fake_send
+                try:
+                    pending_ids = []
+                    for episode in (1, 2, 3):
+                        pending_id = app.queue.add(
+                            message_id=episode,
+                            chat_id=987654321,
+                            file_id=f"file-{episode}",
+                            file_unique_id=f"new-series-{episode}",
+                            original_filename=f"episode-{episode}.mkv",
+                            file_size=100,
+                            received_at="2026-08-22T00:00:00+00:00",
+                            target_folder=None,
+                            library_key="series",
+                            media_kind="series",
+                            status="awaiting_identification",
+                        )
+                        pending_ids.append(pending_id)
+                        await app._continue_series_identification(
+                            987654321,
+                            pending_id,
+                            MediaIdentification(
+                                title_query="Witch Hat Atelier",
+                                season=1,
+                                episode=episode,
+                                year=2026,
+                                confidence=0.95,
+                                needs_user_input=False,
+                                question=None,
+                            ),
+                        )
+                    self.assertEqual(len(app.imdb_choices), 1)
+                    choice = next(iter(app.imdb_choices.values()))
+                    self.assertEqual(len(choice["queue_entries"]), 3)
+                    self.assertEqual(
+                        sum("New series:" in text for text, _ in sent), 1
+                    )
+                    await app._confirm_series_queue_choice(
+                        987654321, choice
+                    )
+                    for pending_id in pending_ids:
+                        item = app.store.get_item(
+                            pending_id, chat_id=987654321
+                        )
+                        self.assertEqual(item["status"], "queued")
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_episode_burst_uses_one_compact_identification_message(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+                edited = []
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append(text)
+                    return {"message_id": 99}
+
+                async def fake_edit(chat_id, message_id, text):
+                    edited.append((message_id, text))
+                    return True
+
+                async def fake_identify(chat_id, pending_id, caption=""):
+                    app.store.update_item(
+                        pending_id,
+                        target_folder="Existing Series",
+                        series_season=1,
+                        series_episode=pending_id,
+                        download_filename=f"Incoming - S01E{pending_id:02d}.mkv",
+                        status="queued",
+                    )
+
+                app.send = fake_send
+                app.edit_message = fake_edit
+                app._run_ai_series_identification = fake_identify
+                library = cfg.library("series", "series")
+                try:
+                    with patch(
+                        "telegram_jellyfin_bot.bot.SERIES_BATCH_WINDOW_SECONDS",
+                        0,
+                    ):
+                        for episode in (1, 2, 3):
+                            await app._queue_series_for_identification(
+                                987654321,
+                                {
+                                    "message_id": episode,
+                                    "from": {"id": 44},
+                                },
+                                {
+                                    "file_id": f"file-{episode}",
+                                    "file_unique_id": f"burst-{episode}",
+                                },
+                                f"episode-{episode}.mkv",
+                                "",
+                                library,
+                            )
+                        await asyncio.sleep(0.05)
+                    self.assertEqual(len(sent), 1)
+                    self.assertIn("Identifying 3 episode(s)", sent[0])
+                    self.assertEqual(len(edited), 1)
+                    self.assertIn("3 ready", edited[0][1])
+                finally:
+                    await app.shutdown()
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_download_review_shows_final_series_filename(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                class FakeDownloader:
+                    running = False
+                    running_chat_id = None
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append(text)
+
+                app.downloader = FakeDownloader()
+                app.send = fake_send
+                try:
+                    pending_id = app.queue.add(
+                        message_id=1,
+                        chat_id=987654321,
+                        file_id="file-id",
+                        file_unique_id="preview-final-name",
+                        original_filename="[AWHT] Dr Stone S4 - 25 [480p].mkv",
+                        file_size=1024,
+                        received_at="2026-08-22T00:00:00+00:00",
+                        target_folder="Dr. Stone (2019) [imdbid-tt9679542]",
+                        library_key="series",
+                        media_kind="series",
+                        status="queued",
+                    )
+                    app.store.update_item(
+                        pending_id,
+                        series_season=4,
+                        series_episode=25,
+                        download_filename="Incoming - S04E25.mkv",
+                    )
+                    await app.cmd_download(987654321, "")
+                    preview = sent[-1]
+                    self.assertIn("Dr. Stone - S04E25.mkv", preview)
+                    self.assertNotIn("[AWHT]", preview)
+                    self.assertNotIn("Incoming", preview)
                 finally:
                     app.store.close()
 
@@ -2149,18 +2492,69 @@ class JellyfinBridgeTests(unittest.TestCase):
                 app.send = fake_send
                 try:
                     await app._run_jellyfin_scan(987654321)
+                    self.assertTrue(any("scan started" in text for text in sent))
                     self.assertTrue(
-                        any("accepted the scan" in text for text in sent)
-                    )
-                    self.assertTrue(
-                        any(
-                            "library scan completed" in text
-                            and "ready" in text
-                            for text in sent
-                        )
+                        any("Jellyfin is ready" in text for text in sent)
                     )
                 finally:
                     app.store.close()
+        asyncio.run(exercise())
+
+    def test_completed_jellyfin_scan_edits_and_deletes_one_status_message(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+
+                class FakeJellyfin:
+                    async def scan_library_and_wait(self, on_update):
+                        await on_update({"phase": "accepted"})
+                        await on_update({"phase": "progress", "progress": 75.0})
+                        return {
+                            "status": "Completed",
+                            "completed_at": "2026-08-23T00:00:00Z",
+                        }
+
+                class FakeApi:
+                    def __init__(self):
+                        self.sent = []
+                        self.edited = []
+                        self.deleted = []
+
+                    async def send(self, chat_id, text, reply_markup=None, **kwargs):
+                        self.sent.append(text)
+                        return {"message_id": 55}
+
+                    async def edit(self, chat_id, message_id, text):
+                        self.edited.append((message_id, text))
+                        return True
+
+                    async def delete(self, chat_id, message_id):
+                        self.deleted.append(message_id)
+                        return True
+
+                api = FakeApi()
+                app.api = api
+                app.jellyfin = FakeJellyfin()
+                try:
+                    with patch(
+                        "telegram_jellyfin_bot.bot.TRANSIENT_SCAN_RESULT_SECONDS",
+                        0,
+                    ):
+                        await app._run_jellyfin_scan(987654321)
+                        await asyncio.sleep(0.02)
+                    self.assertEqual(len(api.sent), 1)
+                    self.assertTrue(
+                        any("Jellyfin is ready" in text for _, text in api.edited)
+                    )
+                    self.assertEqual(api.deleted, [55])
+                finally:
+                    await app.shutdown()
+                    app.store.close()
+
         asyncio.run(exercise())
 
 
