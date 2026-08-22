@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any
 import uuid
 
@@ -44,6 +45,41 @@ class N8nMediaIdentifier:
         except (TypeError, ValueError):
             return None
         return number if number > 0 else None
+
+    @staticmethod
+    def _response_object(value: Any) -> dict[str, Any]:
+        """Normalize harmless n8n response wrappers without weakening checks.
+
+        Depending on the Respond to Webhook node/version, one item can arrive
+        as an object, a one-item array, or a JSON-encoded object string. Only
+        those single-result forms are accepted. The trusted request fields are
+        still verified by ``identify`` after normalization.
+        """
+        for _ in range(3):
+            if isinstance(value, dict):
+                return value
+            if isinstance(value, list):
+                if len(value) != 1:
+                    raise RuntimeError(
+                        "n8n webhook returned multiple identification results."
+                    )
+                value = value[0]
+                continue
+            if isinstance(value, str):
+                if len(value) > 100_000:
+                    raise RuntimeError("n8n webhook response is unexpectedly large.")
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        "n8n webhook returned a JSON string that does not contain "
+                        "an identification object."
+                    ) from exc
+                continue
+            break
+        raise RuntimeError(
+            "n8n webhook response must contain one JSON identification object."
+        )
 
     async def identify(
         self,
@@ -107,8 +143,7 @@ class N8nMediaIdentifier:
         except aiohttp.ClientError as exc:
             raise RuntimeError(f"Could not reach the n8n webhook: {exc}") from exc
 
-        if not isinstance(result, dict):
-            raise RuntimeError("n8n webhook response must be a JSON object.")
+        result = self._response_object(result)
         if result.get("request_id") != request_id:
             raise RuntimeError("n8n webhook returned the wrong request_id.")
         if result.get("media_kind") != media_kind:
