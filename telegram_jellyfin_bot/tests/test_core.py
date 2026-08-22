@@ -780,6 +780,7 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                 cfg = load_config(path, create_from_example=False)
                 app = BotApp(cfg)
                 sorted_targets = []
+                scan_requests = []
 
                 pending_id = app.queue.add(
                     message_id=3,
@@ -810,8 +811,16 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                     sorted_targets.append((chat_id, folder_name, library_key))
                     return True
 
+                class FakeJellyfin:
+                    configured = True
+
+                async def fake_scan(chat_id):
+                    scan_requests.append(chat_id)
+
                 app.downloader = FakeDownloader()
                 app._run_sorter = fake_sorter
+                app.jellyfin = FakeJellyfin()
+                app._run_jellyfin_scan = fake_scan
                 try:
                     await app._run_downloads_and_movie_imports(
                         987654321, [app.store.get_item(pending_id)]
@@ -824,6 +833,7 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                             "series",
                         )],
                     )
+                    self.assertEqual(scan_requests, [987654321])
                 finally:
                     app.store.close()
 
@@ -909,7 +919,12 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                         "Dr. Stone (2019) [imdbid-tt9679542]",
                     )
                     self.assertTrue(cfg.target_path(item["target_folder"]).is_dir())
-                    self.assertTrue(any("Series confirmed" in text for text, _ in sent))
+                    ready_messages = [
+                        text for text, _ in sent if "episode(s) ready" in text
+                    ]
+                    self.assertEqual(len(ready_messages), 1)
+                    self.assertIn("Dr. Stone: S04E25", ready_messages[0])
+                    self.assertIn("Next: /download", ready_messages[0])
                 finally:
                     app.store.close()
 
@@ -1200,7 +1215,12 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                     self.assertEqual(len(sent), 1)
                     self.assertIn("Identifying 3 episode(s)", sent[0])
                     self.assertEqual(len(edited), 1)
-                    self.assertIn("3 ready", edited[0][1])
+                    self.assertIn("3 episode(s) ready", edited[0][1])
+                    self.assertIn(
+                        "Existing Series: S01E01, S01E02, S01E03",
+                        edited[0][1],
+                    )
+                    self.assertIn("Next: /download", edited[0][1])
                 finally:
                     await app.shutdown()
                     app.store.close()
@@ -2461,6 +2481,68 @@ class JellyfinBridgeTests(unittest.TestCase):
                     store.close()
         asyncio.run(exercise())
 
+    def test_scan_waits_for_existing_task_then_requests_a_fresh_refresh(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                store = StateStore(cfg.data_path / "state.db")
+                existing_running = self.scan_task(
+                    "Running",
+                    started="2026-08-23T10:00:00Z",
+                    ended="",
+                    progress=80,
+                )
+                existing_completed = self.scan_task(
+                    "Idle",
+                    started="2026-08-23T10:00:00Z",
+                    ended="2026-08-23T10:00:10Z",
+                )
+                fresh_running = self.scan_task(
+                    "Running",
+                    started="2026-08-23T10:00:11Z",
+                    ended="",
+                    progress=25,
+                )
+                fresh_completed = self.scan_task(
+                    "Idle",
+                    started="2026-08-23T10:00:11Z",
+                    ended="2026-08-23T10:00:20Z",
+                )
+                session = _FakeJellyfinSession([
+                    existing_running,
+                    existing_completed,
+                    existing_completed,
+                    fresh_running,
+                    fresh_completed,
+                ])
+                bridge = JellyfinBridge(cfg, store, session)
+                updates = []
+
+                async def on_update(update):
+                    updates.append(update)
+
+                try:
+                    result = await bridge.scan_library_and_wait(
+                        on_update,
+                        poll_interval_seconds=0,
+                        timeout_seconds=1,
+                    )
+                    self.assertEqual(result["status"], "Completed")
+                    self.assertEqual(len(session.posts), 1)
+                    self.assertTrue(
+                        session.posts[0][0].endswith("/Library/Refresh")
+                    )
+                    phases = [update["phase"] for update in updates]
+                    self.assertIn("already-running", phases)
+                    self.assertIn("accepted", phases)
+                finally:
+                    store.close()
+
+        asyncio.run(exercise())
+
     def test_bot_announces_when_jellyfin_scan_is_ready(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
@@ -2500,7 +2582,7 @@ class JellyfinBridgeTests(unittest.TestCase):
                     app.store.close()
         asyncio.run(exercise())
 
-    def test_completed_jellyfin_scan_edits_and_deletes_one_status_message(self):
+    def test_completed_jellyfin_scan_keeps_one_ready_status_message(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
                 root = Path(td)
@@ -2540,17 +2622,10 @@ class JellyfinBridgeTests(unittest.TestCase):
                 app.api = api
                 app.jellyfin = FakeJellyfin()
                 try:
-                    with patch(
-                        "telegram_jellyfin_bot.bot.TRANSIENT_SCAN_RESULT_SECONDS",
-                        0,
-                    ):
-                        await app._run_jellyfin_scan(987654321)
-                        await asyncio.sleep(0.02)
+                    await app._run_jellyfin_scan(987654321)
                     self.assertEqual(len(api.sent), 1)
-                    self.assertTrue(
-                        any("Jellyfin is ready" in text for _, text in api.edited)
-                    )
-                    self.assertEqual(api.deleted, [55])
+                    self.assertEqual(api.edited[-1], (55, "✅ Jellyfin is ready."))
+                    self.assertEqual(api.deleted, [])
                 finally:
                     await app.shutdown()
                     app.store.close()

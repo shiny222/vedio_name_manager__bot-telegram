@@ -226,6 +226,8 @@ TEXT_FA = {
     "Is this name correct for the matching queued episodes?": "آیا این نام برای قسمت‌های مطابق در صف درست است؟",
     "Series confirmed:": "سریال تأیید شد:",
     "Use /download when finished sending.": "پس از پایان ارسال، /download را اجرا کنید.",
+    "Next: /download": "مرحله بعد: /download",
+    "Resolve the items above before downloading.": "پیش از دانلود، موارد بالا را مشخص کنید.",
     "Send the correct series title. The detected season and episode numbers will be kept for all matching files.": "نام صحیح سریال را ارسال کنید. شماره فصل و قسمت تشخیص‌داده‌شده برای همه فایل‌های مطابق حفظ می‌شود.",
     "Enter the series title, season, and episode manually.": "نام سریال، فصل و قسمت را به‌صورت دستی وارد کنید.",
     "No waiting episodes could use this series folder.": "هیچ قسمت منتظری نتوانست از این پوشه سریال استفاده کند.",

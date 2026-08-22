@@ -277,6 +277,16 @@ class JellyfinBridge:
             raise RuntimeError("A Jellyfin scan is already being monitored.")
         self.active = True
         try:
+            poll_interval = (
+                self.config.jellyfin_scan_poll_interval_seconds
+                if poll_interval_seconds is None
+                else max(0.0, poll_interval_seconds)
+            )
+            monitor_timeout = (
+                self.config.jellyfin_scan_monitor_timeout_seconds
+                if timeout_seconds is None
+                else max(0.1, timeout_seconds)
+            )
             try:
                 baseline_task = await self.library_scan_status()
             except Exception as exc:
@@ -302,30 +312,43 @@ class JellyfinBridge:
                             "requested_at": requested_at,
                         }
                     )
-            else:
-                requested_at = await self._post_library_scan()
-                if on_update:
-                    await on_update(
-                        {
-                            "phase": "accepted",
-                            "requested_at": requested_at,
-                        }
+
+                # The running task may have started before a newly downloaded
+                # file reached its final media folder. Watching that older task
+                # is not enough: wait for it, then request a fresh refresh so
+                # this operation's files cannot be missed.
+                await self._wait_for_library_scan(
+                    requested_at,
+                    baseline_task,
+                    on_update,
+                    poll_interval,
+                    monitor_timeout,
+                )
+                try:
+                    baseline_task = await self.library_scan_status()
+                except Exception as exc:
+                    LOG.warning(
+                        "Could not refresh Jellyfin scan baseline after the "
+                        "existing scan completed: %s",
+                        exc,
                     )
+                    baseline_task = None
+
+            requested_at = await self._post_library_scan()
+            if on_update:
+                await on_update(
+                    {
+                        "phase": "accepted",
+                        "requested_at": requested_at,
+                    }
+                )
 
             return await self._wait_for_library_scan(
                 requested_at,
                 baseline_task,
                 on_update,
-                (
-                    self.config.jellyfin_scan_poll_interval_seconds
-                    if poll_interval_seconds is None
-                    else max(0.0, poll_interval_seconds)
-                ),
-                (
-                    self.config.jellyfin_scan_monitor_timeout_seconds
-                    if timeout_seconds is None
-                    else max(0.1, timeout_seconds)
-                ),
+                poll_interval,
+                monitor_timeout,
             )
         except TimeoutError:
             raise

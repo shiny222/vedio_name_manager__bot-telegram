@@ -75,7 +75,6 @@ else:
 
 LOG = logging.getLogger(__name__)
 SERIES_BATCH_WINDOW_SECONDS = 2.0
-TRANSIENT_SCAN_RESULT_SECONDS = 8.0
 IMDB_FOLDER_ID_RE = re.compile(r"\[imdbid-(tt\d+)\]", re.IGNORECASE)
 FOLDER_YEAR_RE = re.compile(r"\s*[\(\[]((?:19|20)\d{2})[\)\]]\s*$")
 
@@ -105,6 +104,7 @@ def _normalized_title(value: str) -> str:
 
 
 HELP = """Commands:
+/start - Choose a language on first use or reopen help/menu
 /menu - Show the button menu
 /libraries - Choose one of the configured media libraries
 /use_library KEY - Select a library directly
@@ -153,6 +153,7 @@ HELP = """Commands:
 /help - Show this help"""
 
 HELP_FA = """دستورها:
+/start - انتخاب زبان در اولین اجرا یا باز کردن دوباره راهنما و منو
 /menu - نمایش منوی دکمه‌ای
 /libraries - انتخاب یکی از کتابخانه‌های رسانه
 /use_library KEY - انتخاب مستقیم کتابخانه
@@ -216,20 +217,23 @@ NORMAL WORKFLOW — AI ASSISTED
    Video Series, or Video Movies. It stays selected until you change it.
    AI is never allowed to choose or change this destination.
 2. Send one or several supported videos. A short burst is identified as one
-   compact batch; mixed series are routed independently.
+   compact batch; mixed series are routed independently. One batch status is
+   edited in place with the useful title/episode summary and /download next
+   step instead of sending progress messages for every episode.
 3. When the n8n connection is enabled, AI reads the untrusted filename/caption
    and suggests movie title/year or series title/season/episode. The existing
    IMDb tool finds the official Jellyfin identity.
 4. An existing reliable series-folder match is used automatically. A new
-   series asks once for all matching episodes. Download review shows the final
-   saved filenames, file count, and size. A failed AI/IMDb request must not
-   change the library.
+   series asks once for all matching episodes. This identity approval is
+   separate from the one final download approval. Download review shows the
+   final saved filenames, file count, and size. A failed AI/IMDb request must
+   not change the library.
 5. Open Downloads: Queue → Download → Confirm.
 6. Movies are staged and imported safely. AI-confirmed series episodes are
    organized automatically after their downloads finish.
 7. Use Jellyfin → Scan library if an automatic scan did not run. Its one status
-   message disappears shortly after Jellyfin is ready. Use Episodes to inspect
-   the current series or the series libraries.
+   message becomes `✅ Jellyfin is ready.` and remains visible. Use Episodes to
+   inspect the current series or the series libraries.
 
 ADVANCED WORKFLOW — NO AI REQUIRED
 Use Advanced for unusual filenames, incorrect identity, manual organization,
@@ -283,20 +287,22 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
    Video Series یا Video Movies را انتخاب کنید. انتخاب تا تغییر بعدی باقی
    می‌ماند. AI اجازه انتخاب یا تغییر مقصد را ندارد.
 ۲. یک یا چند ویدیو بفرستید. فایل‌هایی که با فاصله کوتاه ارسال شوند در یک دسته
-   کم‌پیام شناسایی می‌شوند و سریال‌های متفاوت جداگانه هدایت می‌شوند.
+   کم‌پیام شناسایی می‌شوند و سریال‌های متفاوت جداگانه هدایت می‌شوند. وضعیت کل
+   دسته همراه خلاصه نام/قسمت و مرحله بعد /download در یک پیام ویرایش می‌شود و
+   برای هر قسمت پیام پیشرفت جدا نمی‌آید.
 ۳. پس از فعال شدن اتصال n8n، AI از نام فایل/کپشن نام و سال فیلم یا نام سریال
    و فصل و قسمت را پیشنهاد می‌دهد. ابزار IMDb نام رسمی Jellyfin را پیدا می‌کند.
 ۴. پوشه سریال موجود با تطبیق معتبر خودکار استفاده می‌شود. برای سریال جدید فقط
-   یک بار برای همه قسمت‌های مطابق تأیید گرفته می‌شود. بررسی دانلود نام نهایی
-   فایل‌ها، تعداد و حجم را نشان می‌دهد. خرابی AI یا IMDb نباید کتابخانه را
-   تغییر دهد.
+   یک بار برای همه قسمت‌های مطابق تأیید هویت گرفته می‌شود. این تأیید از تأیید
+   نهایی دانلود جدا است. بررسی دانلود نام نهایی فایل‌ها، تعداد و حجم را نشان
+   می‌دهد. خرابی AI یا IMDb نباید کتابخانه را تغییر دهد.
 ۵. دانلودها را باز کنید: صف ← دانلود ← تأیید.
 ۶. فیلم ابتدا وارد staging و سپس امن وارد کتابخانه می‌شود. در روند فعلی
    قسمت‌های سریال که با AI تأیید شده‌اند، بعد از پایان دانلود
    به‌صورت خودکار مرتب می‌شوند.
-۷. اگر اسکن خودکار اجرا نشد، Jellyfin ← اسکن کتابخانه را بزنید. پیام وضعیت کمی
-   پس از آماده شدن Jellyfin حذف می‌شود. از قسمت‌ها برای بررسی سریال فعلی یا
-   کتابخانه‌های سریال استفاده کنید.
+۷. اگر اسکن خودکار اجرا نشد، Jellyfin ← اسکن کتابخانه را بزنید. همان پیام وضعیت
+   به `✅ Jellyfin آماده است.` تغییر می‌کند و در چت باقی می‌ماند. از قسمت‌ها
+   برای بررسی سریال فعلی یا کتابخانه‌های سریال استفاده کنید.
 
 روش پیشرفته — بدون نیاز به AI
 برای نام غیرعادی، تشخیص اشتباه، کار دستی، تداخل یا عملیات ناقص استفاده کنید.
@@ -1930,20 +1936,72 @@ class BotApp:
                 chat_id, int(pending_id), str(caption)
             )
 
-        ready = 0
+        ready_items: list[dict] = []
         needs_attention = 0
         for pending_id, _ in items:
             item = self.store.get_item(int(pending_id), chat_id=chat_id)
             if item and item.get("status") == "queued":
-                ready += 1
+                ready_items.append(item)
             else:
                 needs_attention += 1
-        final_text = (
-            f"Checked {len(items)} episode(s): {ready} ready, "
-            f"{needs_attention} need attention."
-        )
+        ready = len(ready_items)
+        if ready and not needs_attention:
+            final_text = f"✅ {ready} episode(s) ready."
+        else:
+            final_text = (
+                f"Checked {len(items)} episode(s): {ready} ready, "
+                f"{needs_attention} need attention."
+            )
+        episode_lines = self._compact_ready_episode_lines(ready_items)
+        if episode_lines:
+            final_text += "\n" + "\n".join(episode_lines)
+        if ready and not needs_attention:
+            final_text += "\n\nNext: /download"
+        elif needs_attention:
+            final_text += "\n\nResolve the items above before downloading."
         if status_message_id is not None:
-            await self.edit_message(chat_id, status_message_id, final_text)
+            if await self.edit_message(chat_id, status_message_id, final_text):
+                return
+        await self.send(chat_id, final_text)
+
+    @staticmethod
+    def _compact_ready_episode_lines(items: list[dict]) -> list[str]:
+        """Summarize useful identity details without returning to message spam."""
+        groups: dict[str, dict[str, Any]] = {}
+        for item in items:
+            folder_name = str(item.get("target_folder") or "").strip()
+            if not folder_name:
+                continue
+            try:
+                season = int(item.get("series_season") or 1)
+                episode = int(item.get("series_episode") or 0)
+            except (TypeError, ValueError):
+                continue
+            if season < 1 or episode < 1:
+                continue
+            group = groups.setdefault(
+                folder_name,
+                {
+                    "title": str(item.get("series_title") or "").strip()
+                    or _series_file_title(folder_name),
+                    "episodes": [],
+                },
+            )
+            marker = (season, episode)
+            if marker not in group["episodes"]:
+                group["episodes"].append(marker)
+
+        lines: list[str] = []
+        grouped = list(groups.values())
+        for group in grouped[:8]:
+            episodes = sorted(group["episodes"])
+            labels = [f"S{season:02d}E{episode:02d}" for season, episode in episodes[:12]]
+            if len(episodes) > 12:
+                labels.append(f"+{len(episodes) - 12} more")
+            lines.append(f"• {group['title']}: {', '.join(labels)}")
+        if len(grouped) > 8:
+            lines.append(f"• +{len(grouped) - 8} more series")
+        return lines
 
     def _series_item_for_chat(
         self, pending_id: int, chat_id: int
@@ -2050,6 +2108,7 @@ class BotApp:
             return
 
         queued = 0
+        ready_items: list[dict] = []
         for entry in entries:
             pending_id = int(entry.get("pending_id") or 0)
             item = self._series_item_for_chat(pending_id, chat_id)
@@ -2089,6 +2148,9 @@ class BotApp:
                 error=None,
             )
             queued += 1
+            updated = self.store.get_item(pending_id, chat_id=chat_id)
+            if updated:
+                ready_items.append(updated)
 
         if not queued:
             if notify:
@@ -2101,10 +2163,12 @@ class BotApp:
         if self._chat_setting(chat_id, "current_library_key") == library_key:
             self._set_chat_setting(chat_id, "current_folder", folder_name)
         if notify:
+            episode_lines = self._compact_ready_episode_lines(ready_items)
+            details = "\n" + "\n".join(episode_lines) if episode_lines else ""
             await self.send(
                 chat_id,
-                f"Series confirmed: {folder_name}\n"
-                f"{queued} episode(s) ready. Use /download when finished sending.",
+                f"✅ {queued} episode(s) ready."
+                f"{details}\n\nNext: /download",
             )
 
     async def _run_manual_series_identification(
@@ -3544,12 +3608,6 @@ class BotApp:
             chat_id,
         )
 
-    async def _delete_message_after(
-        self, chat_id: int, message_id: int, delay: float
-    ) -> None:
-        await asyncio.sleep(delay)
-        await self.delete_message(chat_id, message_id)
-
     async def _run_jellyfin_scan(self, chat_id: int) -> None:
         if not self.jellyfin:
             await self.send(chat_id, "Jellyfin connection is not ready yet.")
@@ -3591,15 +3649,6 @@ class BotApp:
             if status.casefold() == "completed":
                 if status_message_id is not None:
                     await set_status("✅ Jellyfin is ready.")
-                    self.track_task(
-                        self._delete_message_after(
-                            chat_id,
-                            status_message_id,
-                            TRANSIENT_SCAN_RESULT_SECONDS,
-                        ),
-                        f"delete-jellyfin-scan-status:{chat_id}:{status_message_id}",
-                        chat_id,
-                    )
                 else:
                     await self.send(chat_id, "✅ Jellyfin is ready.")
             else:

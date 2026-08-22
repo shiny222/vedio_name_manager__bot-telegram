@@ -30,6 +30,19 @@ file, run the organizers, or scan Jellyfin.
 5. Copy the production URL. Containers on the `media-automation` Docker network
    use `http://n8n:5678/webhook/media-identify`.
 
+The imported nodes must keep these response settings:
+
+- **Media Identify Webhook**: Method `POST`, Path `media-identify`, Respond
+  `Using Respond to Webhook Node`;
+- **Return Identification**: Respond With `JSON`, Response Body `={{ $json }}`,
+  Response Code `200`.
+
+If the UI shows **First Incoming Item** instead of JSON, change it back to the
+settings above or import the tracked workflow again. The bot accepts one JSON
+object, a one-item array, or a JSON-encoded object string, but rejects multiple
+identification results and verifies that the response did not change the
+request ID, media kind, or library key.
+
 Do not put an AI API key or the webhook secret directly in the workflow JSON or
 commit either value to Git. Store the AI key in n8n Credentials. The bot-side
 secret will later be stored in the Video Manager `.env` file.
@@ -107,3 +120,48 @@ curl -X POST http://n8n:5678/webhook/media-identify \
 
 The workflow is intentionally imported as inactive and without credentials, so
 it cannot expose a webhook or spend AI credits until it is configured.
+
+## Common errors
+
+### `POST media-identify is not registered` / HTTP 404
+
+The bot is calling a production URL while the workflow is inactive. Save or
+publish the workflow, turn it active, and use its production `/webhook/` URL.
+The browser `/workflow/WORKFLOW_ID?projectId=...` address is only the editor.
+
+### `response must contain one JSON identification object`
+
+Inspect the latest n8n execution. Confirm that **Parse and Normalize Response**
+ran successfully and that **Return Identification** receives its one normalized
+item. Set the response node to JSON with `={{ $json }}` as described above.
+Do not return the agent's Markdown/text directly.
+
+### Authorization failed
+
+This can refer to either layer:
+
+- Webhook Header Auth: `N8N_AGENT_SECRET` must match the
+  `X-Video-Manager-Secret` credential on the Webhook node.
+- AI provider: the API key, compatible base URL, and model ID belong to the
+  chat-model credential/node in n8n.
+
+A successful credential test does not guarantee that a particular model has
+capacity or that the account has credits.
+
+### Model unavailable, rate-limited, or insufficient credits
+
+Select a model currently available to that provider. A provider may list free
+models but still apply capacity and rate limits. Configure retry in the model
+node for temporary capacity failures. The Python bot leaves the queue item
+undownloaded when the webhook fails, so switching models does not risk a media
+move.
+
+### Test URL works but production URL fails
+
+The test URL is registered only while **Listen for test event** is waiting. The
+production URL is registered only while the workflow is active. Test each URL
+in its matching mode, then configure the bot with the production URL.
+
+More deployment and incident checks are in
+[`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md#n8n-ai-identification) and
+[`docs/OPERATIONS.md`](../../docs/OPERATIONS.md#troubleshooting-by-symptom).

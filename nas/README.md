@@ -5,6 +5,28 @@ as separate Compose projects under the existing `jellyfin-compose` directory.
 The Python and Telegram API images are built locally on the NAS from this Git
 repository. n8n and Jellyfin continue using their upstream images.
 
+This guide uses the current NAS paths exactly. If the storage UUID or directory
+names change, replace the host paths consistently; do not change the four
+container `/media/...` paths in the Video Manager Compose file.
+
+## Before you begin
+
+Confirm these prerequisites:
+
+- the NAS reports `x86_64` from `uname -m`;
+- Docker Engine and `docker compose` are installed;
+- the existing Jellyfin container is healthy and already serves the four media
+  libraries;
+- the four host media directories exist;
+- Git is installed on the NAS;
+- you have a BotFather token plus numeric `api_id` and `api_hash` from
+  `my.telegram.org`;
+- optional: a Jellyfin API key and an AI provider credential for n8n.
+
+The repository includes a Linux amd64 Local Telegram Bot API binary. Its image
+uses Ubuntu 24.04 for compatible runtime libraries. You do not need to compile
+that binary on the NAS.
+
 ## Resulting NAS layout
 
 ```text
@@ -31,6 +53,9 @@ jellyfin-compose/
 
 Runtime `.env` files and persistent directories are outside the Git source
 clone. A later `git pull` cannot replace them.
+
+The existing root `docker-compose.yml`, `config/`, and `cache/` shown above
+belong to Jellyfin. The installer does not read or rewrite them.
 
 ## 1. Clone and create the layout
 
@@ -97,6 +122,37 @@ chat and automatically changes that chat to series or movie mode. Every queued
 file remembers the chosen library, so selecting another destination later does
 not reroute it.
 
+Set the four host bind-mount paths to existing directories. For this NAS they
+are already provided in the generated example:
+
+```env
+HOST_ANIMATION_SERIES_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/animation-serise
+HOST_ANIMATION_MOVIE_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/animation-movie
+HOST_VIDEO_SERIES_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/video-serise
+HOST_VIDEO_MOVIE_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/video-movie
+```
+
+The misspelling `serise` is kept because it is the real existing directory.
+Renaming it only in `.env` would break the bind mount.
+
+### Configure NAS permissions
+
+The current media directories are owned by UID 65534 (`nobody`) and GID 100
+(`users`). Configure the bot with the permitted media group:
+
+```env
+PUID=0
+PGID=100
+```
+
+The container drops all Linux capabilities, so a process with UID 0 inside the
+container can still receive `Permission denied` from NAS ACLs. After starting
+Video Manager, verify every mount with the checks in the status section below.
+Do not recursively change the whole media archive to mode 777.
+
+The complete meaning of every `.env` field is in
+[`docs/CONFIGURATION.md`](../docs/CONFIGURATION.md).
+
 ## 3. Stop the old Windows processes
 
 Stop the Windows bot and Windows Local Telegram Bot API before starting the NAS
@@ -128,6 +184,9 @@ docker compose up -d
 docker compose logs -f
 ```
 
+`docker compose config` may print resolved credentials such as the Telegram API
+hash. Use it locally for validation, but redact secrets before sharing output.
+
 Press `Ctrl+C` to leave the log view; the container continues running.
 
 The included Linux binary is amd64 and requires glibc 2.38 and OpenSSL 3. Its
@@ -156,6 +215,17 @@ the project is run outside Docker.
 The Local Bot API data directory is mounted read-only at the identical container
 path in Video Manager. This allows the downloader to copy Telegram's completed
 local files without exposing that directory to the organizer for writing.
+
+Leave the live log view with `Ctrl+C`; the service keeps running. Then verify
+startup without following forever:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 video-manager
+```
+
+Open the Telegram bot and run `/language`, `/menu`, and `/libraries`. Select one
+library and confirm that the selection remains active when the menu is reopened.
 
 ### Moving existing Windows state
 
@@ -248,9 +318,37 @@ Check the shared network:
 docker network inspect media-automation
 ```
 
+Confirm that Video Manager can write all persistent and media mounts:
+
+```bash
+cd /srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/jellyfin-compose/video-manager-compose
+docker compose exec -T video-manager sh -c '
+id
+for p in /media/animation-serise /media/animation-movie /media/video-serise /media/video-movie /app/staging /app/data /app/logs; do
+  if test -w "$p"; then echo "WRITE_OK $p"; else echo "WRITE_DENIED $p"; fi
+done
+'
+```
+
+If a mount says `WRITE_DENIED`, inspect the matching host path and compare it
+with `.env`:
+
+```bash
+stat -c 'owner=%u group=%g permissions=%A path=%n' /actual/host/path
+getfacl /actual/host/path
+grep -E '^(PUID|PGID)=' .env
+```
+
+After changing only `PUID`, `PGID`, a token, path, or another `.env` value, run
+`docker compose up -d`. Environment-only changes do not require an image build.
+
 If a media mount is misspelled or missing, Compose refuses to start instead of
 silently creating an empty host folder. This is deliberate protection against
 writing downloads into the wrong location.
+
+For symptom-based help covering n8n webhook 404/JSON errors, Telegram 401,
+download timeouts, movie staging retries, metadata, and power-loss recovery,
+see [`docs/OPERATIONS.md`](../docs/OPERATIONS.md).
 
 ## Updating later
 
@@ -271,3 +369,14 @@ docker compose up -d
 
 The synchronization command refreshes tracked Compose templates but never
 overwrites an existing `.env` or persistent runtime directory.
+
+Rebuild Video Manager after Python source, requirements, or Dockerfile changes.
+If only `.env` changed, skip `docker compose build` and recreate the container.
+Rebuild Local Bot API only when its binary, checksum, Dockerfile, or base runtime
+changed.
+
+Before an update, back up the Video Manager `.env`, `data`, and `staging`
+directories; the n8n `.env` and `data` directory (including its original
+encryption key); and organizer history files stored inside media folders. Stop
+Video Manager before copying its SQLite database. The full backup and restore
+procedure is in [`docs/OPERATIONS.md`](../docs/OPERATIONS.md#backup-procedure).

@@ -11,22 +11,36 @@ The bot is intentionally separate from the other tools:
 - `movie_organizer` safely imports one confirmed movie at a time.
 - `fuzzy_search` is optional and only helps suggest official folder names.
 
-## Requirements
+For the complete project architecture, Docker/NAS deployment, every
+configuration variable, updates, backups, and recovery, start at the root
+[`README.md`](../README.md). This file focuses on the bot itself.
+
+## Deployment choices
+
+### NAS/Docker (recommended)
+
+The root Docker image contains the Python bot plus the three independent helper
+tools. Local Telegram Bot API and optional n8n run as separate Compose projects;
+the existing Jellyfin installation remains separate and unchanged. Follow
+[`nas/README.md`](../nas/README.md), not the Windows steps below.
+
+### Windows requirements
 
 - Windows
 - Python 3.10 or newer
 - A Telegram bot token from [BotFather](https://t.me/BotFather)
 - `api_id` and `api_hash` from [my.telegram.org](https://my.telegram.org)
-- `telegram-bot-api.exe` for Windows if you want large local downloads
+- the included Windows Local Telegram Bot API executable and DLLs under `tools`
 
-## Quick install
+## Windows quick install
 
 1. Open the `telegram_jellyfin_bot` folder.
 2. Run `install.bat`.
-3. Put `telegram-bot-api.exe` and its DLL files in the `tools` folder, or set the real path in `config.json`.
+3. Confirm the supplied `tools\telegram-bot-api.exe` and DLLs are present, or
+   set another real executable path in `config.json`.
 4. Edit `config.json`.
 5. Start `run_local_bot_api.bat`.
-6. Start `run.bat`.
+6. Start `run.bat` in a second window.
 
 To use movie mode, also run `movie_organizer\install.bat` once from the parent
 folder and configure the two movie paths described below.
@@ -157,6 +171,7 @@ in staging and `/movie_import ID` can retry it after you fix the problem.
 
 ## Commands
 
+- `/start` — choose a language on first use or reopen help/menu.
 - `/menu` — show the button menu.
 - `/guide` — choose the English or Persian step-by-step usage guide.
 - `/language` — choose and remember English or Persian for this chat.
@@ -254,8 +269,13 @@ video in the same directory. Series/season artwork and NFO files are left alone.
 
 `/jellyfin_scan` triggers the scan and then checks Jellyfin's `RefreshLibrary`
 scheduled task only for that requested operation. The bot edits one status
-message as the task progresses. On success it briefly shows that Jellyfin is
-ready and then deletes that completed status message. Failures remain visible.
+message as the task progresses. On success it edits that same message to
+`✅ Jellyfin is ready.` and keeps it visible. Failures remain visible too.
+
+If Jellyfin is already scanning when this request begins, the bot waits for
+that older task to finish and then submits one fresh refresh. This prevents a
+scan that started before the latest import from missing the newly organized
+files.
 
 If the monitoring timeout is reached, the scan is not cancelled. Use
 `/jellyfin_status` to see Jellyfin's live task state and progress. No continuous
