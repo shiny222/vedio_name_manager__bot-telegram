@@ -130,9 +130,10 @@ The main menu separates routine use from maintenance:
   more videos, review the final saved filenames, then use
   **Downloads → Download → Confirm**. The chosen library persists for that
   chat until explicitly changed, and AI is never allowed to select it. A short
-  burst of episodes is handled as one compact batch. Mixed series are routed
-  independently; an existing reliable folder match is automatic, while a new
-  series asks for one shared confirmation.
+  burst of episodes or movies is handled as one compact batch. Mixed series are
+  routed independently; an existing reliable series match is automatic, while
+  a new series asks for one shared confirmation. An exact high-confidence movie
+  title/year match is automatic; uncertain or inconsistent matches still ask.
 - **Advanced, no AI required:** manually select or create series folders,
   correct IMDb identity, sort/resort episodes, repair metadata, resolve queue
   conflicts, and use history/undo/recovery tools.
@@ -150,12 +151,24 @@ Movie mode is independent of the currently selected series folder:
 
 1. Send `/libraries` and choose the correct movie library. `/movie_mode` opens
    only the movie-library choices.
-2. Send one movie video.
-3. Choose **Search using filename** or **Enter name manually**.
-4. Select the IMDb result and confirm the exact final folder/file name. If IMDb
-   is unavailable after a manual search, confirm the manual title instead.
+2. Send one movie or a short burst of movies.
+3. With AI enabled, exact high-confidence IMDb title/year matches are queued
+   automatically and shown in one summary. If the title/year is ambiguous or
+   inconsistent, select the correct result or enter the name manually. A clear
+   year in the incoming filename must also match before automatic acceptance.
+4. If that identity already exists in the selected movie library or queue, the
+   bot shows the incoming filename and existing/queued file, then asks
+   **Replace existing** or **Cancel download** before any transfer. If the same
+   IMDb ID already uses an older folder spelling, replacement targets that
+   existing folder instead of creating a second IMDb-identical folder.
 5. Send `/download`, review the final Movies destination, then send
-   `/confirm_download`.
+   `/confirm_download`. Each line has a temporary batch ID. It stays attached
+   to the same file while that batch is reviewed. Press **Remove one item**
+   (or send `/remove`), reply with the ID, and reopen `/download` to remove one
+   mistaken match without clearing the remaining queue. `/cancel` exits the
+   prompt safely. After confirmation starts the batch, the next batch begins
+   again at `#1`. Removing one item leaves the other IDs unchanged, so an ID
+   never starts pointing to a different file during the same review.
 
 The download first completes in `movie_staging_path`. Only then does the movie
 organizer perform an internal dry-run and move it into a folder such as:
@@ -165,9 +178,12 @@ Movies\Interstellar (2014) [imdbid-tt0816692]\
   Interstellar (2014) [imdbid-tt0816692].mkv
 ```
 
-Use `/series_mode` before sending episode files again. A movie import never
-overwrites an existing movie video. On conflict, the completed download remains
-in staging and `/movie_import ID` can retry it after you fix the problem.
+Use `/series_mode` before sending episode files again. Automatic multi-movie
+imports produce one compact result. An approved replacement archives the old
+video/subtitles under `.replacement_backups/BATCH_ID`, records the archive and
+new import in `.rename_history.json`, and can be reversed with movie undo. A
+race or filesystem conflict discovered after transfer leaves the completed
+file in staging, where `/movie_import ID` can retry it after you fix the problem.
 
 ## Commands
 
@@ -184,7 +200,7 @@ in staging and `/movie_import ID` can retry it after you fix the problem.
 - `/folder` — show the current folder.
 - `/unsetfolder` — clear the current folder.
 - `/queue` — show queued files.
-- `/remove ID` — remove one queued file.
+- `/remove` — ask for a temporary number from the latest `/download` review.
 - `/clearqueue` — clear active queue items.
 - `/download` — show download summary.
 - `/confirm_download` — start download after confirmation.
@@ -238,7 +254,13 @@ Telegram does not support persistent reply keyboards in channels. In a channel,
 
 ## Duplicate files
 
-The bot does not overwrite automatically. If a destination file already exists, it asks you to choose:
+The bot does not overwrite automatically. Final Jellyfin movie and episode
+identity collisions use inline **Replace existing** and **Cancel download**
+buttons. The prompt identifies both the incoming release filename and the
+existing Jellyfin/queued file. Replacement approval is stored on only that
+queue item and is rechecked before transfer.
+
+Loose download-path conflicts still support the advanced command form:
 
 ```text
 /resolve 12 skip
@@ -250,6 +272,9 @@ The bot does not overwrite automatically. If a destination file already exists, 
 When you explicitly choose `overwrite`, the completed `.part` file is installed
 with an atomic replacement. The old destination is not deleted first, so a
 failed replacement leaves the existing file in place.
+This atomic loose-file policy is separate from final-library replacement. A
+final-library replacement is performed by the organizer with a rollback backup,
+not by deleting or atomically overwriting the Jellyfin file.
 Before any completed `.part` file is published, its byte count must match the
 size Telegram reported. A mismatch marks the item as failed, leaves the
 `.part` file for inspection/retry, and does not create or replace the final

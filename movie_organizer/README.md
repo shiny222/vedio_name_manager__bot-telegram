@@ -18,7 +18,10 @@ Movies/
 ## Safety
 
 - The source must be outside the final Movies library.
-- Existing movie videos and destination files are never overwritten.
+- Existing movie videos are never replaced without the explicit
+  `--replace-existing` option.
+- An approved replacement archives old video/subtitle media under
+  `.replacement_backups/BATCH_ID`; it never deletes the old copy.
 - Downloads should be completed in a separate staging folder first.
 - Every completed move is written to `.rename_history.json`.
 - A durable operation journal is written before each move.
@@ -31,6 +34,8 @@ python movie_organizer.py dry-run --source "D:\MovieIncoming\movie.mkv" --librar
 
 python movie_organizer.py import --source "D:\MovieIncoming\movie.mkv" --library "D:\Jellyfin\Movies" --title "Interstellar" --year 2014 --imdb-id tt0816692
 
+python movie_organizer.py import --source "D:\MovieIncoming\new.mkv" --library "D:\Jellyfin\Movies" --title "Interstellar" --year 2014 --imdb-id tt0816692 --replace-existing
+
 python movie_organizer.py undo-last --library "D:\Jellyfin\Movies"
 
 python movie_organizer.py undo-batch BATCH_ID --library "D:\Jellyfin\Movies"
@@ -39,6 +44,9 @@ python movie_organizer.py undo-folder "D:\Jellyfin\Movies\Interstellar (2014) [i
 ```
 
 The Telegram bot invokes these commands through an optional subprocess bridge.
+For an existing same-IMDb folder whose spelling differs from the current search
+result, the bridge also supplies the trusted `--destination-name` so the tool
+replaces that folder's media instead of creating a duplicate identity.
 
 ## Rollback details
 
@@ -52,3 +60,7 @@ Undo processes the newest records first, verifies the current file size, and
 moves each file back to its original staging path. It never replaces a file at
 that original path. Successful records become `undone`; conflicts are reported
 as skipped and can be retried after the blocking file is removed.
+
+For replacement batches, archive moves are recorded before the incoming import.
+Reverse-order undo therefore returns the new file to staging first, then restores
+the previous movie and subtitles to their original Jellyfin paths.

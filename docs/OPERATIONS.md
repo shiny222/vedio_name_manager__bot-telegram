@@ -408,6 +408,16 @@ The bot leaves the item undownloaded when identification fails.
 
 ### Movie downloaded but import failed
 
+The normal flow checks known library and queue identities before transfer. When
+it finds one, verify the incoming and existing filenames in the prompt. Choose
+Replace only if both truly represent media that should occupy the same Jellyfin
+movie/episode identity; otherwise cancel and correct the IMDb/manual identity.
+An approved replacement archives the old media and remains undoable.
+
+A failure after download usually means the destination changed during the
+transfer, an older staged job predates the check, or the filesystem/tool failed
+for another reason.
+
 - use `/movie_current` to find the queue ID and staging path;
 - fix the permission, organizer path, or destination conflict;
 - ensure the movie organizer exists inside the current bot image;

@@ -36,10 +36,22 @@ For series, the bot can:
 For movies, the bot can:
 
 - identify a title and year automatically or accept a manual search;
+- group a short burst into one compact identification result;
+- automatically accept only an exact high-confidence title/year IMDb match;
+- refuse automatic acceptance when a clear year in the source filename differs
+  from the proposed movie year;
+- detect library/queue identity collisions before downloading and ask whether
+  to replace or cancel;
 - show the exact Jellyfin destination before download;
 - download into a separate staging directory;
 - import the completed movie into a one-folder-per-movie layout;
+- summarize a multi-movie import once instead of posting every internal step;
 - preserve the staged file when import fails so the operation can be retried.
+
+The same final-library collision check applies to identified series episodes.
+An approved replacement is not a destructive overwrite: the organizer first
+moves the existing video and subtitles into a hidden per-batch backup, records
+both moves in rollback history, and only then installs the new media.
 
 The organizers never depend on AI. The bot also exposes an **Advanced** menu
 for manual naming, sorting, metadata repair, conflict handling, recovery, and
@@ -214,8 +226,9 @@ or [fuzzy search](fuzzy_search/README.md).
 2. Send `/menu`, choose **Choose Library**, and select the correct destination.
 3. Send one or several videos. The library selection persists for that chat.
 4. Let the compact identification batch finish. Existing reliable series
-   folders are reused automatically. The bot asks only when a new or uncertain
-   identity requires a decision.
+   folders are reused automatically, and exact high-confidence movie title/year
+   matches are queued automatically. The bot asks only when an identity is new,
+   ambiguous, or inconsistent.
 5. Open **Downloads → Download** and review the exact final saved filenames.
 6. Press **Confirm** or send `/confirm_download`.
 7. Use `/status`, `/sort_status`, or `/movie_current` only when more detail is

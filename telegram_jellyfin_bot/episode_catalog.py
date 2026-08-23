@@ -89,7 +89,10 @@ class EpisodeCatalog:
             if not path.is_file() or path.suffix.lower() not in self.video_extensions:
                 continue
             relative_parts = path.relative_to(series_folder).parts[:-1]
-            if any(part in {"_Unsorted", "_Conflicts"} for part in relative_parts):
+            if any(
+                part in {"_Unsorted", "_Conflicts"} or part.startswith(".")
+                for part in relative_parts
+            ):
                 continue
             detected = detect_episode(path.name)
             if detected:

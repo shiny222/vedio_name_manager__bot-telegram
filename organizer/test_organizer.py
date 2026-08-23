@@ -206,6 +206,68 @@ class SortRevisionTests(unittest.TestCase):
                 season.joinpath("New Folder Name - S01E02.mkv").exists()
             )
 
+    def test_approved_episode_replacement_is_backed_up_and_undoable(self):
+        with tempfile.TemporaryDirectory() as td:
+            library = Path(td) / "Library"
+            series = library / "Example Show (2026) [imdbid-tt1234567]"
+            season = series / "Season 01"
+            season.mkdir(parents=True)
+            old_video = season / "Old Release Name - S01E01.mkv"
+            old_subtitle = season / "Old Release Name - S01E01.srt"
+            old_video.write_bytes(b"old-video")
+            old_subtitle.write_bytes(b"old-subtitle")
+            incoming = series / "Incoming - S01E01.mp4"
+            incoming_subtitle = series / "Incoming - S01E01.srt"
+            incoming.write_bytes(b"new-video")
+            incoming_subtitle.write_bytes(b"new-subtitle")
+
+            self.assertEqual(
+                organizer.run_organizer(
+                    series, dry_run=True, replace_episodes={(1, 1)}
+                ),
+                0,
+            )
+            self.assertTrue(old_video.exists())
+            self.assertTrue(incoming.exists())
+            self.assertFalse((series / ".replacement_backups").exists())
+
+            self.assertEqual(
+                organizer.run_organizer(
+                    series, replace_episodes={(1, 1)}
+                ),
+                0,
+            )
+            new_video = season / "Example Show - S01E01.mp4"
+            new_subtitle = season / "Example Show - S01E01.srt"
+            self.assertEqual(new_video.read_bytes(), b"new-video")
+            self.assertEqual(new_subtitle.read_bytes(), b"new-subtitle")
+            history = json.loads(
+                (season / organizer.HISTORY_NAME).read_text(encoding="utf-8")
+            )
+            self.assertLessEqual(
+                {record["file_type"] for record in history},
+                {"video", "subtitle"},
+            )
+            self.assertIn(
+                "replace-existing",
+                {record.get("operation") for record in history},
+            )
+            batch_id = history[-1]["batch_id"]
+            backup = series / ".replacement_backups" / batch_id
+            self.assertEqual(
+                (backup / "Season 01" / old_video.name).read_bytes(), b"old-video"
+            )
+            self.assertEqual(
+                (backup / "Season 01" / old_subtitle.name).read_bytes(), b"old-subtitle"
+            )
+
+            self.assertEqual(organizer.undo_batch(library, batch_id), 0)
+            self.assertEqual(old_video.read_bytes(), b"old-video")
+            self.assertEqual(old_subtitle.read_bytes(), b"old-subtitle")
+            self.assertEqual(incoming.read_bytes(), b"new-video")
+            self.assertEqual(incoming_subtitle.read_bytes(), b"new-subtitle")
+            self.assertFalse(new_video.exists())
+
     def test_resort_handles_unsorted_and_nested_old_layouts(self):
         with tempfile.TemporaryDirectory() as td:
             series = Path(td) / "Correct Show"

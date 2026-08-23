@@ -112,6 +112,7 @@ class MovePlan:
     destination: Path
     file_type: str
     size: int
+    operation: str = "import"
 
 
 def _subtitle_suffix(video: Path, subtitle: Path) -> str | None:
@@ -142,6 +143,10 @@ def plan_import(
     title: str,
     year: int | None,
     imdb_id: str,
+    *,
+    replace_existing: bool = False,
+    batch_id: str = "",
+    destination_name: str = "",
 ) -> tuple[str, Path, list[MovePlan]]:
     source = source.expanduser().resolve()
     library = library.expanduser().resolve()
@@ -152,29 +157,71 @@ def plan_import(
     if source == library or library in source.parents:
         raise ValueError("Movie source must be outside the final movie library.")
 
-    base_name = movie_base_name(title, year, imdb_id)
+    canonical_name = movie_base_name(title, year, imdb_id)
+    base_name = sanitize_title(destination_name) if destination_name else canonical_name
     destination_folder = safe_child(library, base_name)
     destination_video = destination_folder / f"{base_name}{source.suffix}"
 
+    existing_media: list[Path] = []
     if destination_folder.exists():
+        existing_media = sorted(
+            (
+                item
+                for item in destination_folder.iterdir()
+                if item.is_file()
+                and item.suffix.lower() in VIDEO_EXTENSIONS | SUBTITLE_EXTENSIONS
+            ),
+            key=lambda item: item.name.casefold(),
+        )
         existing_videos = [
-            item for item in destination_folder.iterdir()
-            if item.is_file() and item.suffix.lower() in VIDEO_EXTENSIONS
+            item for item in existing_media
+            if item.suffix.lower() in VIDEO_EXTENSIONS
         ]
-        if existing_videos:
+        if existing_videos and not replace_existing:
             names = ", ".join(item.name for item in existing_videos[:3])
             raise FileExistsError(
                 "Movie folder already contains a video; nothing was overwritten: " + names
             )
 
-    plans = [MovePlan(source, destination_video, "video", source.stat().st_size)]
+    plans: list[MovePlan] = []
+    if replace_existing and existing_media:
+        if not batch_id:
+            raise ValueError("A batch ID is required for a replacement import.")
+        backup_folder = destination_folder / ".replacement_backups" / batch_id
+        for existing in existing_media:
+            kind = (
+                "video"
+                if existing.suffix.lower() in VIDEO_EXTENSIONS
+                else "subtitle"
+            )
+            plans.append(
+                MovePlan(
+                    existing,
+                    backup_folder / existing.name,
+                    kind,
+                    existing.stat().st_size,
+                    "replace-existing",
+                )
+            )
+
+    plans.append(MovePlan(source, destination_video, "video", source.stat().st_size))
     for subtitle, language_suffix in matching_subtitles(source):
         target = destination_folder / (
             f"{base_name}{language_suffix}{subtitle.suffix}"
         )
         plans.append(MovePlan(subtitle, target, "subtitle", subtitle.stat().st_size))
 
-    duplicates = {plan.destination for plan in plans if plan.destination.exists()}
+    archived_sources = {
+        plan.source.resolve(strict=False)
+        for plan in plans
+        if plan.operation == "replace-existing"
+    }
+    duplicates = {
+        plan.destination
+        for plan in plans
+        if plan.destination.exists()
+        and plan.destination.resolve(strict=False) not in archived_sources
+    }
     if duplicates:
         raise FileExistsError(
             "Destination already exists; nothing was overwritten: "
@@ -214,6 +261,7 @@ def move_and_record(plan: MovePlan, history_path: Path, batch_id: str) -> dict:
         "new_full_path": str(plan.destination),
         "file_size": plan.size,
         "file_type": plan.file_type,
+        "operation": plan.operation,
     }
     append_journal(history_path.parent, "move-planned", details)
     plan.destination.parent.mkdir(parents=True, exist_ok=True)
@@ -238,6 +286,7 @@ def move_and_record(plan: MovePlan, history_path: Path, batch_id: str) -> dict:
         "new_filename": plan.destination.name,
         "file_size": plan.size,
         "file_type": plan.file_type,
+        "operation": plan.operation,
         "status": "done",
         "batch_id": batch_id,
         "operation_id": operation_id,
@@ -341,23 +390,34 @@ def import_movie(
     year: int | None,
     imdb_id: str,
     dry_run: bool = False,
+    replace_existing: bool = False,
+    destination_name: str = "",
 ) -> dict:
-    base_name, destination_folder, plans = plan_import(
-        source, library, title, year, imdb_id
-    )
     batch_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+    base_name, destination_folder, plans = plan_import(
+        source,
+        library,
+        title,
+        year,
+        imdb_id,
+        replace_existing=replace_existing,
+        batch_id=batch_id,
+        destination_name=destination_name,
+    )
     result = {
         "ok": True,
         "dry_run": dry_run,
         "batch_id": batch_id,
         "movie_name": base_name,
         "destination": str(destination_folder),
+        "replacement": replace_existing,
         "files": [
             {
                 "source": str(plan.source),
                 "destination": str(plan.destination),
                 "file_type": plan.file_type,
                 "file_size": plan.size,
+                "operation": plan.operation,
             }
             for plan in plans
         ],
@@ -369,6 +429,23 @@ def import_movie(
     completed: list[dict] = []
     try:
         for plan in plans:
+            if (
+                replace_existing
+                and plan.operation == "import"
+                and plan.file_type == "video"
+                and destination_folder.exists()
+            ):
+                appeared = [
+                    item
+                    for item in destination_folder.iterdir()
+                    if item.is_file()
+                    and item.suffix.lower() in VIDEO_EXTENSIONS
+                ]
+                if appeared:
+                    raise FileExistsError(
+                        "A movie video appeared during replacement; archived media "
+                        "will be restored: " + ", ".join(item.name for item in appeared[:3])
+                    )
             completed.append(move_and_record(plan, history_path, batch_id))
     except Exception:
         if completed:
@@ -433,6 +510,16 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--title", required=True)
         sub.add_argument("--year", type=int)
         sub.add_argument("--imdb-id", default="")
+        sub.add_argument(
+            "--destination-name",
+            default="",
+            help="trusted existing Jellyfin folder/base name to target",
+        )
+        sub.add_argument(
+            "--replace-existing",
+            action="store_true",
+            help="archive existing movie media before installing this confirmed replacement",
+        )
         sub.add_argument("--json", action="store_true")
     last = subparsers.add_parser("undo-last")
     last.add_argument("--library", required=True, type=Path)
@@ -459,6 +546,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.year,
                 args.imdb_id,
                 dry_run=args.command == "dry-run",
+                replace_existing=args.replace_existing,
+                destination_name=args.destination_name,
             )
         elif args.command == "undo-last":
             result = undo_last(args.library)

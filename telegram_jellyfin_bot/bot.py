@@ -11,6 +11,7 @@ import time
 import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -75,8 +76,69 @@ else:
 
 LOG = logging.getLogger(__name__)
 SERIES_BATCH_WINDOW_SECONDS = 2.0
+MOVIE_BATCH_WINDOW_SECONDS = 2.0
 IMDB_FOLDER_ID_RE = re.compile(r"\[imdbid-(tt\d+)\]", re.IGNORECASE)
 FOLDER_YEAR_RE = re.compile(r"\s*[\(\[]((?:19|20)\d{2})[\)\]]\s*$")
+IMPORTANT_OPEN = "\ue000"
+IMPORTANT_CLOSE = "\ue001"
+IMPORTANT_RE = re.compile(
+    f"{re.escape(IMPORTANT_OPEN)}(.*?){re.escape(IMPORTANT_CLOSE)}",
+    re.DOTALL,
+)
+TELEGRAM_TEXT_LIMIT = 4000
+DOWNLOAD_REVIEW_SETTING = "download_review_items"
+REMOVE_PROMPT_SETTING = "remove_review_pending"
+
+
+def _important(value: Any) -> str:
+    """Mark a trusted display value for bold rendering after localization."""
+    text = str(value)
+    # Prevent an unusual filename from closing or opening our internal marker.
+    text = text.replace(IMPORTANT_OPEN, "").replace(IMPORTANT_CLOSE, "")
+    return f"{IMPORTANT_OPEN}{text}{IMPORTANT_CLOSE}"
+
+
+def _escaped_prefix(value: str, limit: int) -> tuple[str, bool]:
+    """Escape as much text as fits without cutting an HTML entity."""
+    output: list[str] = []
+    used = 0
+    for character in value:
+        encoded = escape(character, quote=False)
+        if used + len(encoded) > limit:
+            return "".join(output), False
+        output.append(encoded)
+        used += len(encoded)
+    return "".join(output), True
+
+
+def _telegram_html(value: str) -> str:
+    """Escape a complete message and render only explicit important values bold."""
+    segments: list[tuple[str, bool]] = []
+    position = 0
+    for match in IMPORTANT_RE.finditer(value):
+        segments.append((value[position:match.start()], False))
+        segments.append((match.group(1), True))
+        position = match.end()
+    segments.append((value[position:], False))
+
+    output: list[str] = []
+    used = 0
+    for raw, bold in segments:
+        # Unmatched private markers are never intended Telegram content.
+        raw = raw.replace(IMPORTANT_OPEN, "").replace(IMPORTANT_CLOSE, "")
+        wrapper_size = 7 if bold and raw else 0  # <b> + </b>
+        remaining = TELEGRAM_TEXT_LIMIT - used - wrapper_size
+        if remaining <= 0:
+            break
+        rendered, complete = _escaped_prefix(raw, remaining)
+        if rendered:
+            if bold:
+                rendered = f"<b>{rendered}</b>"
+            output.append(rendered)
+            used += len(rendered)
+        if not complete:
+            break
+    return "".join(output)
 
 
 def _series_file_title(folder_name: str) -> str:
@@ -103,6 +165,18 @@ def _normalized_title(value: str) -> str:
     return re.sub(r"[^\w]+", "", value, flags=re.UNICODE).casefold()
 
 
+def _release_year_from_filename(filename: str) -> int | None:
+    """Return one unambiguous release year embedded in a source filename."""
+    years = {
+        int(value)
+        for value in re.findall(
+            r"(?<!\d)((?:18|19|20)\d{2})(?!\d)", Path(filename).stem
+        )
+        if 1878 <= int(value) <= datetime.now().year + 5
+    }
+    return next(iter(years)) if len(years) == 1 else None
+
+
 HELP = """Commands:
 /start - Choose a language on first use or reopen help/menu
 /menu - Show the button menu
@@ -115,7 +189,7 @@ HELP = """Commands:
 /folder - Show the current folder
 /unsetfolder - Clear the current folder
 /queue - Show the download queue
-/remove ID - Remove one item from the queue
+/remove - Ask for a temporary /download list number and remove that item
 /clearqueue - Clear the queue
 /download - Review and prepare downloads
 /confirm_download - Confirm and start downloading
@@ -169,7 +243,7 @@ HELP_FA = """دستورها:
 /folder - نمایش پوشه فعلی
 /unsetfolder - پاک کردن پوشه فعلی
 /queue - نمایش صف دانلود
-/remove ID - حذف یک مورد از صف
+/remove - درخواست شماره موقت فهرست /download و حذف همان مورد
 /clearqueue - پاک کردن صف
 /download - بررسی و آماده‌سازی دانلودها
 /confirm_download - تأیید و شروع دانلود
@@ -216,18 +290,25 @@ NORMAL WORKFLOW — AI ASSISTED
 1. Press Choose Library once and select Animation Series, Animation Movies,
    Video Series, or Video Movies. It stays selected until you change it.
    AI is never allowed to choose or change this destination.
-2. Send one or several supported videos. A short burst is identified as one
-   compact batch; mixed series are routed independently. One batch status is
-   edited in place with the useful title/episode summary and /download next
-   step instead of sending progress messages for every episode.
+2. Send one or several supported videos. A short series or movie burst is
+   identified as one compact batch. One status is edited with the useful
+   identity summary and /download instead of per-file progress messages.
 3. When the n8n connection is enabled, AI reads the untrusted filename/caption
    and suggests movie title/year or series title/season/episode. The existing
    IMDb tool finds the official Jellyfin identity.
 4. An existing reliable series-folder match is used automatically. A new
    series asks once for all matching episodes. This identity approval is
    separate from the one final download approval. Download review shows the
-   final saved filenames, file count, and size. A failed AI/IMDb request must
-   not change the library.
+   final saved filenames, temporary per-batch IDs, file count, and size. Each
+   ID remains attached to that movie/episode while you review the batch. Press
+   Remove one item (or send /remove), reply with its ID, then reopen /download.
+   After /confirm_download starts the batch, the next batch starts at 1. A
+   failed AI/IMDb request must not change the library.
+   Movies with an exact high-confidence AI/IMDb title and year are queued
+   automatically only when a clear year in the filename also agrees.
+   Ambiguous/year-mismatched movies still ask. A movie or episode identity
+   already in the library/queue shows both filenames and asks Replace or Cancel
+   before download. Replace keeps the old media in rollback backup.
 5. Open Downloads: Queue → Download → Confirm.
 6. Movies are staged and imported safely. AI-confirmed series episodes are
    organized automatically after their downloads finish.
@@ -254,7 +335,7 @@ Sorting and metadata:
 • /fix_metadata_current aligns episode NFO and artwork names.
 
 Queue and conflicts:
-• /remove ID, /clearqueue
+• /remove (then reply with the /download list number), /clearqueue
 • /resolve ID skip|save_with_suffix|overwrite
 • /movie_current, /movie_import ID, /movie_cancel ID
 
@@ -286,20 +367,28 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
 ۱. انتخاب کتابخانه را یک بار بزنید و Animation Series، Animation Movies،
    Video Series یا Video Movies را انتخاب کنید. انتخاب تا تغییر بعدی باقی
    می‌ماند. AI اجازه انتخاب یا تغییر مقصد را ندارد.
-۲. یک یا چند ویدیو بفرستید. فایل‌هایی که با فاصله کوتاه ارسال شوند در یک دسته
-   کم‌پیام شناسایی می‌شوند و سریال‌های متفاوت جداگانه هدایت می‌شوند. وضعیت کل
-   دسته همراه خلاصه نام/قسمت و مرحله بعد /download در یک پیام ویرایش می‌شود و
-   برای هر قسمت پیام پیشرفت جدا نمی‌آید.
+۲. یک یا چند ویدیو بفرستید. فایل‌های سریال یا فیلم که با فاصله کوتاه ارسال
+   شوند در یک دسته کم‌پیام شناسایی می‌شوند. یک پیام با خلاصه هویت و مرحله بعد
+   /download ویرایش می‌شود و برای هر فایل پیام پیشرفت جدا نمی‌آید.
 ۳. پس از فعال شدن اتصال n8n، AI از نام فایل/کپشن نام و سال فیلم یا نام سریال
    و فصل و قسمت را پیشنهاد می‌دهد. ابزار IMDb نام رسمی Jellyfin را پیدا می‌کند.
 ۴. پوشه سریال موجود با تطبیق معتبر خودکار استفاده می‌شود. برای سریال جدید فقط
    یک بار برای همه قسمت‌های مطابق تأیید هویت گرفته می‌شود. این تأیید از تأیید
    نهایی دانلود جدا است. بررسی دانلود نام نهایی فایل‌ها، تعداد و حجم را نشان
-   می‌دهد. خرابی AI یا IMDb نباید کتابخانه را تغییر دهد.
+   می‌دهد و هر فایل یک شناسه موقت همان دسته دارد که هنگام بررسی ثابت می‌ماند.
+   دکمه حذف یک مورد یا /remove را بزنید، شناسه را بفرستید و /download را دوباره
+   باز کنید. پس از شروع دسته با /confirm_download، دسته بعدی دوباره از ۱ شروع
+   می‌شود. خرابی AI یا IMDb نباید کتابخانه
+   را تغییر دهد.
+   فیلم با نام و سال دقیق و اطمینان بالای AI/IMDb خودکار آماده می‌شود؛ نتیجه
+   مبهم یا سال ناسازگار سؤال می‌پرسد و سال واضح نام فایل نیز باید برابر باشد.
+   اگر هویت فیلم یا قسمت از قبل در کتابخانه/صف باشد، نام هر دو فایل نمایش داده
+   می‌شود و پیش از دانلود جایگزینی یا لغو می‌پرسد. جایگزینی، فایل قدیمی را برای
+   بازگردانی نگه می‌دارد.
 ۵. دانلودها را باز کنید: صف ← دانلود ← تأیید.
-۶. فیلم ابتدا وارد staging و سپس امن وارد کتابخانه می‌شود. در روند فعلی
-   قسمت‌های سریال که با AI تأیید شده‌اند، بعد از پایان دانلود
-   به‌صورت خودکار مرتب می‌شوند.
+۶. فیلم ابتدا وارد staging و سپس امن وارد کتابخانه می‌شود و نتیجه چند فیلم در
+   یک خلاصه نمایش داده می‌شود. قسمت‌های سریال تأییدشده با AI نیز پس از دانلود
+   خودکار مرتب می‌شوند.
 ۷. اگر اسکن خودکار اجرا نشد، Jellyfin ← اسکن کتابخانه را بزنید. همان پیام وضعیت
    به `✅ Jellyfin آماده است.` تغییر می‌کند و در چت باقی می‌ماند. از قسمت‌ها
    برای بررسی سریال فعلی یا کتابخانه‌های سریال استفاده کنید.
@@ -322,7 +411,7 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
 • /fix_metadata_current نام NFO و تصاویر قسمت را هماهنگ می‌کند.
 
 صف و تداخل:
-• /remove ID، /clearqueue
+• /remove (سپس شماره فهرست /download را بفرستید)، /clearqueue
 • /resolve ID skip|save_with_suffix|overwrite
 • /movie_current، /movie_import ID، /movie_cancel ID
 
@@ -494,7 +583,7 @@ DOWNLOAD_MENU = {
             {"text": "⛔ Cancel", "callback_data": "menu:cancel"},
         ],
         [
-            {"text": "📋 Copy /remove", "copy_text": {"text": "/remove "}},
+            {"text": "🗑 Remove one item", "callback_data": "menu:remove"},
             {"text": "📋 Copy /resolve", "copy_text": {"text": "/resolve "}},
         ],
         SUBMENU_FOOTER,
@@ -844,7 +933,11 @@ class TelegramAPI:
         message_thread_id: int | None = None,
         direct_messages_topic_id: int | None = None,
     ) -> Any:
-        params: dict[str, str] = {"chat_id": str(chat_id), "text": text[:4000]}
+        params: dict[str, str] = {
+            "chat_id": str(chat_id),
+            "text": text[:TELEGRAM_TEXT_LIMIT],
+            "parse_mode": "HTML",
+        }
         if message_thread_id is not None:
             params["message_thread_id"] = str(int(message_thread_id))
         if direct_messages_topic_id is not None:
@@ -860,7 +953,8 @@ class TelegramAPI:
             "editMessageText",
             chat_id=str(chat_id),
             message_id=str(message_id),
-            text=text[:4000],
+            text=text[:TELEGRAM_TEXT_LIMIT],
+            parse_mode="HTML",
         )
 
     async def delete(self, chat_id: int, message_id: int) -> Any:
@@ -891,6 +985,9 @@ class BotApp:
         self.series_manual_pending: dict[int, int] = {}
         self.series_manual_groups: dict[int, list[dict]] = {}
         self.series_identification_batches: dict[
+            tuple[int, int, str], dict[str, Any]
+        ] = {}
+        self.movie_identification_batches: dict[
             tuple[int, int, str], dict[str, Any]
         ] = {}
         self.background_tasks: set[asyncio.Task] = set()
@@ -1045,6 +1142,8 @@ class BotApp:
             "⚡ منوی سریع",
         }:
             await self.handle_reply_category(chat_id, text)
+        elif text and self._chat_setting(chat_id, REMOVE_PROMPT_SETTING) == "1":
+            await self._remove_review_item(chat_id, text)
         elif text and chat_id in self.series_manual_pending:
             pending_id = self.series_manual_pending.pop(chat_id)
             self.track_task(
@@ -1075,6 +1174,7 @@ class BotApp:
         assert self.api
         language = language_code(force_language or self._language(chat_id))
         text = translate_text(text, language)
+        text = _telegram_html(text)
         reply_markup = translate_markup(reply_markup, language)
         try:
             return await self.api.send(
@@ -1092,6 +1192,7 @@ class BotApp:
         """Edit one status message instead of posting repeated updates."""
         assert self.api
         text = translate_text(text, self._language(chat_id))
+        text = _telegram_html(text)
         try:
             await self.api.edit(chat_id, message_id, text)
             return True
@@ -1135,6 +1236,113 @@ class BotApp:
 
     def _set_chat_setting(self, chat_id: int, name: str, value: str) -> None:
         self.store.set_chat_setting(chat_id, name, value)
+
+    def _download_review_state(self, chat_id: int) -> tuple[dict[int, int], int]:
+        """Load stable per-batch IDs without exposing database queue IDs."""
+        raw = self._chat_setting(chat_id, DOWNLOAD_REVIEW_SETTING)
+        if not raw:
+            return {}, 1
+        try:
+            values = json.loads(raw)
+            # Migrate the short-lived list format used by the previous build.
+            if isinstance(values, list):
+                mapping = {
+                    index: int(pending_id)
+                    for index, pending_id in enumerate(values, start=1)
+                    if int(pending_id) > 0
+                }
+                return mapping, len(mapping) + 1
+            if not isinstance(values, dict):
+                return {}, 1
+            raw_items = values.get("items")
+            if not isinstance(raw_items, dict):
+                return {}, 1
+            mapping: dict[int, int] = {}
+            used_pending_ids: set[int] = set()
+            for display_id, pending_id in raw_items.items():
+                display_number = int(display_id)
+                actual_id = int(pending_id)
+                if (
+                    display_number > 0
+                    and actual_id > 0
+                    and actual_id not in used_pending_ids
+                ):
+                    mapping[display_number] = actual_id
+                    used_pending_ids.add(actual_id)
+            next_id = max(
+                int(values.get("next_id") or 1),
+                max(mapping, default=0) + 1,
+                1,
+            )
+            return mapping, next_id
+        except (TypeError, ValueError, json.JSONDecodeError):
+            LOG.warning("Ignored invalid download review mapping for chat %s.", chat_id)
+            return {}, 1
+
+    def _save_download_review_state(
+        self, chat_id: int, mapping: dict[int, int], next_id: int
+    ) -> None:
+        self._set_chat_setting(
+            chat_id,
+            DOWNLOAD_REVIEW_SETTING,
+            json.dumps(
+                {
+                    "next_id": max(int(next_id), 1),
+                    "items": {
+                        str(display_id): int(pending_id)
+                        for display_id, pending_id in sorted(mapping.items())
+                    },
+                }
+            ),
+        )
+
+    def _assign_download_batch_ids(
+        self, chat_id: int, items: list[dict]
+    ) -> list[tuple[int, dict]]:
+        """Keep each movie/episode ID stable until this batch is confirmed."""
+        mapping, next_id = self._download_review_state(chat_id)
+        current_pending_ids = {int(item["pending_id"]) for item in items}
+        mapping = {
+            display_id: pending_id
+            for display_id, pending_id in mapping.items()
+            if pending_id in current_pending_ids
+        }
+        display_by_pending = {
+            pending_id: display_id for display_id, pending_id in mapping.items()
+        }
+        for item in items:
+            pending_id = int(item["pending_id"])
+            if pending_id not in display_by_pending:
+                display_by_pending[pending_id] = next_id
+                mapping[next_id] = pending_id
+                next_id += 1
+        self._save_download_review_state(chat_id, mapping, next_id)
+        return [
+            (display_by_pending[int(item["pending_id"])], item)
+            for item in items
+        ]
+
+    def _download_review_ids(self, chat_id: int) -> list[int]:
+        """Return internal IDs ordered by their temporary per-batch IDs."""
+        mapping, _ = self._download_review_state(chat_id)
+        return [mapping[display_id] for display_id in sorted(mapping)]
+
+    def _download_batch_id_for_pending(
+        self, chat_id: int, pending_id: int
+    ) -> int | None:
+        mapping, _ = self._download_review_state(chat_id)
+        return next(
+            (
+                display_id
+                for display_id, actual_id in mapping.items()
+                if actual_id == int(pending_id)
+            ),
+            None,
+        )
+
+    def _clear_download_review(self, chat_id: int) -> None:
+        self._set_chat_setting(chat_id, DOWNLOAD_REVIEW_SETTING, "")
+        self._set_chat_setting(chat_id, REMOVE_PROMPT_SETTING, "")
 
     def _selected_library(
         self, chat_id: int, media_kind: str | None = None
@@ -1188,11 +1396,12 @@ class BotApp:
             # A folder name is meaningful only inside its own library root.
             self._set_chat_setting(chat_id, "current_folder", "")
             self._set_chat_setting(chat_id, "download_confirmation", "")
+            self._clear_download_review(chat_id)
         await self.send(
             chat_id,
-            f"Library selected: {library.name}\n"
+            f"Library selected: {_important(library.name)}\n"
             f"Mode: {library.media_kind}\n"
-            f"Path: {library.path}\n\n"
+            f"Path: {_important(library.path)}\n\n"
             + (
                 "Choose or create a series folder before sending episodes."
                 if library.media_kind == "series"
@@ -1220,6 +1429,7 @@ class BotApp:
             "menu:folders": self.cmd_folders,
             "menu:unsetfolder": self.cmd_unsetfolder,
             "menu:queue": self.cmd_queue,
+            "menu:remove": self.cmd_remove,
             "menu:clearqueue": self.cmd_clearqueue,
             "menu:download": self.cmd_download,
             "menu:confirm": self.cmd_confirm,
@@ -1329,6 +1539,67 @@ class BotApp:
                 HELP_COMMAND_TEMPLATES,
             )
             return
+        if action.startswith("libraryconflict:"):
+            try:
+                _, decision, pending_text = action.split(":", 2)
+                pending_id = int(pending_text)
+            except (ValueError, TypeError):
+                return
+            item = self.store.get_item(pending_id, chat_id=int(chat_id))
+            if not item or item.get("status") != "waiting_overwrite":
+                await self.send(
+                    int(chat_id), "This replacement decision is no longer active."
+                )
+                return
+            if decision == "cancel":
+                self.store.update_item(
+                    pending_id,
+                    status="awaiting_identification",
+                    target_folder=None,
+                    overwrite_policy=None,
+                    error="Download cancelled at library identity conflict.",
+                )
+                markup = (
+                    self._movie_identification_markup(pending_id)
+                    if item.get("media_kind") == "movie"
+                    else self._series_identification_markup(pending_id)
+                )
+                await self.send(
+                    int(chat_id),
+                    "Download cancelled for this file. It remains undownloaded "
+                    "so you can correct its identity or remove it from the queue.",
+                    markup,
+                )
+                return
+            if decision != "replace":
+                return
+            queued_conflict = (
+                self._movie_queue_conflict_item(
+                    int(chat_id), pending_id, item, str(item.get("library_key") or "")
+                )
+                if item.get("media_kind") == "movie"
+                else self._series_queue_conflict_item(item)
+            )
+            if queued_conflict is not None and queued_conflict.get("status") in {
+                "queued", "failed", "waiting_overwrite"
+            }:
+                self.queue.set_status(
+                    int(queued_conflict["pending_id"]),
+                    "skipped",
+                    f"Superseded by approved replacement #{pending_id}.",
+                )
+            self.queue.set_status(
+                pending_id,
+                "queued",
+                None,
+                overwrite_policy="replace_library",
+            )
+            await self.send(
+                int(chat_id),
+                "Replacement approved. The old library media will be backed up "
+                "for rollback before the new file is installed.\n\nNext: /download",
+            )
+            return
         if action.startswith("movieidentify:"):
             _, method, pending_text = action.split(":", 2)
             try:
@@ -1409,26 +1680,7 @@ class BotApp:
             if not choice or time.time() - choice["created_at"] > 600:
                 await self.send(int(chat_id), "This movie confirmation expired.")
                 return
-            item = self._movie_item_for_chat(choice["pending_id"], int(chat_id))
-            if not item or item.get("status") != "awaiting_identification":
-                await self.send(int(chat_id), "This movie is no longer waiting for a name.")
-                return
-            self.store.update_item(
-                int(item["pending_id"]),
-                target_folder=choice["folder_name"],
-                movie_title=choice["title"],
-                movie_year=choice.get("year"),
-                imdb_id=choice.get("imdb_id") or None,
-                status="queued",
-                error=None,
-            )
-            await self.send(
-                int(chat_id),
-                "Movie identity confirmed.\n"
-                f"Folder: {choice['folder_name']}\n\n"
-                "Use /download to review the destination, then /confirm_download.",
-                MOVIE_MENU,
-            )
+            await self._confirm_movie_choice(int(chat_id), choice)
             return
         if action.startswith("moviecancel:"):
             try:
@@ -1486,16 +1738,37 @@ class BotApp:
                 )
                 return
             self.series_manual_pending.pop(int(chat_id), None)
-            self.store.update_item(
-                pending_id,
-                target_folder=current_folder,
-                status="queued",
-                error=None,
-            )
+            detected = detect_episode(str(item.get("original_filename") or ""))
+            updates: dict[str, Any] = {
+                "target_folder": current_folder,
+                "status": "queued",
+                "overwrite_policy": None,
+                "error": None,
+            }
+            if detected:
+                updates["series_season"], updates["series_episode"] = detected
+                suffix = Path(str(item["original_filename"])).suffix.lower()
+                updates["download_filename"] = validate_original_filename(
+                    f"Incoming - S{detected[0]:02d}E{detected[1]:02d}{suffix}"
+                )
+            candidate = {**item, **updates}
+            existing = self._series_library_conflict_path(candidate)
+            queued_conflict = self._series_queue_conflict_item(candidate)
+            self.store.update_item(pending_id, **updates)
+            updated = self.store.get_item(pending_id, chat_id=int(chat_id))
+            if updated and (existing is not None or queued_conflict is not None):
+                await self._hold_for_library_conflict(
+                    int(chat_id),
+                    updated,
+                    existing=existing,
+                    queued=queued_conflict,
+                )
+                return
             await self.send(
                 int(chat_id),
-                f"Episode #{pending_id} will use the current folder without AI:\n"
-                f"{current_folder}\n\nUse /download to review the destination.",
+                "This episode will use the current folder without AI:\n"
+                f"{_important(current_folder)}\n\n"
+                "Use /download to review the destination.",
             )
             return
         if action.startswith("seriescancel:"):
@@ -1708,7 +1981,6 @@ class BotApp:
             await self.send(
                 chat_id,
                 f"Video added to the queue. Item {item_number} for this folder."
-                f"\nQueue ID for commands: #{pending_id}"
                 + (f"\n{notice}" if notice else ""),
             )
 
@@ -1755,27 +2027,82 @@ class BotApp:
             await self.send(chat_id, "This movie is already registered in the queue.")
             return
         if self.config.n8n_agent_enabled:
-            await self.send(
-                chat_id,
-                f"Movie received but not downloaded yet.\n"
-                f"Queue ID: #{pending_id}\nFilename: {filename}\n\n"
-                "AI identification started.",
+            sender = message.get("from") or {}
+            sender_id = int(sender.get("id") or chat_id)
+            key = (chat_id, sender_id, library.key)
+            batch = self.movie_identification_batches.setdefault(
+                key, {"items": [], "task": None}
             )
-            self.track_task(
-                self._run_ai_movie_identification(
-                    chat_id, pending_id, caption
-                ),
-                f"movie-ai-identification:{chat_id}:{pending_id}",
+            batch["items"].append((pending_id, caption))
+            previous = batch.get("task")
+            if isinstance(previous, asyncio.Task) and not previous.done():
+                previous.cancel()
+            batch["task"] = self.track_task(
+                self._flush_movie_identification_batch(key),
+                f"movie-identification-batch:{chat_id}:{sender_id}:{library.key}",
                 chat_id,
             )
         else:
             await self.send(
                 chat_id,
                 f"Movie received but not downloaded yet.\n"
-                f"Queue ID: #{pending_id}\nFilename: {filename}\n\n"
+                f"Filename: {_important(filename)}\n\n"
                 "How should I identify it?",
                 self._movie_identification_markup(pending_id),
             )
+
+    async def _flush_movie_identification_batch(
+        self, key: tuple[int, int, str]
+    ) -> None:
+        """Identify a burst of movies while keeping Telegram output compact."""
+        await asyncio.sleep(MOVIE_BATCH_WINDOW_SECONDS)
+        batch = self.movie_identification_batches.pop(key, None)
+        if not batch:
+            return
+        chat_id = key[0]
+        items = list(batch.get("items") or [])
+        if not items:
+            return
+        status_result = await self.send(
+            chat_id, f"Identifying {len(items)} movie(s)…"
+        )
+        status_message_id = self._sent_message_id(status_result)
+
+        # Free AI endpoints are commonly rate-limited, so identify sequentially.
+        for pending_id, caption in items:
+            await self._run_ai_movie_identification(
+                chat_id, int(pending_id), str(caption), quiet=True
+            )
+
+        ready_items: list[dict] = []
+        needs_attention = 0
+        for pending_id, _ in items:
+            item = self.store.get_item(int(pending_id), chat_id=chat_id)
+            if item and item.get("status") == "queued":
+                ready_items.append(item)
+            else:
+                needs_attention += 1
+        ready = len(ready_items)
+        if ready and not needs_attention:
+            final_text = f"✅ {ready} movie(s) ready."
+        else:
+            final_text = (
+                f"Checked {len(items)} movie(s): {ready} ready, "
+                f"{needs_attention} need attention."
+            )
+        for item in ready_items[:12]:
+            label = item.get("target_folder") or item["original_filename"]
+            final_text += f"\n• {_important(label)}"
+        if len(ready_items) > 12:
+            final_text += f"\n• +{len(ready_items) - 12} more movie(s)"
+        if ready:
+            final_text += "\n\nNext: /download"
+        elif needs_attention:
+            final_text += "\n\nResolve the movie choices above before downloading."
+        if status_message_id is not None:
+            if await self.edit_message(chat_id, status_message_id, final_text):
+                return
+        await self.send(chat_id, final_text)
 
     @staticmethod
     def _movie_identification_markup(pending_id: int) -> dict:
@@ -1823,7 +2150,12 @@ class BotApp:
         return self.ai_identifier
 
     async def _run_ai_movie_identification(
-        self, chat_id: int, pending_id: int, caption: str = ""
+        self,
+        chat_id: int,
+        pending_id: int,
+        caption: str = "",
+        *,
+        quiet: bool = False,
     ) -> None:
         item = self._movie_item_for_chat(pending_id, chat_id)
         if not item or item.get("status") != "awaiting_identification":
@@ -1840,7 +2172,7 @@ class BotApp:
             LOG.warning("n8n movie identification failed for #%s: %s", pending_id, exc)
             await self.send(
                 chat_id,
-                f"AI identification is unavailable for movie #{pending_id}: {exc}\n\n"
+                f"AI identification is unavailable for this movie: {exc}\n\n"
                 "Use filename search or enter the title manually.",
                 self._movie_identification_markup(pending_id),
             )
@@ -1850,7 +2182,7 @@ class BotApp:
             self.movie_manual_pending[chat_id] = pending_id
             await self.send(
                 chat_id,
-                f"AI needs more information for movie #{pending_id}.\n"
+                "AI needs more information for this movie.\n"
                 f"{result.question or 'Send the full movie title and year.'}\n\n"
                 "Reply with the full movie title, preferably followed by its year.",
             )
@@ -1859,16 +2191,30 @@ class BotApp:
         query = result.title_query
         if result.year is not None:
             query = f"{query} {result.year}"
-        await self.send(
-            chat_id,
-            "AI filename suggestion:\n"
-            f"Title query: {result.title_query}\n"
-            f"Year: {result.year or 'unknown'}\n"
-            f"Confidence: {result.confidence:.0%}\n\n"
-            "Checking the existing IMDb title tool now...",
+        # Keep the AI suggestion attached to this exact source file while IMDb
+        # choices are shown. This makes a title/year mismatch visible instead
+        # of letting two unrelated uploads look like the same movie job.
+        self.store.update_item(
+            pending_id,
+            movie_title=result.title_query,
+            movie_year=result.year,
         )
+        if not quiet:
+            await self.send(
+                chat_id,
+                "AI filename suggestion:\n"
+                f"Title query: {_important(result.title_query)}\n"
+                f"Year: {result.year or 'unknown'}\n"
+                f"Confidence: {result.confidence:.0%}\n\n"
+                "Checking the existing IMDb title tool now...",
+            )
         await self._run_movie_search(
-            chat_id, pending_id, query, manual_query=False
+            chat_id,
+            pending_id,
+            query,
+            manual_query=False,
+            ai_identity=result,
+            quiet=quiet,
         )
 
     async def _queue_series_for_identification(
@@ -1998,7 +2344,9 @@ class BotApp:
             labels = [f"S{season:02d}E{episode:02d}" for season, episode in episodes[:12]]
             if len(episodes) > 12:
                 labels.append(f"+{len(episodes) - 12} more")
-            lines.append(f"• {group['title']}: {', '.join(labels)}")
+            lines.append(
+                "• " + _important(f"{group['title']}: {', '.join(labels)}")
+            )
         if len(grouped) > 8:
             lines.append(f"• +{len(grouped) - 8} more series")
         return lines
@@ -2033,7 +2381,7 @@ class BotApp:
             LOG.warning("n8n series identification failed for #%s: %s", pending_id, exc)
             await self.send(
                 chat_id,
-                f"AI identification is unavailable for episode #{pending_id}: {exc}\n\n"
+                f"AI identification is unavailable for this episode: {exc}\n\n"
                 "Use manual series details or the already selected current folder.",
                 self._series_identification_markup(pending_id),
             )
@@ -2046,8 +2394,8 @@ class BotApp:
         ):
             await self.send(
                 chat_id,
-                f"Could not identify episode #{pending_id}: "
-                f"{item['original_filename']}\n"
+                "Could not identify this episode: "
+                f"{_important(item['original_filename'])}\n"
                 "Choose manual details or use the current folder.",
                 self._series_identification_markup(pending_id),
             )
@@ -2108,6 +2456,7 @@ class BotApp:
             return
 
         queued = 0
+        conflicts = 0
         ready_items: list[dict] = []
         for entry in entries:
             pending_id = int(entry.get("pending_id") or 0)
@@ -2134,6 +2483,16 @@ class BotApp:
                     "Could not create a safe name for episode #%s", pending_id
                 )
                 continue
+            candidate = {
+                **item,
+                "target_folder": folder_name,
+                "library_key": library_key,
+                "series_season": season,
+                "series_episode": episode,
+                "download_filename": download_filename,
+            }
+            existing = self._series_library_conflict_path(candidate)
+            queued_conflict = self._series_queue_conflict_item(candidate)
             self.store.update_item(
                 pending_id,
                 target_folder=folder_name,
@@ -2144,16 +2503,30 @@ class BotApp:
                 download_filename=download_filename,
                 imdb_id=str(entry.get("imdb_id") or choice.get("imdb_id") or "")
                 or None,
-                status="queued",
+                status=(
+                    "waiting_overwrite"
+                    if existing is not None or queued_conflict is not None
+                    else "queued"
+                ),
+                overwrite_policy=None,
                 error=None,
             )
-            queued += 1
             updated = self.store.get_item(pending_id, chat_id=chat_id)
+            if updated and (existing is not None or queued_conflict is not None):
+                conflicts += 1
+                await self._hold_for_library_conflict(
+                    chat_id,
+                    updated,
+                    existing=existing,
+                    queued=queued_conflict,
+                )
+                continue
+            queued += 1
             if updated:
                 ready_items.append(updated)
 
         if not queued:
-            if notify:
+            if notify and not conflicts:
                 await self.send(
                     chat_id,
                     "No waiting episodes could use this series folder.",
@@ -2252,6 +2625,314 @@ class BotApp:
         return item
 
     @staticmethod
+    def _movie_identity_key(value: dict) -> str:
+        imdb_id = str(value.get("imdb_id") or "").strip().casefold()
+        if imdb_id:
+            return f"imdb:{imdb_id}"
+        folder_name = _normalized_title(
+            str(value.get("folder_name") or value.get("target_folder") or "")
+        )
+        return f"folder:{folder_name}" if folder_name else ""
+
+    @staticmethod
+    def _automatic_movie_result(
+        identity: MediaIdentification,
+        results: list[dict],
+        filename_year: int | None = None,
+    ) -> dict | None:
+        """Accept only an exact, high-confidence top result without a click."""
+        if (
+            not results
+            or identity.confidence < 0.85
+            or identity.year is None
+        ):
+            return None
+        result = results[0]
+        if _normalized_title(str(result.get("title") or "")) != _normalized_title(
+            str(identity.title_query or "")
+        ):
+            return None
+        try:
+            score = float(result.get("score") or 0)
+        except (TypeError, ValueError):
+            return None
+        if score < 90:
+            return None
+        try:
+            if int(result.get("year")) != int(identity.year):
+                return None
+        except (TypeError, ValueError):
+            return None
+        if filename_year is not None and int(identity.year) != filename_year:
+            return None
+        return result
+
+    @staticmethod
+    def _movie_choice_from_result(
+        pending_id: int, result: dict, source: str
+    ) -> dict:
+        return {
+            "pending_id": pending_id,
+            "title": str(result["title"]),
+            "year": result.get("year"),
+            "imdb_id": str(result.get("imdb_id") or ""),
+            "folder_name": str(result["folder_name"]),
+            "source": source,
+            "created_at": time.time(),
+        }
+
+    def _movie_library_conflict_path(
+        self,
+        library_key: str,
+        folder_name: str,
+        imdb_id: str = "",
+    ) -> Path | None:
+        """Return an existing final video without changing the library."""
+        try:
+            library = self.config.library(library_key or None, "movie")
+            expected = self.config.movie_target_path(folder_name, library.key)
+        except ValueError:
+            return None
+        candidates = [expected]
+        wanted_id = str(imdb_id or "").strip().casefold()
+        if wanted_id:
+            try:
+                for folder in library.path.iterdir():
+                    if not folder.is_dir() or folder == expected:
+                        continue
+                    match = IMDB_FOLDER_ID_RE.search(folder.name)
+                    if match and match.group(1).casefold() == wanted_id:
+                        candidates.append(folder)
+            except OSError:
+                pass
+        for folder in candidates:
+            try:
+                videos = sorted(
+                    item.name
+                    for item in folder.iterdir()
+                    if item.is_file()
+                    and item.suffix.lower() in self.config.allowed_video_extensions
+                )
+            except OSError:
+                continue
+            if videos:
+                return folder / videos[0]
+        return None
+
+    def _movie_library_conflict(
+        self,
+        library_key: str,
+        folder_name: str,
+        imdb_id: str = "",
+    ) -> str | None:
+        existing = self._movie_library_conflict_path(
+            library_key, folder_name, imdb_id
+        )
+        return (
+            f"already in the library as {existing.name}"
+            if existing is not None
+            else None
+        )
+
+    def _movie_queue_conflict_item(
+        self, chat_id: int, pending_id: int, choice: dict, library_key: str
+    ) -> dict | None:
+        wanted = self._movie_identity_key(choice)
+        if not wanted:
+            return None
+        active = self.store.list_items(
+            ("queued", "failed", "downloading", "completed", "movie_import_failed"),
+            chat_id=chat_id,
+        )
+        for item in active:
+            if int(item.get("pending_id") or 0) == pending_id:
+                continue
+            if item.get("media_kind") != "movie":
+                continue
+            if str(item.get("library_key") or "") != library_key:
+                continue
+            if self._movie_identity_key(item) == wanted:
+                return item
+        return None
+
+    def _movie_queue_conflict(
+        self, chat_id: int, pending_id: int, choice: dict, library_key: str
+    ) -> str | None:
+        item = self._movie_queue_conflict_item(
+            chat_id, pending_id, choice, library_key
+        )
+        return (
+            "the same movie is already pending in this chat"
+            if item is not None
+            else None
+        )
+
+    @staticmethod
+    def _library_conflict_markup(pending_id: int) -> dict:
+        return {
+            "inline_keyboard": [
+                [{
+                    "text": "Replace existing",
+                    "callback_data": f"libraryconflict:replace:{pending_id}",
+                }],
+                [{
+                    "text": "Cancel download",
+                    "callback_data": f"libraryconflict:cancel:{pending_id}",
+                }],
+            ]
+        }
+
+    def _series_episode_identity(self, item: dict) -> tuple[int, int] | None:
+        try:
+            season = int(item.get("series_season") or 0)
+            episode = int(item.get("series_episode") or 0)
+        except (TypeError, ValueError):
+            season = episode = 0
+        if season > 0 and episode > 0:
+            return season, episode
+        return detect_episode(
+            str(item.get("download_filename") or item.get("original_filename") or "")
+        )
+
+    def _series_library_conflict_path(self, item: dict) -> Path | None:
+        detected = self._series_episode_identity(item)
+        folder_name = str(item.get("target_folder") or "").strip()
+        if not detected or not folder_name:
+            return None
+        try:
+            folder = self.config.target_path(
+                folder_name, str(item.get("library_key") or "") or None
+            )
+        except ValueError:
+            return None
+        existing = self.catalog.contains(folder, *detected)
+        return existing.path if existing else None
+
+    def _series_queue_conflict_item(self, item: dict) -> dict | None:
+        detected = self._series_episode_identity(item)
+        if not detected:
+            return None
+        pending_id = int(item.get("pending_id") or 0)
+        chat_id = int(item.get("chat_id") or 0)
+        library_key = str(item.get("library_key") or "")
+        folder_name = str(item.get("target_folder") or "")
+        for other in self.store.list_items(
+            ("queued", "failed", "downloading", "completed"), chat_id=chat_id
+        ):
+            if int(other.get("pending_id") or 0) == pending_id:
+                continue
+            if other.get("media_kind", "series") != "series":
+                continue
+            if str(other.get("library_key") or "") != library_key:
+                continue
+            if str(other.get("target_folder") or "") != folder_name:
+                continue
+            if self._series_episode_identity(other) == detected:
+                return other
+        return None
+
+    async def _hold_for_library_conflict(
+        self,
+        chat_id: int,
+        item: dict,
+        *,
+        existing: Path | None = None,
+        queued: dict | None = None,
+    ) -> None:
+        pending_id = int(item["pending_id"])
+        incoming = str(item.get("original_filename") or "unknown")
+        final_name = self._final_saved_filename(item)
+        if existing is not None:
+            conflict_line = f"Existing Jellyfin file: {_important(existing.name)}"
+            error = f"library conflict: {existing}"
+        elif queued is not None:
+            conflict_line = (
+                "Already queued: "
+                f"{_important(queued.get('original_filename') or 'unknown')}"
+            )
+            error = f"queue conflict with internal job {queued['pending_id']}"
+        else:
+            conflict_line = "Another file already uses this destination."
+            error = "library destination conflict"
+        self.store.update_item(
+            pending_id,
+            status="waiting_overwrite",
+            overwrite_policy=None,
+            error=error,
+        )
+        await self.send(
+            chat_id,
+            "⚠️ This destination is already in use.\n"
+            f"Incoming: {_important(incoming)}\n"
+            f"Would be saved as: {_important(final_name)}\n"
+            f"{conflict_line}\n\n"
+            "Replace archives the old media for rollback. If this is the wrong "
+            "title, cancel and identify the file again.",
+            self._library_conflict_markup(pending_id),
+        )
+
+    async def _confirm_movie_choice(
+        self, chat_id: int, choice: dict, *, notify: bool = True
+    ) -> bool:
+        item = self._movie_item_for_chat(int(choice["pending_id"]), chat_id)
+        if not item or item.get("status") != "awaiting_identification":
+            if notify:
+                await self.send(chat_id, "This movie is no longer waiting for a name.")
+            return False
+        try:
+            folder_name = sanitize_folder_name(str(choice["folder_name"]))
+            library = self.config.library(
+                str(item.get("library_key") or ""), "movie"
+            )
+        except ValueError as exc:
+            await self.send(chat_id, f"Could not prepare the movie destination: {exc}")
+            return False
+        self.store.update_item(
+            int(item["pending_id"]),
+            target_folder=folder_name,
+            movie_title=choice["title"],
+            movie_year=choice.get("year"),
+            imdb_id=choice.get("imdb_id") or None,
+            status="awaiting_identification",
+            overwrite_policy=None,
+            error=None,
+        )
+        updated = self.store.get_item(int(item["pending_id"]), chat_id=chat_id)
+        assert updated is not None
+        existing = self._movie_library_conflict_path(
+            library.key, folder_name, str(choice.get("imdb_id") or "")
+        )
+        if existing is not None and existing.parent.name != folder_name:
+            folder_name = existing.parent.name
+            self.store.update_item(
+                int(item["pending_id"]), target_folder=folder_name
+            )
+            updated["target_folder"] = folder_name
+        queued = self._movie_queue_conflict_item(
+            chat_id, int(item["pending_id"]), updated, library.key
+        )
+        self.movie_choices = {
+            token: saved
+            for token, saved in self.movie_choices.items()
+            if int(saved.get("pending_id") or 0) != int(item["pending_id"])
+        }
+        if existing is not None or queued is not None:
+            await self._hold_for_library_conflict(
+                chat_id, updated, existing=existing, queued=queued
+            )
+            return False
+        self.store.update_item(
+            int(item["pending_id"]), status="queued", error=None
+        )
+        if notify:
+            await self.send(
+                chat_id,
+                f"✅ Movie ready: {_important(folder_name)}\n\nNext: /download",
+                MOVIE_MENU,
+            )
+        return True
+
+    @staticmethod
     def _manual_movie_identity(query: str) -> tuple[str, int | None, str]:
         value = re.sub(r"\s+", " ", query).strip()
         if not value:
@@ -2290,13 +2971,18 @@ class BotApp:
         query: str,
         *,
         manual_query: bool,
+        ai_identity: MediaIdentification | None = None,
+        quiet: bool = False,
     ) -> None:
         item = self._movie_item_for_chat(pending_id, chat_id)
         if not item or item.get("status") != "awaiting_identification":
             await self.send(chat_id, "This movie is no longer waiting for identification.")
             return
         try:
-            await self.send(chat_id, f"Searching IMDb movies for: {query}")
+            if not quiet:
+                await self.send(
+                    chat_id, f"Searching IMDb movies for: {_important(query)}"
+                )
             results, source = await self.imdb.search(
                 query, media_type="movie"
             )
@@ -2329,6 +3015,21 @@ class BotApp:
                 )
             return
 
+        if ai_identity is not None:
+            automatic = self._automatic_movie_result(
+                ai_identity,
+                results,
+                _release_year_from_filename(str(item["original_filename"])),
+            )
+            if automatic is not None:
+                choice = self._movie_choice_from_result(
+                    pending_id, automatic, source
+                )
+                await self._confirm_movie_choice(
+                    chat_id, choice, notify=False
+                )
+                return
+
         now = time.time()
         self.movie_choices = {
             key: value for key, value in self.movie_choices.items()
@@ -2337,15 +3038,9 @@ class BotApp:
         rows = []
         for result in results:
             token = uuid.uuid4().hex[:16]
-            self.movie_choices[token] = {
-                "pending_id": pending_id,
-                "title": str(result["title"]),
-                "year": result.get("year"),
-                "imdb_id": str(result.get("imdb_id") or ""),
-                "folder_name": str(result["folder_name"]),
-                "source": source,
-                "created_at": now,
-            }
+            self.movie_choices[token] = self._movie_choice_from_result(
+                pending_id, result, source
+            )
             rows.append([{
                 "text": (
                     f"{str(result['title'])[:32]} ({result.get('year') or '?'}) "
@@ -2363,7 +3058,19 @@ class BotApp:
         }])
         await self.send(
             chat_id,
-            f"Choose the correct movie result.\nSource: {source}",
+            "Choose the correct movie result for this file:\n"
+            f"Incoming: {_important(item['original_filename'])}\n"
+            + (
+                "Detected: "
+                + _important(
+                    f"{item.get('movie_title')} "
+                    f"({item.get('movie_year') or '?'})"
+                )
+                + "\n"
+                if item.get("movie_title")
+                else ""
+            )
+            + f"Source: {source}",
             {"inline_keyboard": rows},
         )
 
@@ -2399,16 +3106,50 @@ class BotApp:
     ) -> None:
         extension = ""
         item = self._movie_item_for_chat(choice["pending_id"], chat_id)
+        incoming = "unknown"
+        detected = ""
+        mismatch = ""
         if item:
             extension = Path(item["original_filename"]).suffix
+            incoming = str(item["original_filename"])
+            if item.get("movie_title"):
+                detected = (
+                    "\nDetected: "
+                    + _important(
+                        f"{item['movie_title']} "
+                        f"({item.get('movie_year') or '?'})"
+                    )
+                )
+            filename_year = _release_year_from_filename(incoming)
+            selected_year = choice.get("year")
+            if (
+                filename_year is not None
+                and selected_year is not None
+                and int(selected_year) != filename_year
+            ):
+                mismatch += (
+                    f"\n⚠️ The incoming filename contains year {filename_year}, "
+                    f"but the selected movie is {selected_year}."
+                )
+        if item and item.get("movie_title"):
+            same_title = _normalized_title(str(item["movie_title"])) == _normalized_title(
+                str(choice["title"])
+            )
+            same_year = not item.get("movie_year") or (
+                int(item["movie_year"]) == int(choice.get("year") or 0)
+            )
+            if not (same_title and same_year):
+                mismatch += "\n⚠️ The selected IMDb identity differs from the detected title/year."
         await self.send(
             chat_id,
             "Confirm this movie identity:\n"
-            f"Title: {choice['title']}\n"
+            f"Incoming: {_important(incoming)}"
+            f"{detected}{mismatch}\n\n"
+            f"Title: {_important(choice['title'])}\n"
             f"Year: {choice.get('year') or 'not specified'}\n"
             f"IMDb: {choice.get('imdb_id') or 'not available'}\n\n"
-            f"Folder: {choice['folder_name']}\n"
-            f"File: {choice['folder_name']}{extension}",
+            f"Folder: {_important(choice['folder_name'])}\n"
+            f"File: {_important(str(choice['folder_name']) + extension)}",
             {
                 "inline_keyboard": [
                     [{
@@ -2460,7 +3201,8 @@ class BotApp:
         current = self._selected_library(chat_id)
         await self.send(
             chat_id,
-            f"Current library: {current.name}\nPath: {current.path}\n\n"
+            f"Current library: {_important(current.name)}\n"
+            f"Path: {_important(current.path)}\n\n"
             "Choose a destination. Selecting one also changes Series/Movie mode:",
             self._library_picker_markup(),
         )
@@ -2495,13 +3237,24 @@ class BotApp:
             if latest.get("status") == "awaiting_identification"
             else MOVIE_MENU
         )
+        batch_id = self._download_batch_id_for_pending(
+            chat_id, int(latest["pending_id"])
+        )
+        batch_line = (
+            f"Current download-batch ID: #{batch_id}\n"
+            if batch_id is not None
+            else ""
+        )
         await self.send(
             chat_id,
             f"Current mode: {mode}\n"
-            f"Latest movie queue ID: #{latest['pending_id']}\n"
+            f"{batch_line}"
             f"Status: {latest['status']}\n"
-            f"Original file: {latest['original_filename']}\n"
-            f"Movie: {latest.get('target_folder') or 'waiting for identification'}",
+            f"Original file: {_important(latest['original_filename'])}\n"
+            "Movie: "
+            + _important(
+                latest.get("target_folder") or "waiting for identification"
+            ),
             markup,
         )
 
@@ -2578,8 +3331,7 @@ class BotApp:
                 continue
             if detect_episode(queued["original_filename"]) == detected:
                 return (
-                    f"⚠️ S{season:02d}E{episode:02d} is already queued "
-                    f"(Queue ID #{queued['pending_id']})."
+                    f"⚠️ S{season:02d}E{episode:02d} is already queued."
                 )
         return f"🆕 New episode detected: S{season:02d}E{episode:02d}"
 
@@ -2718,7 +3470,7 @@ class BotApp:
             self._set_chat_setting(chat_id, "current_folder", folder)
             await self.send(
                 chat_id,
-                f"Target folder set after confirmation:\n{path}",
+                f"Target folder set after confirmation:\n{_important(path)}",
                 CHANNEL_MENU,
             )
         except ValueError as exc:
@@ -2792,7 +3544,8 @@ class BotApp:
         await self.send(
             chat_id,
             "Existing folder selected as the target for new episodes:\n"
-            f"{folder}\n\nNew files added to the queue after this will go to this folder.",
+            f"{_important(folder)}\n\n"
+            "New files added to the queue after this will go to this folder.",
             CHANNEL_MENU,
         )
 
@@ -2828,8 +3581,9 @@ class BotApp:
             library = self._selected_library(chat_id, "series")
             await self.send(
                 chat_id,
-                f"Current library: {library.name}\n"
-                f"Current folder:\n{self.config.target_path(folder, library.key)}",
+                f"Current library: {_important(library.name)}\n"
+                "Current folder:\n"
+                f"{_important(self.config.target_path(folder, library.key))}",
             )
 
     async def cmd_renamefolder(self, chat_id: int, argument: str) -> None:
@@ -2916,7 +3670,8 @@ class BotApp:
             )
             await self.send(
                 chat_id,
-                f"Folder renamed:\n{old_path}\n→ {new_path}\n"
+                f"Folder renamed:\n{_important(old_path)}\n"
+                f"→ {_important(new_path)}\n"
                 f"Updated {changed} queued target(s) and rollback paths too.",
             )
         except Exception as exc:
@@ -2933,6 +3688,11 @@ class BotApp:
             await self.send(chat_id, "The queue is empty.")
             return
         lines = [f"Queue ({len(items)} file(s)):"]
+        review_mapping, _ = self._download_review_state(chat_id)
+        display_by_pending = {
+            pending_id: display_id
+            for display_id, pending_id in review_mapping.items()
+        }
         per_folder_counts: dict[tuple[str, str], int] = {}
         for item in items[:30]:
             kind = item.get("media_kind", "series")
@@ -2948,11 +3708,17 @@ class BotApp:
             )
             count_key = (library_label, folder_label)
             per_folder_counts[count_key] = per_folder_counts.get(count_key, 0) + 1
+            batch_id = display_by_pending.get(int(item["pending_id"]))
+            batch_label = (
+                f"(Download ID #{batch_id}) " if batch_id is not None else ""
+            )
             lines.append(
-                f"{kind.title()} · {library_label} · {folder_label} "
+                f"{kind.title()} · {_important(library_label)} · "
+                f"{_important(folder_label)} "
                 f"item {per_folder_counts[count_key]} "
-                f"(Queue ID #{item['pending_id']}) [{item['status']}] "
-                f"{item['original_filename']} — {format_size(item['file_size'])} "
+                f"{batch_label}[{item['status']}] "
+                f"{_important(item['original_filename'])} — "
+                f"{format_size(item['file_size'])} "
             )
         if len(items) > 30:
             lines.append(f"... and {len(items)-30} more file(s)")
@@ -2960,19 +3726,85 @@ class BotApp:
 
     async def cmd_clearqueue(self, chat_id: int, _: str) -> None:
         count = self.queue.clear(chat_id)
+        self._set_chat_setting(chat_id, "download_confirmation", "")
+        self._clear_download_review(chat_id)
         await self.send(chat_id, f"Removed {count} item(s) from the queue.")
 
     async def cmd_remove(self, chat_id: int, argument: str) -> None:
-        try:
-            pending_id = int(argument)
-        except ValueError:
-            await self.send(chat_id, "Correct format: /remove 12")
+        if argument.strip():
+            await self._remove_review_item(chat_id, argument)
             return
+        review_mapping, _ = self._download_review_state(chat_id)
+        if not review_mapping:
+            await self.send(
+                chat_id,
+                "Open /download first. It will show temporary numbers starting "
+                "from 1 for the files in that review.",
+                DOWNLOAD_MENU,
+            )
+            return
+        available = ", ".join(
+            f"#{display_id}" for display_id in sorted(review_mapping)
+        )
+        self._set_chat_setting(chat_id, REMOVE_PROMPT_SETTING, "1")
         await self.send(
             chat_id,
-            "Removed from the queue."
-            if self.queue.remove(pending_id, chat_id=chat_id)
-            else "No removable item was found.",
+            "Send the ID shown beside the movie or episode in the latest "
+            f"/download list. Available: {available}.\n"
+            "Send /cancel to stop without removing anything.",
+        )
+
+    async def _remove_review_item(self, chat_id: int, value: str) -> None:
+        review_mapping, next_id = self._download_review_state(chat_id)
+        if not review_mapping:
+            self._set_chat_setting(chat_id, REMOVE_PROMPT_SETTING, "")
+            await self.send(
+                chat_id,
+                "That download review is no longer active. Open /download again.",
+            )
+            return
+        try:
+            review_number = int(value.strip().lstrip("#"))
+        except ValueError:
+            await self.send(
+                chat_id,
+                "Send only a number from the latest /download list, or /cancel.",
+            )
+            return
+        if review_number not in review_mapping:
+            available = ", ".join(
+                f"#{display_id}" for display_id in sorted(review_mapping)
+            )
+            await self.send(
+                chat_id,
+                f"That number is not in the latest /download list. "
+                f"Available IDs: {available}. Send one of them, or /cancel.",
+            )
+            return
+        pending_id = review_mapping[review_number]
+        item = self.store.get_item(pending_id, chat_id=chat_id)
+        filename = (
+            self._final_saved_filename(item)
+            if item is not None
+            else f"item {review_number}"
+        )
+        removed = self.queue.remove(pending_id, chat_id=chat_id)
+        self._set_chat_setting(chat_id, "download_confirmation", "")
+        review_mapping.pop(review_number, None)
+        if review_mapping:
+            self._save_download_review_state(chat_id, review_mapping, next_id)
+            self._set_chat_setting(chat_id, REMOVE_PROMPT_SETTING, "")
+        else:
+            # An emptied batch has no identity to preserve; the next starts at 1.
+            self._clear_download_review(chat_id)
+        await self.send(
+            chat_id,
+            (
+                f"Removed #{review_number}: {_important(filename)}\n\n"
+                "Open /download again to review the updated list."
+                if removed
+                else "That item is no longer removable. Open /download again."
+            ),
         )
 
     @staticmethod
@@ -2992,10 +3824,16 @@ class BotApp:
             return f"{title} - S{season:02d}E{int(episode):02d}{suffix}"
         return original
 
-    def _prepare_download_items(self, chat_id: int) -> list[dict]:
+    def _prepare_download_items(
+        self, chat_id: int, pending_ids: set[int] | None = None
+    ) -> list[dict]:
         current = self._chat_setting(chat_id, "current_folder")
         current_library = self._selected_library(chat_id)
-        items = self.queue.downloadable(chat_id)
+        items = [
+            item
+            for item in self.queue.downloadable(chat_id)
+            if pending_ids is None or int(item["pending_id"]) in pending_ids
+        ]
         prepared = []
         for item in items:
             if (
@@ -3021,6 +3859,60 @@ class BotApp:
             prepared.append(item)
         return prepared
 
+    def _movie_download_preflight(
+        self, items: list[dict]
+    ) -> tuple[list[dict], list[tuple[dict, Path | None, dict | None]]]:
+        """Recheck final movie/episode destinations immediately before transfer."""
+        safe: list[dict] = []
+        rejected: list[tuple[dict, Path | None, dict | None]] = []
+        seen_items: dict[tuple[str, str], dict] = {}
+        for item in items:
+            approved = item.get("overwrite_policy") == "replace_library"
+            media_kind = str(item.get("media_kind") or "series")
+            library_key = str(item.get("library_key") or "")
+            if media_kind == "movie":
+                identity_key = self._movie_identity_key(item)
+                existing = self._movie_library_conflict_path(
+                    library_key,
+                    str(item.get("target_folder") or ""),
+                    str(item.get("imdb_id") or ""),
+                )
+            else:
+                detected = self._series_episode_identity(item)
+                identity_key = (
+                    f"{str(item.get('target_folder') or '').strip().casefold()}:"
+                    f"S{detected[0]:03d}E{detected[1]:04d}"
+                    if detected
+                    else ""
+                )
+                existing = self._series_library_conflict_path(item)
+            batch_key = (library_key, identity_key)
+            queued = seen_items.get(batch_key) if identity_key else None
+            if approved:
+                safe.append(item)
+                if identity_key:
+                    seen_items[batch_key] = item
+                continue
+            if existing is not None or queued is not None:
+                rejected.append((item, existing, queued))
+                continue
+            if identity_key:
+                seen_items[batch_key] = item
+            safe.append(item)
+        return safe, rejected
+
+    async def _prepare_safe_download_items(
+        self, chat_id: int, pending_ids: set[int] | None = None
+    ) -> list[dict]:
+        items, rejected = self._movie_download_preflight(
+            self._prepare_download_items(chat_id, pending_ids)
+        )
+        for item, existing, queued in rejected:
+            await self._hold_for_library_conflict(
+                chat_id, item, existing=existing, queued=queued
+            )
+        return items
+
     async def cmd_download(self, chat_id: int, _: str) -> None:
         assert self.downloader
         if self.downloader.running:
@@ -3031,8 +3923,11 @@ class BotApp:
             )
             await self.send(chat_id, message)
             return
-        items = self._prepare_download_items(chat_id)
+        self._set_chat_setting(chat_id, "download_confirmation", "")
+        self._set_chat_setting(chat_id, REMOVE_PROMPT_SETTING, "")
+        items = await self._prepare_safe_download_items(chat_id)
         if not items:
+            self._clear_download_review(chat_id)
             await self.send(chat_id, "There are no ready files in the queue.")
             return
         missing = [str(x["pending_id"]) for x in items if not x.get("target_folder")]
@@ -3043,18 +3938,42 @@ class BotApp:
             )
             return
         total = sum(int(x.get("file_size") or 0) for x in items)
-        names = "\n".join(
-            f"• {self._final_saved_filename(x)}" for x in items[:12]
+        header = f"Ready to save {len(items)} file(s) — {format_size(total)}:"
+        numbered_items = self._assign_download_batch_ids(chat_id, items)
+        lines = [
+            f"• #{review_number} "
+            f"{_important(self._final_saved_filename(item))}"
+            for review_number, item in numbered_items
+        ]
+        review_messages: list[str] = []
+        current = header
+        for line in lines:
+            if len(current) + len(line) + 1 > 3400:
+                review_messages.append(current)
+                current = "Download list continued:\n" + line
+            else:
+                current += "\n" + line
+        footer = (
+            "\n\nMistake in the list? Press Remove one item or send /remove, "
+            "then reply with its number."
         )
-        summary = (
-            f"Ready to save {len(items)} file(s) — {format_size(total)}:\n{names}"
-        )
-        if len(items) > 12:
-            summary += f"\n... and {len(items)-12} more file(s)"
+        if len(current) + len(footer) > 3900:
+            review_messages.append(current)
+            current = "Download list continued:" + footer
+        else:
+            current += footer
+        review_messages.append(current)
         if self.config.confirm_before_download:
             self._set_chat_setting(chat_id, "download_confirmation", "1")
-            await self.send(chat_id, summary + "\n\nSend /confirm_download to start, or /cancel.")
+            for message in review_messages[:-1]:
+                await self.send(chat_id, message)
+            await self.send(
+                chat_id,
+                review_messages[-1]
+                + "\n\nSend /confirm_download to start, or /cancel.",
+            )
         else:
+            self._clear_download_review(chat_id)
             self.track_task(
                 self._run_downloads_and_movie_imports(chat_id, items),
                 f"download:{chat_id}",
@@ -3073,10 +3992,14 @@ class BotApp:
             )
             return
         self._set_chat_setting(chat_id, "download_confirmation", "")
-        items = self._prepare_download_items(chat_id)
+        review_ids = self._download_review_ids(chat_id)
+        pending_ids = set(review_ids) if review_ids else None
+        items = await self._prepare_safe_download_items(chat_id, pending_ids)
         if not items:
+            self._clear_download_review(chat_id)
             await self.send(chat_id, "There are no ready files to download.")
             return
+        self._clear_download_review(chat_id)
         self.track_task(
             self._run_downloads_and_movie_imports(chat_id, items),
             f"download:{chat_id}",
@@ -3087,8 +4010,16 @@ class BotApp:
         self, chat_id: int, items: list[dict]
     ) -> None:
         assert self.downloader
-        await self.downloader.run(items, lambda text: self.send(chat_id, text))
+        async def notify_download(text: str) -> None:
+            if text.startswith("Download completed:"):
+                LOG.info("Chat %s: %s", chat_id, text)
+                return
+            await self.send(chat_id, text)
+
+        await self.downloader.run(items, notify_download)
         imported = 0
+        imported_movies: list[str] = []
+        failed_movies: list[tuple[int, str, str]] = []
         for original in items:
             if original.get("media_kind") != "movie":
                 continue
@@ -3097,9 +4028,44 @@ class BotApp:
             )
             if not current or current.get("status") != "completed":
                 continue
-            if await self._import_movie_item(chat_id, current):
+            label = str(
+                current.get("target_folder") or current.get("original_filename")
+            )
+            if await self._import_movie_item(chat_id, current, notify=False):
                 imported += 1
-        series_targets: set[tuple[str, str]] = set()
+                imported_movies.append(label)
+            else:
+                failed = self.store.get_item(
+                    int(original["pending_id"]), chat_id=chat_id
+                ) or current
+                error = str(failed.get("error") or "import failed")
+                if "already contains a video" in error.casefold():
+                    error = "already exists in the library; staged file was kept"
+                failed_movies.append(
+                    (int(original["pending_id"]), label, error.splitlines()[0][:180])
+                )
+        if imported_movies or failed_movies:
+            if failed_movies:
+                summary = (
+                    f"Movie import finished: {len(imported_movies)} imported, "
+                    f"{len(failed_movies)} need attention."
+                )
+            else:
+                summary = f"✅ {len(imported_movies)} movie(s) imported."
+            for label in imported_movies[:10]:
+                summary += f"\n• ✅ {_important(label)}"
+            for pending_id, label, error in failed_movies[:10]:
+                summary += (
+                    f"\n• ⚠️ Recovery job #{pending_id} "
+                    f"{_important(label)} — {error}"
+                )
+            if failed_movies:
+                summary += (
+                    "\n\nStaged failures remain safe. Use /movie_import ID "
+                    "after fixing them."
+                )
+            await self.send(chat_id, summary)
+        series_targets: dict[tuple[str, str], set[tuple[int, int]]] = {}
         for original in items:
             if (
                 original.get("media_kind") != "series"
@@ -3111,14 +4077,25 @@ class BotApp:
             )
             if not current or current.get("status") != "completed":
                 continue
-            series_targets.add((
+            target_key = (
                 str(current.get("library_key") or ""),
                 str(current.get("target_folder") or ""),
-            ))
+            )
+            replacements = series_targets.setdefault(target_key, set())
+            if current.get("overwrite_policy") == "replace_library":
+                detected = self._series_episode_identity(current)
+                if detected:
+                    replacements.add(detected)
         series_sorted = False
-        for library_key, folder_name in sorted(series_targets):
+        for (library_key, folder_name), replacements in sorted(
+            series_targets.items()
+        ):
             if folder_name and await self._run_sorter(
-                chat_id, folder_name, library_key, quiet_success=True
+                chat_id,
+                folder_name,
+                library_key,
+                quiet_success=True,
+                replace_episodes=replacements,
             ):
                 series_sorted = True
         if (
@@ -3134,25 +4111,30 @@ class BotApp:
         ):
             await self._run_jellyfin_scan(chat_id)
 
-    async def _import_movie_item(self, chat_id: int, item: dict) -> bool:
+    async def _import_movie_item(
+        self, chat_id: int, item: dict, *, notify: bool = True
+    ) -> bool:
         pending_id = int(item["pending_id"])
         try:
-            await self.send(
-                chat_id,
-                f"Checking movie import plan for queue ID #{pending_id}...",
-            )
+            if notify:
+                await self.send(
+                    chat_id,
+                    f"Checking movie recovery job #{pending_id}...",
+                )
             preview = await self.movie_sorter.import_movie(item, dry_run=True)
-            await self.send(
-                chat_id,
-                "Movie import plan verified. Importing without overwriting:\n"
-                f"{preview['destination']}",
-            )
+            if notify:
+                await self.send(
+                    chat_id,
+                    "Movie import plan verified. Importing without overwriting:\n"
+                    f"{_important(preview['destination'])}",
+                )
             result = await self.movie_sorter.import_movie(item, dry_run=False)
             video = next(
                 (
                     entry["destination"]
                     for entry in result.get("files", [])
                     if entry.get("file_type") == "video"
+                    and entry.get("operation") != "replace-existing"
                 ),
                 "",
             )
@@ -3174,25 +4156,27 @@ class BotApp:
                 staging_file.parent.rmdir()
             except OSError:
                 pass
-            await self.send(
-                chat_id,
-                "Movie imported successfully.\n"
-                f"Destination: {result['destination']}\n"
-                f"Batch ID: {result['batch_id']}\n\n"
-                "This movie job is closed; send another movie while remaining in movie mode.",
-            )
+            if notify:
+                await self.send(
+                    chat_id,
+                    "Movie imported successfully.\n"
+                    f"Destination: {_important(result['destination'])}\n"
+                    f"Batch ID: {result['batch_id']}\n\n"
+                    "This movie job is closed; send another movie while remaining in movie mode.",
+                )
             return True
         except Exception as exc:
             LOG.exception("Movie import failed for queue ID %s", pending_id)
             self.store.update_item(
                 pending_id, status="movie_import_failed", error=str(exc)
             )
-            await self.send(
-                chat_id,
-                f"Movie download is safe in staging, but import failed for queue "
-                f"ID #{pending_id}:\n{exc}\n\n"
-                f"Fix the problem and use /movie_import {pending_id} to retry.",
-            )
+            if notify:
+                await self.send(
+                    chat_id,
+                    "Movie download is safe in staging, but import failed for "
+                    f"recovery job #{pending_id}:\n{exc}\n\n"
+                    f"Fix the problem and use /movie_import {pending_id} to retry.",
+                )
             return False
 
     async def _run_movie_import_command(self, chat_id: int, item: dict) -> None:
@@ -3270,7 +4254,7 @@ class BotApp:
         ai_status = "enabled" if self.config.n8n_agent_enabled else "disabled"
         await self.send(
             chat_id,
-            f"Current library: {selected_library.name}\n"
+            f"Current library: {_important(selected_library.name)}\n"
             f"Mode: {selected_library.media_kind}\n"
             + (text or "No files have been registered yet.")
             + f"\nIncomplete .part files: {part_count}"
@@ -3279,6 +4263,13 @@ class BotApp:
         )
 
     async def cmd_cancel(self, chat_id: int, _: str) -> None:
+        if self._chat_setting(chat_id, REMOVE_PROMPT_SETTING) == "1":
+            self._set_chat_setting(chat_id, REMOVE_PROMPT_SETTING, "")
+            await self.send(
+                chat_id,
+                "Remove operation cancelled. The download review was not changed.",
+            )
+            return
         had_confirmation = (
             self._chat_setting(chat_id, "download_confirmation") == "1"
         )
@@ -3305,11 +4296,26 @@ class BotApp:
         if not item or item["status"] != "waiting_overwrite":
             await self.send(chat_id, "This file is not waiting for an overwrite decision.")
             return
+        library_conflict = str(item.get("error") or "").startswith(
+            ("library conflict:", "queue conflict:", "library destination conflict")
+        )
+        if library_conflict and parts[1] == "save_with_suffix":
+            await self.send(
+                chat_id,
+                "A Jellyfin identity conflict cannot use save_with_suffix. "
+                "Choose Replace existing or Cancel download from the conflict message.",
+            )
+            return
         if parts[1] == "skip":
             self.queue.set_status(pending_id, "skipped", "Skipped by user decision.")
         else:
             self.queue.set_status(
-                pending_id, "queued", None, overwrite_policy=parts[1]
+                pending_id,
+                "queued",
+                None,
+                overwrite_policy=(
+                    "replace_library" if library_conflict else parts[1]
+                ),
             )
         await self.send(chat_id, "Decision saved. Send /download to continue.")
 
@@ -3320,6 +4326,7 @@ class BotApp:
         library_key: str | None = None,
         *,
         quiet_success: bool = False,
+        replace_episodes: set[tuple[int, int]] | None = None,
     ) -> bool:
         try:
             library = self.config.library(
@@ -3331,9 +4338,12 @@ class BotApp:
                 await self.send(chat_id, f"Folder not found:\n{folder}")
                 return False
             if not quiet_success:
-                await self.send(chat_id, f"Sorting: {folder_name}")
+                await self.send(chat_id, f"Sorting: {_important(folder_name)}")
             ok, output = await self.sorter.run(
-                folder, chat_id=chat_id, library_key=library.key
+                folder,
+                chat_id=chat_id,
+                library_key=library.key,
+                replace_episodes=replace_episodes,
             )
             if ok:
                 if not quiet_success:
@@ -3379,7 +4389,7 @@ class BotApp:
             await self.send(chat_id, f"Folder not found:\n{folder}")
             return
         try:
-            await self.send(chat_id, f"{label}:\n{folder}")
+            await self.send(chat_id, f"{label}:\n{_important(folder)}")
             ok, output = await self.sorter.series_action(
                 action, folder, chat_id=chat_id, library_key=library.key
             )
@@ -3474,7 +4484,8 @@ class BotApp:
             await self.send(
                 chat_id,
                 f"Latest run #{run['id']}\nStatus: {run['status']}\n"
-                f"Folder: {run['folder']}\nTime: {run['started_at']}",
+                f"Folder: {_important(run['folder'])}\n"
+                f"Time: {run['started_at']}",
             )
 
     async def _run_sort_undo(
@@ -3876,7 +4887,7 @@ class BotApp:
         except ValueError:
             await self.send(
                 chat_id,
-                f"Series not found for episode #{pending_id}. Choose manual "
+                "Series not found for this episode. Choose manual "
                 "series details.",
                 self._series_identification_markup(pending_id),
             )
@@ -3949,7 +4960,7 @@ class BotApp:
         )
         try:
             if mode != "queue":
-                await self.send(chat_id, f"Searching IMDb for: {query}")
+                await self.send(chat_id, f"Searching IMDb for: {_important(query)}")
             results, source = await self.imdb.search(query, media_type="series")
             if not results:
                 if (
@@ -4083,7 +5094,7 @@ class BotApp:
         if choice.get("mode") == "queue":
             await self.send(
                 chat_id,
-                f"New series: {choice['folder_name']}\n"
+                f"New series: {_important(choice['folder_name'])}\n"
                 "Is this name correct for the matching queued episodes?",
                 {
                     "inline_keyboard": [[
@@ -4109,7 +5120,7 @@ class BotApp:
         )
         await self.send(
             chat_id,
-            f"Suggested folder name:\n{choice['folder_name']}\n\n"
+            f"Suggested folder name:\n{_important(choice['folder_name'])}\n\n"
             f"Source: {source}\nAction: {action}\nDo you confirm?",
             {
                 "inline_keyboard": [[
@@ -4206,7 +5217,9 @@ class BotApp:
             await self.send(chat_id, f"Folder not found:\n{folder}")
             return
         entries = await asyncio.to_thread(self.catalog.scan_series, folder)
-        await self.send(chat_id, format_series_inventory(folder_name, entries))
+        await self.send(
+            chat_id, format_series_inventory(_important(folder_name), entries)
+        )
 
     def _library_episode_summary(self) -> str:
         lines = ["📚 Jellyfin series-library episode summary"]
@@ -4225,14 +5238,14 @@ class BotApp:
                     f"S{season:02d}: {len(episodes)} eps (latest E{max(episodes):02d})"
                     for season, episodes in sorted(grouped.items())
                 )
-                library_lines.append(f"• {folder.name} — {seasons}")
+                library_lines.append(f"• {_important(folder.name)} — {seasons}")
                 if len(lines) + len(library_lines) >= 60:
                     library_lines.append(
                         "... result shortened; select a library and use /episodes NAME"
                     )
                     break
             if library_lines:
-                lines.append(f"\n[{library.name}]")
+                lines.append(f"\n[{_important(library.name)}]")
                 lines.extend(library_lines)
             if len(lines) >= 60:
                 break

@@ -82,6 +82,11 @@ class MovieSorterBridge:
         imdb_id = str(item.get("imdb_id") or "").strip()
         if imdb_id:
             command.extend(["--imdb-id", imdb_id])
+        destination_name = str(item.get("target_folder") or "").strip()
+        if destination_name:
+            command.extend(["--destination-name", destination_name])
+        if item.get("overwrite_policy") == "replace_library":
+            command.append("--replace-existing")
         command.append("--json")
         return command
 

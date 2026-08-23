@@ -25,6 +25,8 @@ from telegram_jellyfin_bot.bot import (
     SERIES_MENU,
     SORTING_MENU,
     TelegramAPI,
+    _important,
+    _telegram_html,
 )
 from telegram_jellyfin_bot.downloader import DownloadManager
 from telegram_jellyfin_bot.episode_catalog import (
@@ -248,6 +250,49 @@ class ConfigAndPathTests(unittest.TestCase):
                 data = session.calls[0]["data"]
                 self.assertEqual(data["message_thread_id"], "42")
                 self.assertEqual(data["direct_messages_topic_id"], "7001")
+                self.assertEqual(data["parse_mode"], "HTML")
+
+        asyncio.run(exercise())
+
+    def test_important_values_are_bold_and_all_html_is_escaped(self):
+        rendered = _telegram_html(
+            f"Library: {_important('Movies & <Special>')}\nordinary <text>"
+        )
+        self.assertEqual(
+            rendered,
+            "Library: <b>Movies &amp; &lt;Special&gt;</b>\n"
+            "ordinary &lt;text&gt;",
+        )
+
+    def test_bot_send_renders_important_values_after_localization(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+
+                class FakeApi:
+                    def __init__(self):
+                        self.sent = []
+
+                    async def send(self, chat_id, text, reply_markup=None, **kwargs):
+                        self.sent.append(text)
+
+                api = FakeApi()
+                app.api = api
+                try:
+                    await app.send(
+                        987654321,
+                        f"Current library: {_important('Movies & <Special>')}",
+                    )
+                    self.assertEqual(
+                        api.sent[-1],
+                        "Current library: <b>Movies &amp; &lt;Special&gt;</b>",
+                    )
+                finally:
+                    app.store.close()
 
         asyncio.run(exercise())
 
@@ -669,6 +714,143 @@ class MovieWorkflowTests(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_existing_movie_requires_replace_or_cancel_before_download(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+                folder_name = "Interstellar (2014) [imdbid-tt0816692]"
+                existing_folder_name = "Interstellar Old [imdbid-tt0816692]"
+                destination = cfg.movie_target_path(existing_folder_name, "movies")
+                destination.mkdir(parents=True)
+                (destination / f"{existing_folder_name}.mkv").write_bytes(b"existing")
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append((text, reply_markup))
+
+                app.send = fake_send
+                class FakeApi:
+                    async def call(self, *_args, **_kwargs):
+                        return True
+
+                app.api = FakeApi()
+                try:
+                    pending_id = app.queue.add(
+                        message_id=52,
+                        chat_id=987654321,
+                        file_id="duplicate-movie",
+                        file_unique_id="duplicate-movie-unique",
+                        original_filename="Interstellar.2014.mp4",
+                        file_size=100,
+                        target_folder=None,
+                        library_key="movies",
+                        media_kind="movie",
+                        status="awaiting_identification",
+                    )
+                    choice = {
+                        "pending_id": pending_id,
+                        "title": "Interstellar",
+                        "year": 2014,
+                        "imdb_id": "tt0816692",
+                        "folder_name": folder_name,
+                    }
+                    self.assertFalse(
+                        await app._confirm_movie_choice(
+                            987654321, choice, notify=False
+                        )
+                    )
+                    item = app.store.get_item(
+                        pending_id, chat_id=987654321
+                    )
+                    self.assertEqual(item["status"], "waiting_overwrite")
+                    self.assertIn("library conflict", item["error"])
+                    conflict_message = next(
+                        entry for entry in sent
+                        if "Existing Jellyfin file" in entry[0]
+                    )
+                    self.assertIn("Interstellar.2014.mp4", conflict_message[0])
+                    callbacks = {
+                        button["callback_data"]
+                        for row in conflict_message[1]["inline_keyboard"]
+                        for button in row
+                    }
+                    self.assertEqual(
+                        callbacks,
+                        {
+                            f"libraryconflict:replace:{pending_id}",
+                            f"libraryconflict:cancel:{pending_id}",
+                        },
+                    )
+                    await app.handle_callback({
+                        "id": "replace-existing-movie",
+                        "data": f"libraryconflict:replace:{pending_id}",
+                        "message": {"chat": {"id": 987654321, "type": "private"}},
+                    })
+                    approved = app.store.get_item(pending_id, chat_id=987654321)
+                    self.assertEqual(approved["status"], "queued")
+                    self.assertEqual(
+                        approved["overwrite_policy"], "replace_library"
+                    )
+                    self.assertEqual(
+                        approved["target_folder"], existing_folder_name
+                    )
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_download_preflight_requests_replacement_for_older_duplicate(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+                folder_name = "Ratatouille (2007) [imdbid-tt0382932]"
+                destination = cfg.movie_target_path(folder_name, "movies")
+                destination.mkdir(parents=True)
+                (destination / f"{folder_name}.mkv").write_bytes(b"existing")
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append((text, reply_markup))
+
+                app.send = fake_send
+                try:
+                    pending_id = app.queue.add(
+                        message_id=53,
+                        chat_id=987654321,
+                        file_id="old-duplicate-movie",
+                        file_unique_id="old-duplicate-movie-unique",
+                        original_filename="Ratatouille.2007.mp4",
+                        file_size=100,
+                        target_folder=folder_name,
+                        library_key="movies",
+                        media_kind="movie",
+                        movie_title="Ratatouille",
+                        movie_year=2007,
+                        imdb_id="tt0382932",
+                        status="queued",
+                    )
+                    items = await app._prepare_safe_download_items(987654321)
+                    self.assertEqual(items, [])
+                    item = app.store.get_item(
+                        pending_id, chat_id=987654321
+                    )
+                    self.assertEqual(item["status"], "waiting_overwrite")
+                    self.assertTrue(
+                        any("Existing Jellyfin file" in text for text, _ in sent)
+                    )
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
     def test_bot_imports_and_undoes_movie_through_independent_bridge(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
@@ -741,6 +923,31 @@ class MovieWorkflowTests(unittest.TestCase):
                     self.assertTrue(duplicate_source.is_file())
                     self.assertEqual(destination.read_bytes(), b"film")
 
+                    duplicate_item["overwrite_policy"] = "replace_library"
+                    preview = await app.movie_sorter.import_movie(
+                        duplicate_item, dry_run=True
+                    )
+                    self.assertTrue(preview["replacement"])
+                    replacement = await app.movie_sorter.import_movie(
+                        duplicate_item, dry_run=False
+                    )
+                    self.assertEqual(destination.read_bytes(), b"new-film")
+                    backup = (
+                        destination.parent
+                        / ".replacement_backups"
+                        / replacement["batch_id"]
+                        / destination.name
+                    )
+                    self.assertEqual(backup.read_bytes(), b"film")
+                    undone = await app.movie_sorter.undo_batch(
+                        replacement["batch_id"],
+                        chat_id=987654321,
+                        library_key="movies",
+                    )
+                    self.assertTrue(undone["ok"])
+                    self.assertEqual(destination.read_bytes(), b"film")
+                    self.assertEqual(duplicate_source.read_bytes(), b"new-film")
+
                     source.parent.mkdir(parents=True, exist_ok=True)
                     source.write_bytes(b"undo-conflict")
                     await app._run_movie_undo(
@@ -763,6 +970,82 @@ class MovieWorkflowTests(unittest.TestCase):
                     self.assertEqual(source.read_bytes(), b"film")
                     self.assertEqual(
                         app.store.get_item(pending_id)["status"], "movie_undone"
+                    )
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_automatic_movie_import_uses_one_compact_summary(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+                items = []
+                for index, title in enumerate(("Interstellar", "Ratatouille"), 1):
+                    pending_id = app.queue.add(
+                        message_id=60 + index,
+                        chat_id=987654321,
+                        file_id=f"download-{index}",
+                        file_unique_id=f"download-unique-{index}",
+                        original_filename=f"{title}.mkv",
+                        file_size=4,
+                        target_folder=f"{title} (2000) [imdbid-tt000000{index}]",
+                        library_key="movies",
+                        media_kind="movie",
+                        movie_title=title,
+                        movie_year=2000,
+                        imdb_id=f"tt000000{index}",
+                        status="queued",
+                    )
+                    items.append(app.store.get_item(pending_id))
+
+                class FakeDownloader:
+                    async def run(self, batch, notify):
+                        await notify("Download started.")
+                        for item in batch:
+                            app.store.update_item(
+                                int(item["pending_id"]), status="completed"
+                            )
+                            await notify(
+                                f"Download completed: {item['original_filename']}"
+                            )
+                        await notify(
+                            "Downloads finished. 2 of 2 file(s) completed.\n"
+                            "Completed movies will now be imported automatically."
+                        )
+
+                async def fake_import(chat_id, item, *, notify=True):
+                    self.assertFalse(notify)
+                    app.store.update_item(
+                        int(item["pending_id"]), status="imported"
+                    )
+                    return True
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append(text)
+
+                app.downloader = FakeDownloader()
+                app._import_movie_item = fake_import
+                app.send = fake_send
+                try:
+                    await app._run_downloads_and_movie_imports(
+                        987654321, items
+                    )
+                    self.assertFalse(
+                        any(text.startswith("Download completed:") for text in sent)
+                    )
+                    summaries = [
+                        text for text in sent if "movie(s) imported" in text
+                    ]
+                    self.assertEqual(len(summaries), 1)
+                    self.assertIn("2 movie(s) imported", summaries[0])
+                    self.assertFalse(
+                        any("Checking movie import plan" in text for text in sent)
                     )
                 finally:
                     app.store.close()
@@ -925,6 +1208,86 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                     self.assertEqual(len(ready_messages), 1)
                     self.assertIn("Dr. Stone: S04E25", ready_messages[0])
                     self.assertIn("Next: /download", ready_messages[0])
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_existing_series_episode_requires_replace_or_cancel(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+                folder_name = "Dr. Stone (2019) [imdbid-tt9679542]"
+                season = cfg.target_path(folder_name, "series") / "Season 04"
+                season.mkdir(parents=True)
+                existing = season / "Dr. Stone - S04E25.mkv"
+                existing.write_bytes(b"old")
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append((text, reply_markup))
+
+                class FakeApi:
+                    async def call(self, *_args, **_kwargs):
+                        return True
+
+                app.send = fake_send
+                app.api = FakeApi()
+                try:
+                    pending_id = app.queue.add(
+                        message_id=2,
+                        chat_id=987654321,
+                        file_id="episode-file",
+                        file_unique_id="episode-unique",
+                        original_filename="Dr.Stone.S04E25.mp4",
+                        file_size=100,
+                        target_folder=None,
+                        library_key="series",
+                        media_kind="series",
+                        status="awaiting_identification",
+                    )
+                    choice = {
+                        "folder_name": folder_name,
+                        "library_key": "series",
+                        "imdb_id": "tt9679542",
+                        "queue_entries": [{
+                            "pending_id": pending_id,
+                            "series_title": "Dr. Stone",
+                            "series_year": 2019,
+                            "series_season": 4,
+                            "series_episode": 25,
+                            "imdb_id": "tt9679542",
+                        }],
+                    }
+                    await app._confirm_series_queue_choice(
+                        987654321, choice, notify=False
+                    )
+                    waiting = app.store.get_item(pending_id, chat_id=987654321)
+                    self.assertEqual(waiting["status"], "waiting_overwrite")
+                    self.assertTrue(
+                        any("Existing Jellyfin file" in text for text, _ in sent)
+                    )
+
+                    await app.handle_callback({
+                        "id": "replace-existing-episode",
+                        "data": f"libraryconflict:replace:{pending_id}",
+                        "message": {"chat": {"id": 987654321, "type": "private"}},
+                    })
+                    approved = app.store.get_item(pending_id, chat_id=987654321)
+                    self.assertEqual(approved["status"], "queued")
+                    self.assertEqual(
+                        approved["overwrite_policy"], "replace_library"
+                    )
+                    command = app.sorter.build_command(
+                        cfg.target_path(folder_name, "series"),
+                        library_key="series",
+                        replace_episodes={(4, 25)},
+                    )
+                    self.assertEqual(command[-2:], ["--replace-episode", "S04E25"])
                 finally:
                     app.store.close()
 
@@ -1268,15 +1631,167 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                     )
                     await app.cmd_download(987654321, "")
                     preview = sent[-1]
+                    self.assertIn("#1", preview)
                     self.assertIn("Dr. Stone - S04E25.mkv", preview)
                     self.assertNotIn("[AWHT]", preview)
                     self.assertNotIn("Incoming", preview)
+                    self.assertIn("send /remove", preview)
                 finally:
                     app.store.close()
 
         asyncio.run(exercise())
 
-    def test_ai_movie_identity_is_handed_to_existing_imdb_confirmation(self):
+    def test_download_review_id_removes_only_the_selected_item(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                path = root / "config.json"
+                path.write_text(json.dumps(config_data(root)), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                class FakeDownloader:
+                    running = False
+                    running_chat_id = None
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append(text)
+
+                app.downloader = FakeDownloader()
+                app.send = fake_send
+                try:
+                    discarded = app.queue.add(
+                        message_id=99,
+                        chat_id=987654321,
+                        file_id="discarded",
+                        file_unique_id="discarded-before-review",
+                        original_filename="discarded.mkv",
+                        file_size=1,
+                        received_at="2026-08-22T00:00:00+00:00",
+                        target_folder="Example Show",
+                        library_key="series",
+                        media_kind="series",
+                        status="queued",
+                    )
+                    self.assertTrue(
+                        app.queue.remove(discarded, chat_id=987654321)
+                    )
+                    ids = []
+                    for number in range(1, 16):
+                        pending_id = app.queue.add(
+                            message_id=number,
+                            chat_id=987654321,
+                            file_id=f"file-{number}",
+                            file_unique_id=f"remove-preview-{number}",
+                            original_filename=f"Show.S01E{number:02d}.mkv",
+                            file_size=1024,
+                            received_at="2026-08-22T00:00:00+00:00",
+                            target_folder="Example Show",
+                            library_key="series",
+                            media_kind="series",
+                            status="queued",
+                            series_season=1,
+                            series_episode=number,
+                        )
+                        ids.append(pending_id)
+
+                    await app.cmd_download(987654321, "")
+                    self.assertGreater(ids[0], 1)
+                    self.assertIn("#1 ", sent[-1])
+                    self.assertIn("#15 ", sent[-1])
+                    self.assertEqual(
+                        app._download_batch_id_for_pending(
+                            987654321, ids[0]
+                        ),
+                        1,
+                    )
+                    await app.cmd_queue(987654321, "")
+                    self.assertIn("Download ID #1", sent[-1])
+                    self.assertNotIn("Queue ID", sent[-1])
+
+                    await app.cmd_remove(987654321, "")
+                    self.assertEqual(
+                        app._chat_setting(987654321, "remove_review_pending"),
+                        "1",
+                    )
+                    self.assertIn("/cancel", sent[-1])
+                    await app._handle_update_in_context(
+                        {},
+                        None,
+                        {"chat": {"id": 987654321}, "text": "1"},
+                    )
+                    await app.cmd_download(987654321, "")
+                    updated_preview = sent[-1]
+                    self.assertNotIn("Show - S01E01.mkv", updated_preview)
+                    self.assertNotIn("#1 ", updated_preview)
+                    self.assertIn("#2 ", updated_preview)
+                    self.assertIn("Show - S01E02.mkv", updated_preview)
+                    self.assertIn("#15 ", updated_preview)
+                    self.assertIn("Show - S01E15.mkv", updated_preview)
+                    self.assertEqual(
+                        app._download_batch_id_for_pending(
+                            987654321, ids[1]
+                        ),
+                        2,
+                    )
+                    remaining = app.queue.downloadable(987654321)
+                    self.assertEqual(
+                        [item["pending_id"] for item in remaining], ids[1:]
+                    )
+
+                    await app.cmd_remove(987654321, "")
+                    await app.cmd_cancel(987654321, "")
+                    self.assertEqual(
+                        app._chat_setting(987654321, "remove_review_pending"),
+                        "",
+                    )
+                    self.assertEqual(
+                        app._chat_setting(987654321, "download_confirmation"),
+                        "1",
+                    )
+                    self.assertIn("review was not changed", sent[-1])
+
+                    def fake_track_task(coroutine, *args, **kwargs):
+                        coroutine.close()
+                        return None
+
+                    app.track_task = fake_track_task
+                    await app.cmd_confirm(987654321, "")
+                    self.assertEqual(app._download_review_ids(987654321), [])
+                    for pending_id in ids[1:]:
+                        app.store.update_item(pending_id, status="completed")
+                    new_id = app.queue.add(
+                        message_id=100,
+                        chat_id=987654321,
+                        file_id="new-batch-file",
+                        file_unique_id="new-batch-unique",
+                        original_filename="Show.S01E16.mkv",
+                        file_size=1024,
+                        received_at="2026-08-22T00:00:00+00:00",
+                        target_folder="Example Show",
+                        library_key="series",
+                        media_kind="series",
+                        status="queued",
+                        series_season=1,
+                        series_episode=16,
+                    )
+                    self.assertGreater(new_id, 15)
+                    await app.cmd_download(987654321, "")
+                    self.assertIn("#1 ", sent[-1])
+                    self.assertIn("Show - S01E16.mkv", sent[-1])
+                    self.assertEqual(
+                        app._download_batch_id_for_pending(
+                            987654321, new_id
+                        ),
+                        1,
+                    )
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_ai_movie_exact_identity_is_queued_automatically(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
                 root = Path(td)
@@ -1342,8 +1857,266 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                         987654321, pending_id, ""
                     )
                     self.assertIn("The Last Whale Singer 2025", app.imdb.query)
-                    self.assertEqual(len(app.movie_choices), 1)
+                    item = app.store.get_item(
+                        pending_id, chat_id=987654321
+                    )
+                    self.assertEqual(item["status"], "queued")
+                    self.assertEqual(
+                        item["target_folder"],
+                        "The Last Whale Singer (2025) [imdbid-tt13518550]",
+                    )
+                    self.assertEqual(app.movie_choices, {})
                 finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_ai_movie_year_mismatch_still_requires_a_choice(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                data = config_data(root)
+                data.update({
+                    "n8n_agent_enabled": True,
+                    "n8n_agent_url": "http://n8n:5678/webhook/media-identify",
+                })
+                path = root / "config.json"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                class FakeIdentifier:
+                    configured = True
+
+                    async def identify(self, **kwargs):
+                        return MediaIdentification(
+                            title_query="Kung Fu Panda",
+                            season=None,
+                            episode=None,
+                            year=2011,
+                            confidence=0.95,
+                            needs_user_input=False,
+                            question=None,
+                        )
+
+                class FakeIMDb:
+                    async def search(self, query, media_type="any"):
+                        return ([{
+                            "title": "Kung Fu Panda",
+                            "year": 2008,
+                            "score": 99,
+                            "imdb_id": "tt0441773",
+                            "folder_name": (
+                                "Kung Fu Panda (2008) [imdbid-tt0441773]"
+                            ),
+                        }], "test IMDb")
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append((text, reply_markup))
+
+                app.ai_identifier = FakeIdentifier()
+                app.imdb = FakeIMDb()
+                app.send = fake_send
+                try:
+                    pending_id = app.queue.add(
+                        message_id=3,
+                        chat_id=987654321,
+                        file_id="movie-file-mismatch",
+                        file_unique_id="movie-unique-mismatch",
+                        original_filename="Kung.Fu.Panda.2011.mkv",
+                        file_size=100,
+                        received_at="2026-08-23T00:00:00+00:00",
+                        target_folder=None,
+                        library_key="movies",
+                        media_kind="movie",
+                        status="awaiting_identification",
+                    )
+                    await app._run_ai_movie_identification(
+                        987654321, pending_id, ""
+                    )
+                    item = app.store.get_item(
+                        pending_id, chat_id=987654321
+                    )
+                    self.assertEqual(item["status"], "awaiting_identification")
+                    self.assertEqual(len(app.movie_choices), 1)
+                    self.assertTrue(
+                        any("Choose the correct movie result" in text for text, _ in sent)
+                    )
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_filename_year_blocks_wrong_automatic_movie_identity(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                data = config_data(root)
+                data.update({
+                    "n8n_agent_enabled": True,
+                    "n8n_agent_url": "http://n8n:5678/webhook/media-identify",
+                })
+                path = root / "config.json"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+
+                class FakeIdentifier:
+                    configured = True
+
+                    async def identify(self, **kwargs):
+                        return MediaIdentification(
+                            title_query="Kung Fu Panda",
+                            season=None,
+                            episode=None,
+                            year=2008,
+                            confidence=0.99,
+                            needs_user_input=False,
+                            question=None,
+                        )
+
+                class FakeIMDb:
+                    async def search(self, query, media_type="any"):
+                        return ([{
+                            "title": "Kung Fu Panda",
+                            "year": 2008,
+                            "score": 99,
+                            "imdb_id": "tt0441773",
+                            "folder_name": "Kung Fu Panda (2008) [imdbid-tt0441773]",
+                        }], "test IMDb")
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append((text, reply_markup))
+
+                app.ai_identifier = FakeIdentifier()
+                app.imdb = FakeIMDb()
+                app.send = fake_send
+                try:
+                    pending_id = app.queue.add(
+                        message_id=31,
+                        chat_id=987654321,
+                        file_id="wrong-year-file",
+                        file_unique_id="wrong-year-unique",
+                        original_filename="Kung.Fu.Panda.2025.mkv",
+                        file_size=100,
+                        received_at="2026-08-23T00:00:00+00:00",
+                        target_folder=None,
+                        library_key="movies",
+                        media_kind="movie",
+                        status="awaiting_identification",
+                    )
+                    await app._run_ai_movie_identification(
+                        987654321, pending_id, ""
+                    )
+                    item = app.store.get_item(pending_id, chat_id=987654321)
+                    self.assertEqual(item["status"], "awaiting_identification")
+                    self.assertEqual(len(app.movie_choices), 1)
+                    self.assertTrue(
+                        any(
+                            "Kung.Fu.Panda.2025.mkv" in text
+                            for text, _ in sent
+                        )
+                    )
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
+    def test_movie_burst_uses_one_compact_automatic_result(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                data = config_data(root)
+                data.update({
+                    "n8n_agent_enabled": True,
+                    "n8n_agent_url": "http://n8n:5678/webhook/media-identify",
+                })
+                path = root / "config.json"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+                sent = []
+                edited = []
+                identities = {
+                    "Interstellar": (2014, "tt0816692"),
+                    "Ratatouille": (2007, "tt0382932"),
+                    "Kung Fu Panda 3": (2016, "tt2267968"),
+                }
+
+                class FakeIdentifier:
+                    configured = True
+
+                    async def identify(self, **kwargs):
+                        title = Path(kwargs["filename"]).stem.replace("_", " ")
+                        year, _ = identities[title]
+                        return MediaIdentification(
+                            title_query=title,
+                            season=None,
+                            episode=None,
+                            year=year,
+                            confidence=0.98,
+                            needs_user_input=False,
+                            question=None,
+                        )
+
+                class FakeIMDb:
+                    async def search(self, query, media_type="any"):
+                        title = next(title for title in identities if query.startswith(title))
+                        year, imdb_id = identities[title]
+                        return ([{
+                            "title": title,
+                            "year": year,
+                            "score": 99,
+                            "imdb_id": imdb_id,
+                            "folder_name": f"{title} ({year}) [imdbid-{imdb_id}]",
+                        }], "test IMDb")
+
+                async def fake_send(chat_id, text, reply_markup=None, **kwargs):
+                    sent.append(text)
+                    return {"message_id": 88}
+
+                async def fake_edit(chat_id, message_id, text):
+                    edited.append((message_id, text))
+                    return True
+
+                app.ai_identifier = FakeIdentifier()
+                app.imdb = FakeIMDb()
+                app.send = fake_send
+                app.edit_message = fake_edit
+                try:
+                    with patch(
+                        "telegram_jellyfin_bot.bot.MOVIE_BATCH_WINDOW_SECONDS", 0
+                    ):
+                        for index, title in enumerate(identities, 1):
+                            await app._queue_movie_for_identification(
+                                987654321,
+                                {
+                                    "message_id": index,
+                                    "from": {"id": 44},
+                                },
+                                {
+                                    "file_id": f"file-{index}",
+                                    "file_unique_id": f"movie-burst-{index}",
+                                    "file_size": 100,
+                                },
+                                f"{title.replace(' ', '_')}.mkv",
+                                "",
+                            )
+                        await asyncio.sleep(0.05)
+                    self.assertEqual(len(sent), 1)
+                    self.assertIn("Identifying 3 movie(s)", sent[0])
+                    self.assertEqual(len(edited), 1)
+                    self.assertIn("3 movie(s) ready", edited[0][1])
+                    self.assertIn("Next: /download", edited[0][1])
+                    queued = app.store.list_items(
+                        ("queued",), chat_id=987654321
+                    )
+                    self.assertEqual(len(queued), 3)
+                    self.assertEqual(app.movie_choices, {})
+                finally:
+                    await app.shutdown()
                     app.store.close()
 
         asyncio.run(exercise())
@@ -1507,12 +2280,21 @@ class MenuNavigationTests(unittest.TestCase):
                         987654321,
                         "Downloads finished. 2 of 3 file(s) completed.\n"
                         "Queue (1 file(s)):\n"
-                        "Movie · Example item 1 (Queue ID #7) [queued] movie.mkv",
+                        "Movie · Example item 1 (Download ID #1) [queued] movie.mkv",
                     )
                     self.assertIn("2 از 3 فایل کامل شد", api.sent[-1][0])
                     self.assertIn("صف (1 فایل)", api.sent[-1][0])
                     self.assertIn("فیلم · Example مورد 1", api.sent[-1][0])
+                    self.assertIn("شناسه دانلود #1", api.sent[-1][0])
                     self.assertIn("[در صف]", api.sent[-1][0])
+
+                    await app.send(
+                        987654321,
+                        "✅ 3 movie(s) ready.\n"
+                        "• Interstellar (2014)\n\nNext: /download",
+                    )
+                    self.assertIn("3 فیلم آماده است", api.sent[-1][0])
+                    self.assertIn("مرحله بعد: /download", api.sent[-1][0])
                 finally:
                     app.store.close()
 

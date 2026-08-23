@@ -58,8 +58,9 @@ movie mode. AI is never allowed to choose or change the library.
 ### 2. Send media
 
 Send one or several supported videos. You can queue multiple files before
-downloading them together. Episodes sent within a short burst are identified as
-one compact batch. Mixed series are identified and routed independently.
+downloading them together. Episodes or movies sent within a short burst are
+identified as one compact batch. Mixed series are identified and routed
+independently.
 
 When AI integration is enabled, the bot sends only the filename, optional
 caption, media kind, and selected library key to the n8n identification
@@ -88,11 +89,32 @@ It does not send a separate confidence, temporary-name, IMDb-progress, and
 sorter-success message for every episode. Those details remain available in
 status/log output when a problem must be diagnosed.
 
+Movie bursts use the same compact pattern. When the AI title/year and IMDb's
+best title/year agree exactly with high confidence, that movie becomes ready
+without another identity confirmation. A title mismatch, year mismatch, low
+score, missing information, or unavailable service still asks for a decision.
+If a selected movie identity or series episode is already present in the
+library/queue, the bot shows the incoming filename and the existing file before
+download. Choose **Replace existing** only when the identity is correct, or
+**Cancel download** and identify it again when (for example) the year/title was
+matched to the wrong movie. Cancel keeps the item undownloaded in the queue so
+you can correct it or remove it; it does not touch the existing library file.
+
 ### 3. Review and confirm
 
 Before downloading, the compact review shows the filenames that will actually
 be saved, together with file count and approximate size. Original release names
 and internal temporary names are not used in this review.
+
+Every review line starts with a temporary download-batch ID, for example
+`#1 Movie Name.mkv`. An ID remains attached to the same movie or episode while
+you review and edit that batch; reopening `/download` does not give it a new
+ID. If one result is wrong, press **Remove one item** (or send `/remove`), reply
+with that ID, and open `/download` again. Send `/cancel` while the bot is
+waiting for the ID to stop without removing anything. Only the selected item
+is removed. After `/confirm_download` starts the batch, the next batch starts
+its IDs from `#1` again. Removing `#2` does not rename `#3`; a gap is normal
+and prevents an ID from suddenly pointing to a different file.
 
 - If correct, confirm it.
 - If uncertain, the bot should ask one short question.
@@ -142,7 +164,8 @@ destination.
 | Six episodes of one new series | Asks once for identity and includes all six in one download review |
 | Mixed episodes from several series | Routes each identified series independently inside the selected series library |
 | A filename with no usable title | Leaves it undownloaded and asks for manual information/current-folder fallback |
-| One or several movies | Treats each as an independent identity job; all ready jobs can still be reviewed/downloaded from the queue |
+| One or several movies | Batches the status, automatically accepts exact high-confidence title/year matches, and asks only for uncertain items |
+| A movie or episode already in the library/queue | Shows both files and asks Replace or Cancel before transfer |
 | A destination file already exists | Stops that item for `skip`, `save_with_suffix`, or explicit `overwrite` |
 | n8n or IMDb is unavailable | Keeps the item safe in the queue and offers manual tools instead of guessing |
 
@@ -190,7 +213,7 @@ result is wrong. Always review the proposed folder name before confirming.
 
 ### Conflicts and queue repair
 
-- `/remove ID` — remove one queued item.
+- `/remove` — ask for a temporary number from the latest `/download` review.
 - `/clearqueue` — remove eligible queued items for this chat.
 - `/resolve ID skip` — leave an existing destination untouched.
 - `/resolve ID save_with_suffix` — keep both files safely.
@@ -212,6 +235,12 @@ result is wrong. Always review the proposed folder name before confirming.
 
 Undo never overwrites the original path. Keep every `.rename_history.json`
 while rollback may be needed.
+
+For a final Jellyfin movie/episode collision, use the inline **Replace existing**
+or **Cancel download** buttons. Approved replacement moves the old video and
+subtitle sidecars to `.replacement_backups/BATCH_ID` before installing the new
+file. Both directions are in the same rollback batch, so movie undo or series
+sort undo restores the previous media.
 
 ### Safety checklist
 
@@ -242,7 +271,7 @@ while rollback may be needed.
 - `/queue` — list active items owned by this chat.
 - `/download` — build and display the real final download plan.
 - `/confirm_download` — start the reviewed plan.
-- `/remove ID` — remove one eligible queue item.
+- `/remove` — ask for a temporary number from the latest `/download` review.
 - `/clearqueue` — clear eligible queue items for this chat.
 - `/cancel` — request cancellation of the current operation.
 - `/resolve ID skip|save_with_suffix|overwrite` — resolve one destination
@@ -332,9 +361,9 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 ### ۲. فایل‌ها را ارسال کنید
 
 یک یا چند فایل ویدیویی پشتیبانی‌شده بفرستید. می‌توانید چند فایل را وارد صف
-کنید و همه را با هم دانلود کنید. قسمت‌هایی که با فاصله کوتاه ارسال شوند در یک
-دسته کم‌پیام بررسی می‌شوند. اگر فایل‌ها مربوط به چند سریال باشند، هر سریال
-به‌صورت مستقل شناسایی و به پوشه درست هدایت می‌شود.
+کنید و همه را با هم دانلود کنید. قسمت‌ها یا فیلم‌هایی که با فاصله کوتاه ارسال
+شوند در یک دسته کم‌پیام بررسی می‌شوند. اگر فایل‌ها مربوط به چند سریال باشند،
+هر سریال به‌صورت مستقل شناسایی و به پوشه درست هدایت می‌شود.
 
 پس از فعال شدن اتصال AI، ربات فقط نام فایل، کپشن اختیاری، نوع رسانه و کلید
 کتابخانه انتخاب‌شده را برای تشخیص به n8n می‌فرستد. نتیجه پیشنهادی شامل نام و
@@ -360,11 +389,25 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 برای هر قسمت پیام جداگانه درصد اطمینان، نام موقت، پیشرفت IMDb و موفقیت sorter
 فرستاده نمی‌شود. هنگام خطا، جزئیات از وضعیت و لاگ قابل بررسی است.
 
+دسته فیلم‌ها نیز همین روند کم‌پیام را دارد. اگر نام و سال پیشنهادی AI با بهترین
+نتیجه IMDb دقیقاً یکسان و امتیاز بالا باشد، فیلم بدون تأیید هویت دوباره آماده
+می‌شود. اختلاف نام یا سال، امتیاز پایین، اطلاعات ناقص یا قطع سرویس همچنان سؤال
+می‌پرسد. فیلم تکراری موجود در کتابخانه یا صف پیش از دانلود متوقف می‌شود تا حجم
+اینترنت برای فایلی که امکان ورود امن ندارد مصرف نشود.
+
 ### ۳. نتیجه را بررسی و تأیید کنید
 
 پیش از دانلود، نام‌هایی که واقعاً در کتابخانه ذخیره خواهند شد، تعداد فایل‌ها
 و حجم تقریبی را بررسی کنید. نام اولیه انتشار و نام موقت داخلی نمایش داده
 نمی‌شوند.
+
+ابتدای هر خط شناسه موقت دسته دانلود مانند `#1` نمایش داده می‌شود. این شناسه تا
+زمان بررسی و ویرایش دسته به همان فیلم یا قسمت متصل می‌ماند و باز کردن دوباره
+`/download` آن را تغییر نمی‌دهد. اگر یک مورد اشتباه است، دکمه **حذف یک مورد**
+یا `/remove` را بزنید، شناسه را بفرستید و `/download` را دوباره باز کنید. هنگام
+انتظار برای شناسه می‌توانید با `/cancel` بدون حذف خارج شوید. پس از شروع دسته
+با `/confirm_download`، شناسه‌های دسته بعدی دوباره از `#1` شروع می‌شوند. حذف
+`#2` باعث تغییر شناسه `#3` نمی‌شود؛ باقی ماندن فاصله بین شناسه‌ها طبیعی است.
 
 - اگر درست بود تأیید کنید.
 - اگر اطلاعات کافی نبود، ربات باید فقط یک سؤال کوتاه بپرسد.
@@ -408,7 +451,8 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 | شش قسمت از یک سریال جدید | یک تأیید برای هویت و یک بررسی دانلود برای هر شش فایل |
 | قسمت‌های مخلوط چند سریال | هدایت مستقل هر سریال در کتابخانه سریال انتخاب‌شده |
 | فایل بدون نام قابل تشخیص | نگه داشتن در صف و درخواست اطلاعات دستی یا پوشه فعلی |
-| یک یا چند فیلم | هویت مستقل برای هر فیلم؛ امکان بررسی و دانلود همه موارد آماده از صف |
+| یک یا چند فیلم | خلاصه دسته‌ای، پذیرش خودکار تطبیق دقیق و مطمئن نام/سال، و سؤال فقط برای موارد نامطمئن |
+| فیلم یا قسمت موجود در کتابخانه یا صف | نمایش هر دو فایل و پرسش جایگزینی یا لغو پیش از انتقال |
 | فایل مقصد موجود است | توقف همان مورد برای `skip`، `save_with_suffix` یا `overwrite` صریح |
 | n8n یا IMDb قطع است | عدم حدس زدن و ارائه روش دستی پیش از دانلود |
 
@@ -447,7 +491,7 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 
 ### صف و حل تداخل
 
-- `/remove ID` — حذف یک مورد صف.
+- `/remove` — درخواست شماره موقت از آخرین بررسی `/download` و حذف همان مورد.
 - `/clearqueue` — پاک کردن موارد مجاز صف همین چت.
 - `/resolve ID skip` — دست نزدن به فایل مقصد موجود.
 - `/resolve ID save_with_suffix` — نگه داشتن امن هر دو فایل.
@@ -455,6 +499,11 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 - `/movie_current` — وضعیت آخرین عملیات فیلم.
 - `/movie_import ID` — تلاش دوباره برای فیلم موجود در staging.
 - `/movie_cancel` — لغو آخرین فیلم پردازش‌نشده.
+
+برای تداخل نهایی فیلم یا قسمت در Jellyfin، از دکمه‌های **جایگزینی فایل موجود**
+یا **لغو دانلود** استفاده کنید. در صورت تأیید، فایل و زیرنویس قدیمی پیش از نصب
+فایل جدید در `.replacement_backups/BATCH_ID` نگه‌داری می‌شوند و همان دسته
+تاریخچه می‌تواند نسخه قبلی را بازگرداند.
 
 ### بازگردانی و بازیابی
 
@@ -492,7 +541,8 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 ### دانلود
 
 - `/queue` صف؛ `/download` برنامه نام و مقصد نهایی؛ `/confirm_download` شروع.
-- `/remove ID` حذف یک مورد؛ `/clearqueue` پاک کردن موارد مجاز؛ `/cancel` لغو.
+- `/remove` شماره موقت مورد را می‌پرسد؛ `/clearqueue` همه موارد مجاز را پاک
+  می‌کند؛ `/cancel` درخواست حذف یا عملیات فعلی را لغو می‌کند.
 - `/resolve ID skip|save_with_suffix|overwrite` حل تداخل مقصد.
 
 ### سریال و مرتب‌سازی

@@ -151,9 +151,10 @@ The incoming file is not downloaded yet.
 
 ### 3. Compact batch identification
 
-Series arrivals are grouped by chat, sender, and library for a short two-second
-window. This reduces per-episode message spam and lets the bot share one result
-across episodes of the same newly discovered series.
+Series and movie arrivals are grouped by chat, sender, and library for a short
+two-second window. This reduces per-file message spam. Series can share one
+result across episodes of the same newly discovered title; movies remain
+independent identities inside one compact status.
 
 Within that batch, AI requests are processed sequentially. Sequential calls are
 deliberate: they reduce pressure on free/rate-limited model endpoints. Each
@@ -226,8 +227,11 @@ organizer for each affected folder. The folder name is the trusted series
 title. Release filenames are used only for season/episode detection.
 
 The organizer creates `Season NN`, uses Season 01 when only an episode is known,
-moves unrecognized files to `_Unsorted`, moves target-name conflicts to
-`_Conflicts`, and brings same-stem subtitles with their video.
+moves unrecognized files to `_Unsorted`, moves unapproved target-name conflicts
+to `_Conflicts`, and brings same-stem subtitles with their video. For an
+explicitly approved episode replacement, it matches the existing season/episode
+across supported video extensions and older filenames, archives that media,
+then installs the new episode in one rollback batch.
 
 Successful automatic sorting is quiet. Full subprocess output is retained in
 the sorter run record and can be viewed with `/sort_status`. Failures remain
@@ -248,8 +252,12 @@ into their final folders near the end of the older scan are checked.
 ### 1. Library and identification
 
 Selecting a movie library switches the chat to movie mode. Each incoming movie
-is an independent queue job. AI proposes title/year from the filename, after
-which IMDb results or manual input provide the confirmed identity.
+is an independent queue job, while a short burst shares one status message. AI
+proposes title/year from the filename. The top IMDb result is accepted
+automatically only when the normalized title agrees exactly, the score is high,
+and the AI/IMDb years agree. If the source filename contains one unambiguous
+release year, that year must agree too. Ambiguous titles, year mismatches, and
+weak results remain awaiting an explicit IMDb/manual choice.
 
 ### 2. Planned name
 
@@ -262,6 +270,13 @@ Interstellar (2014) [imdbid-tt0816692]
 The review shows the final movie-library filename even though the download will
 first go to staging.
 
+Before download, the bot checks the canonical target folder/IMDb ID and active
+queue identities. If a final movie video already exists or the same movie is
+already pending, the item enters `waiting_overwrite` and displays the incoming
+and conflicting filenames. Cancel leaves the old item untouched. Replace marks
+only the selected queue item with `replace_library`; the independent organizer
+still rechecks the destination when it executes.
+
 ### 3. Staged download
 
 Each movie queue item has its own staging job directory such as
@@ -272,11 +287,14 @@ rules are the same as for series.
 
 After a complete download, the bot calls the independent movie organizer. It
 first performs a dry-run internally. The real import creates the final movie
-folder and moves the video plus matching subtitle sidecars.
+folder and moves the video plus matching subtitle sidecars. Automatic imports
+are summarized once per download batch; internal dry-run and per-file success
+details remain in logs/state instead of being posted as repeated chat messages.
 
-An existing destination is never overwritten. If import fails, the completed
-movie stays in staging and `/movie_import ID` retries only that job after the
-cause has been corrected.
+Without a stored replacement approval, an existing destination is never
+changed. With approval, the old media is archived before the import rather than
+overwritten in place. If import fails, the completed movie stays in staging and
+`/movie_import ID` retries only that job after the cause has been corrected.
 
 ### 5. Undo
 
@@ -329,10 +347,12 @@ also define the maximum writable media scope.
 
 ### No-overwrite policy
 
-Normal organizer/import/undo actions do not replace an existing path. The
-download subsystem offers overwrite only as an explicit conflict decision. A
-completed `.part` is atomically installed; the old destination is not deleted
-before replacement.
+Normal organizer/import/undo actions do not replace an existing path. A final
+library replacement requires an explicit per-item decision. The organizer moves
+the old video and subtitle sidecars into the hidden
+`.replacement_backups/BATCH_ID` path, records those moves, and then installs the
+new media. Undo moves the new media back first and restores the archived media.
+Loose download destinations retain the separate atomic `.part` overwrite flow.
 
 ### Download integrity
 

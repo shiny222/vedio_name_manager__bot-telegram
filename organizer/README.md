@@ -79,6 +79,12 @@ Files without a reliable episode number go to `Series Name\_Unsorted`. If an
 intended destination already exists, the incoming file goes to
 `Series Name\_Conflicts`; existing files are never overwritten.
 
+An integration may explicitly approve one or more replacements with repeated
+`--replace-episode S01E02` arguments. Only those episode identities are
+replaced. Existing video/subtitle media is first moved to
+`.replacement_backups/BATCH_ID`, and the archive plus incoming move share one
+undoable batch. Without that flag, the normal `_Conflicts` rule is unchanged.
+
 ## Undo and rollback
 
 Every real move is recorded in `.rename_history.json`. Season moves are recorded

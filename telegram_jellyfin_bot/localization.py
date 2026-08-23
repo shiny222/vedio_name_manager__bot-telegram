@@ -21,6 +21,7 @@ BUTTON_FA = {
     "Cancel movie": "لغو فیلم",
     "Cancel unprocessed movie": "لغو فیلم پردازش‌نشده",
     "Cancel episode": "لغو قسمت",
+    "Cancel download": "لغو دانلود",
     "Choose a bot category or send a video…": "یک دسته را انتخاب کنید یا ویدیو بفرستید…",
     "Clear selection": "پاک کردن انتخاب",
     "Confirm movie": "تأیید فیلم",
@@ -45,6 +46,7 @@ BUTTON_FA = {
     "Recover current folder": "بازیابی پوشه فعلی",
     "Rename sorted files": "تغییر نام فایل‌های مرتب‌شده",
     "Retry import": "تلاش دوباره برای انتقال",
+    "Replace existing": "جایگزینی فایل موجود",
     "Search manually": "جستجوی دستی",
     "Search using filename": "جستجو با نام فایل",
     "Search with a different name": "جستجو با نام دیگر",
@@ -110,6 +112,7 @@ BUTTON_FA = {
     "🗂 Pick existing": "🗂 انتخاب پوشه موجود",
     "🗂 Pick existing folder": "🗂 انتخاب پوشه موجود",
     "🗑 Clear queue": "🗑 پاک کردن صف",
+    "🗑 Remove one item": "🗑 حذف یک مورد",
     "🟢 Connection status": "🟢 وضعیت اتصال",
     "🟢 Jellyfin Status": "🟢 وضعیت Jellyfin",
     "🧹 Sort current": "🧹 مرتب‌سازی پوشه فعلی",
@@ -176,6 +179,8 @@ TEXT_FA = {
     "Queue (": "صف (",
     "Queue ID for commands:": "شناسه صف برای دستورها:",
     "Queue ID:": "شناسه صف:",
+    "Current download-batch ID:": "شناسه دسته دانلود فعلی:",
+    "Download ID": "شناسه دانلود",
     "Video added to the queue.": "ویدیو به صف اضافه شد.",
     "This video is already in the queue.": "این ویدیو از قبل در صف است.",
     "This video file is not supported and was not added to the queue.": "این فایل ویدیویی پشتیبانی نمی‌شود و به صف اضافه نشد.",
@@ -183,6 +188,22 @@ TEXT_FA = {
     "The file was not added to the queue:": "فایل به صف اضافه نشد:",
     "There are no ready files in the queue.": "فایل آماده‌ای در صف وجود ندارد.",
     "There are no ready files to download.": "فایل آماده‌ای برای دانلود وجود ندارد.",
+    "Mistake in the list? Press Remove one item or send /remove, then reply with its number.": "مورد اشتباهی در فهرست است؟ حذف یک مورد یا /remove را بزنید و سپس شماره آن را بفرستید.",
+    "Open /download first. It will show temporary numbers starting from 1 for the files in that review.": "ابتدا /download را باز کنید. فایل‌های همان بررسی با شماره‌های موقت از ۱ نمایش داده می‌شوند.",
+    "Send the ID shown beside the movie or episode in the latest /download list.": "شناسه کنار فیلم یا قسمت در آخرین فهرست /download را بفرستید.",
+    "Available IDs:": "شناسه‌های موجود:",
+    "Available:": "موجود:",
+    "Send /cancel to stop without removing anything.": "برای خروج بدون حذف چیزی /cancel را بفرستید.",
+    "Send only a number from the latest /download list, or /cancel.": "فقط یک شماره از آخرین فهرست /download یا /cancel را بفرستید.",
+    "That number is not in the latest /download list.": "این شماره در آخرین فهرست /download نیست.",
+    "Send a number from": "شماره‌ای از",
+    ", or /cancel.": " یا /cancel را بفرستید.",
+    "That download review is no longer active. Open /download again.": "آن بررسی دانلود دیگر فعال نیست. /download را دوباره باز کنید.",
+    "That item is no longer removable. Open /download again.": "آن مورد دیگر قابل حذف نیست. /download را دوباره باز کنید.",
+    "Open /download again to review the updated list.": "برای بررسی فهرست به‌روز، /download را دوباره باز کنید.",
+    "Remove operation cancelled. The download review was not changed.": "عملیات حذف لغو شد. بررسی دانلود تغییری نکرد.",
+    "Removed #": "حذف شد #",
+    "Download list continued:": "ادامه فهرست دانلود:",
     "There is no unconfirmed download request for this chat.": "درخواست دانلود تأییدنشده‌ای برای این چت وجود ندارد.",
     "These files do not have a target folder:": "این فایل‌ها پوشه مقصد ندارند:",
     "Final download destination:": "مقصد نهایی دانلود:",
@@ -228,6 +249,16 @@ TEXT_FA = {
     "Use /download when finished sending.": "پس از پایان ارسال، /download را اجرا کنید.",
     "Next: /download": "مرحله بعد: /download",
     "Resolve the items above before downloading.": "پیش از دانلود، موارد بالا را مشخص کنید.",
+    "Resolve the movie choices above before downloading.": "پیش از دانلود، انتخاب فیلم‌های بالا را مشخص کنید.",
+    "Choose a different identity or cancel this movie.": "یک هویت دیگر انتخاب کنید یا این فیلم را لغو کنید.",
+    "Movie ready:": "فیلم آماده است:",
+    "was not queued:": "در صف قرار نگرفت:",
+    "already in the library as": "از قبل در کتابخانه وجود دارد با نام",
+    "the same movie is already pending as queue ID": "همین فیلم از قبل در صف است با شناسه",
+    "the same movie is already pending for this library": "همین فیلم از قبل برای این کتابخانه در صف است",
+    "the same movie is already included in this download batch": "همین فیلم از قبل در این دسته دانلود وجود دارد",
+    "Staged failures remain safe. Use /movie_import ID after fixing them.": "فایل‌های ناموفق در staging امن می‌مانند. پس از رفع مشکل از /movie_import ID استفاده کنید.",
+    "Use /movie_current to correct or cancel a held movie.": "برای اصلاح یا لغو فیلم نگه‌داشته‌شده از /movie_current استفاده کنید.",
     "Send the correct series title. The detected season and episode numbers will be kept for all matching files.": "نام صحیح سریال را ارسال کنید. شماره فصل و قسمت تشخیص‌داده‌شده برای همه فایل‌های مطابق حفظ می‌شود.",
     "Enter the series title, season, and episode manually.": "نام سریال، فصل و قسمت را به‌صورت دستی وارد کنید.",
     "No waiting episodes could use this series folder.": "هیچ قسمت منتظری نتوانست از این پوشه سریال استفاده کند.",
@@ -265,6 +296,21 @@ TEXT_FA = {
     "Use /download to review the destination, then /confirm_download.": "برای بررسی مقصد /download و سپس برای شروع /confirm_download را بفرستید.",
     "Searching IMDb movies for:": "در حال جستجوی فیلم در IMDb برای:",
     "Choose the correct movie result.": "نتیجه صحیح فیلم را انتخاب کنید.",
+    "Choose the correct movie result for this file:": "نتیجه صحیح فیلم را برای این فایل انتخاب کنید:",
+    "This destination is already in use.": "این مقصد از قبل استفاده شده است.",
+    "Incoming:": "فایل ورودی:",
+    "Would be saved as:": "نام نهایی پیشنهادی:",
+    "Existing Jellyfin file:": "فایل موجود در Jellyfin:",
+    "Already queued as": "از قبل در صف است با شناسه",
+    "Another file already uses this destination.": "فایل دیگری از قبل از این مقصد استفاده می‌کند.",
+    "Replace archives the old media for rollback. If this is the wrong title, cancel and identify the file again.": "جایگزینی، فایل قدیمی را برای بازگردانی بایگانی می‌کند. اگر این نام اشتباه است، لغو کنید و فایل را دوباره شناسایی کنید.",
+    "Replacement approved. The old library media will be backed up for rollback before the new file is installed.": "جایگزینی تأیید شد. پیش از نصب فایل جدید، رسانه قدیمی کتابخانه برای بازگردانی پشتیبان‌گیری می‌شود.",
+    "Download cancelled for this file.": "دانلود این فایل لغو شد.",
+    "It remains undownloaded so you can correct its identity or remove it from the queue.": "فایل دانلودنشده در صف می‌ماند تا هویت آن را اصلاح یا آن را از صف حذف کنید.",
+    "Detected:": "تشخیص داده‌شده:",
+    "The selected IMDb identity differs from the detected title/year.": "هویت انتخاب‌شده IMDb با نام یا سال تشخیص‌داده‌شده متفاوت است.",
+    "The incoming filename contains year": "نام فایل ورودی شامل سال",
+    "but the selected movie is": "اما سال فیلم انتخاب‌شده",
     "Source:": "منبع:",
     "Confirm this movie identity:": "مشخصات این فیلم را تأیید کنید:",
     "Title:": "عنوان:",
@@ -297,12 +343,15 @@ TEXT_FA = {
     "Original file:": "فایل اصلی:",
     "waiting for identification": "منتظر تشخیص نام",
     "Checking movie import plan for queue ID": "در حال بررسی برنامه انتقال فیلم با شناسه صف",
+    "Checking movie recovery job": "در حال بررسی عملیات بازیابی فیلم",
     "Movie import plan verified. Importing without overwriting:": "برنامه انتقال فیلم تأیید شد. انتقال بدون بازنویسی:",
     "Movie imported successfully.": "فیلم با موفقیت منتقل شد.",
     "Destination:": "مقصد:",
     "Batch ID:": "شناسه دسته:",
     "This movie job is closed; send another movie while remaining in movie mode.": "این عملیات فیلم بسته شد؛ در صورت باقی ماندن در حالت فیلم، فیلم بعدی را ارسال کنید.",
     "Movie download is safe in staging, but import failed for queue ID": "دانلود فیلم در staging امن است، اما انتقال برای شناسه صف ناموفق بود",
+    "Movie download is safe in staging, but import failed for recovery job": "دانلود فیلم در staging امن است، اما انتقال برای عملیات بازیابی ناموفق بود",
+    "Recovery job": "عملیات بازیابی",
     "Fix the problem and use /movie_import": "مشکل را رفع کنید و از /movie_import استفاده کنید",
     " to retry.": " را برای تلاش دوباره اجرا کنید.",
     "No downloaded movie is waiting for import.": "فیلم دانلودشده‌ای منتظر انتقال نیست.",
@@ -476,9 +525,22 @@ def _translate_dynamic_text(text: str) -> str:
         text,
     )
     text = re.sub(
+        r"Identifying (\d+) movie\(s\)…",
+        lambda match: f"در حال شناسایی {match.group(1)} فیلم…",
+        text,
+    )
+    text = re.sub(
         r"Checked (\d+) episode\(s\): (\d+) ready, (\d+) need attention\.",
         lambda match: (
             f"{match.group(1)} قسمت بررسی شد: {match.group(2)} آماده، "
+            f"{match.group(3)} نیازمند بررسی."
+        ),
+        text,
+    )
+    text = re.sub(
+        r"Checked (\d+) movie\(s\): (\d+) ready, (\d+) need attention\.",
+        lambda match: (
+            f"{match.group(1)} فیلم بررسی شد: {match.group(2)} آماده، "
             f"{match.group(3)} نیازمند بررسی."
         ),
         text,
@@ -493,6 +555,29 @@ def _translate_dynamic_text(text: str) -> str:
     text = re.sub(
         r"(\d+) episode\(s\) ready\.",
         lambda match: f"{match.group(1)} قسمت آماده است.",
+        text,
+    )
+    text = re.sub(
+        r"(\d+) movie\(s\) ready\.",
+        lambda match: f"{match.group(1)} فیلم آماده است.",
+        text,
+    )
+    text = re.sub(
+        r"(\d+) movie\(s\) imported\.",
+        lambda match: f"{match.group(1)} فیلم وارد کتابخانه شد.",
+        text,
+    )
+    text = re.sub(
+        r"Movie import finished: (\d+) imported, (\d+) need attention\.",
+        lambda match: (
+            f"ورود فیلم‌ها پایان یافت: {match.group(1)} وارد شد، "
+            f"{match.group(2)} نیازمند بررسی."
+        ),
+        text,
+    )
+    text = re.sub(
+        r"Held (\d+) movie download\(s\) before transfer:",
+        lambda match: f"پیش از انتقال، {match.group(1)} دانلود فیلم نگه داشته شد:",
         text,
     )
     text = re.sub(
@@ -533,13 +618,17 @@ def _translate_dynamic_text(text: str) -> str:
     def queue_line(match: re.Match[str]) -> str:
         kind = "سریال" if match.group(1) == "Series" else "فیلم"
         status = STATUS_FA.get(match.group(5), match.group(5))
+        download_id = (
+            f"(شناسه دانلود #{match.group(4)}) " if match.group(4) else ""
+        )
         return (
             f"{kind} · {match.group(2)} مورد {match.group(3)} "
-            f"(شناسه صف #{match.group(4)}) [{status}] "
+            f"{download_id}[{status}] "
         )
 
     return re.sub(
-        r"^(Series|Movie) · (.*) item (\d+) \(Queue ID #(\d+)\) \[([^\]]+)\] ",
+        r"^(Series|Movie) · (.*) item (\d+) "
+        r"(?:\(Download ID #(\d+)\) )?\[([^\]]+)\] ",
         queue_line,
         text,
         flags=re.MULTILINE,

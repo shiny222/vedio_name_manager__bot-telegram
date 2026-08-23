@@ -195,10 +195,14 @@ class DryRunState:
     """Virtual destination and disk-space state shared by one preview batch."""
 
     reserved_destinations: set[Path] = field(default_factory=set)
+    vacated_sources: set[Path] = field(default_factory=set)
     planned_copy_bytes: dict[str, int] = field(default_factory=dict)
 
     def exists(self, path: Path) -> bool:
-        return path.exists() or _path_key(path) in self.reserved_destinations
+        key = _path_key(path)
+        return key in self.reserved_destinations or (
+            path.exists() and key not in self.vacated_sources
+        )
 
     def reserve(self, source: Path, destination: Path) -> bool:
         destination_key = _path_key(destination)
@@ -233,6 +237,7 @@ class DryRunState:
                 return False
             self.planned_copy_bytes[volume] = already_planned + required
         self.reserved_destinations.add(destination_key)
+        self.vacated_sources.add(_path_key(source))
         return True
 
 
@@ -709,6 +714,7 @@ def organize_video(
     dry_run: bool,
     operation: str = "organize",
     dry_run_state: DryRunState | None = None,
+    replace_existing: bool = False,
 ) -> bool:
     series_folder = library / series_name
     detected = detect_episode(video)
@@ -756,7 +762,79 @@ def organize_video(
     if target.resolve(strict=False) == video.resolve(strict=False):
         LOG.info("SKIP (already correctly named): %s", video)
         return True
-    if _destination_exists(target, dry_run_state):
+    existing_videos: list[Path] = []
+    for item in series_folder.rglob("*"):
+        if (
+            not item.is_file()
+            or item.resolve(strict=False) == video.resolve(strict=False)
+            or item.parent == series_folder
+            or item.suffix.lower() not in VIDEO_EXTENSIONS
+        ):
+            continue
+        relative_parts = item.relative_to(series_folder).parts[:-1]
+        if any(
+            part in {"_Unsorted", "_Conflicts"} or part.startswith(".")
+            for part in relative_parts
+        ):
+            continue
+        if detect_episode(item) == detected:
+            existing_videos.append(item)
+    existing_episode_media = list(existing_videos)
+    for existing_video in existing_videos:
+        for sibling in existing_video.parent.iterdir():
+            if sibling.suffix.lower() not in SUBTITLE_EXTENSIONS:
+                continue
+            if (
+                sibling.stem.casefold() == existing_video.stem.casefold()
+                or sibling.stem.casefold().startswith(
+                    existing_video.stem.casefold() + "."
+                )
+            ):
+                existing_episode_media.append(sibling)
+    existing_episode_media = sorted(
+        set(existing_episode_media), key=lambda item: str(item).casefold()
+    )
+
+    if existing_videos and replace_existing:
+        backup_folder = series_folder / ".replacement_backups" / batch_id
+        for existing in existing_episode_media:
+            kind = (
+                "video"
+                if existing.suffix.lower() in VIDEO_EXTENSIONS
+                else "subtitle"
+            )
+            if not move_and_record(
+                existing,
+                backup_folder / existing.relative_to(series_folder),
+                season_folder,
+                kind,
+                "done",
+                batch_id,
+                dry_run,
+                "replace-existing",
+                dry_run_state,
+            ):
+                return False
+        if not dry_run:
+            remaining = [
+                item
+                for item in series_folder.rglob("*")
+                if item.is_file()
+                and item.parent != series_folder
+                and item.suffix.lower() in VIDEO_EXTENSIONS
+                and not any(
+                    part in {"_Unsorted", "_Conflicts"} or part.startswith(".")
+                    for part in item.relative_to(series_folder).parts[:-1]
+                )
+                and detect_episode(item) == detected
+            ]
+            if remaining:
+                LOG.error(
+                    "Episode media appeared during replacement; refusing to install: %s",
+                    remaining[0],
+                )
+                return False
+    elif existing_videos or _destination_exists(target, dry_run_state):
         conflict_folder = series_folder / "_Conflicts"
         conflict_target = unique_conflict_path(
             conflict_folder, video.name, dry_run_state
@@ -1081,7 +1159,10 @@ def fix_episode_metadata(series_folder: Path, dry_run: bool = False) -> int:
 
 
 def run_organizer(
-    series_folder: Path, library: Path | None = None, dry_run: bool = False
+    series_folder: Path,
+    library: Path | None = None,
+    dry_run: bool = False,
+    replace_episodes: set[tuple[int, int]] | None = None,
 ) -> int:
     """Organize exactly one selected series folder.
 
@@ -1114,15 +1195,24 @@ def run_organizer(
         if item.is_file() and item.suffix.lower() in SUBTITLE_EXTENSIONS:
             subtitles_by_stem.setdefault(item.stem.casefold(), []).append(item)
 
+    replacements = replace_episodes or set()
     failures = 0
     dry_run_state = DryRunState() if dry_run else None
     for video in videos:
         matching_subtitles = subtitles_by_stem.pop(video.stem.casefold(), [])
+        detected = detect_episode(video)
         if not organize_video(
             video, series_folder.name, library, matching_subtitles,
-            batch_id, dry_run, dry_run_state=dry_run_state
+            batch_id, dry_run, dry_run_state=dry_run_state,
+            replace_existing=bool(detected and detected in replacements),
         ):
             failures += 1
+            if replacements:
+                break
+    if failures and replacements and not dry_run:
+        # A replacement is one logical transaction: restore both previously
+        # archived media and any new episodes moved earlier in this batch.
+        undo_records(list(history_files(library / series_folder.name)), batch_id)
     if not videos:
         LOG.warning("No supported video files found directly inside %s", series_folder)
     elif dry_run:
@@ -1815,6 +1905,13 @@ def build_parser() -> argparse.ArgumentParser:
             type=Path,
             help=argparse.SUPPRESS,  # Legacy override; normally inferred.
         )
+        sub.add_argument(
+            "--replace-episode",
+            action="append",
+            default=[],
+            metavar="S01E02",
+            help="archive and replace this already-existing episode (repeatable)",
+        )
 
     last = subparsers.add_parser("undo-last", help="undo the newest active batch")
     last.add_argument("--library", required=True, type=Path)
@@ -1869,10 +1966,21 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command in {"run", "dry-run"}:
+            replacements: set[tuple[int, int]] = set()
+            for marker in args.replace_episode:
+                match = re.fullmatch(
+                    r"(?i)S(\d{1,3})E(\d{1,4})", str(marker).strip()
+                )
+                if not match or int(match.group(1)) < 1 or int(match.group(2)) < 1:
+                    raise ValueError(
+                        f"Invalid replacement episode marker: {marker}"
+                    )
+                replacements.add((int(match.group(1)), int(match.group(2))))
             return run_organizer(
                 args.series_folder.expanduser(),
                 args.library.expanduser() if args.library else None,
                 dry_run=args.command == "dry-run",
+                replace_episodes=replacements,
             )
         if args.command == "undo-last":
             return undo_last(args.library.expanduser())

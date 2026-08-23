@@ -34,7 +34,11 @@ class SorterBridge:
         self.active = False
 
     def build_command(
-        self, folder: Path, dry_run: bool = False, library_key: str | None = None
+        self,
+        folder: Path,
+        dry_run: bool = False,
+        library_key: str | None = None,
+        replace_episodes: set[tuple[int, int]] | None = None,
     ) -> list[str]:
         if not self.config.sorter_command:
             raise ValueError("sorter_command is not configured in config.json.")
@@ -48,6 +52,12 @@ class SorterBridge:
             )
             for part in self.config.sorter_command
         ]
+        for season, episode in sorted(replace_episodes or set()):
+            if season < 1 or episode < 1:
+                raise ValueError("Replacement season and episode must be positive.")
+            command.extend(
+                ["--replace-episode", f"S{season:02d}E{episode:02d}"]
+            )
         return self._resolve_program_paths(command)
 
     def _resolve_program_paths(self, command: list[str]) -> list[str]:
@@ -136,8 +146,11 @@ class SorterBridge:
         dry_run: bool = False,
         chat_id: int | None = None,
         library_key: str | None = None,
+        replace_episodes: set[tuple[int, int]] | None = None,
     ) -> tuple[bool, str]:
-        command = self.build_command(folder, dry_run, library_key)
+        command = self.build_command(
+            folder, dry_run, library_key, replace_episodes
+        )
         return await self._execute(
             folder, command, chat_id, "series", library_key=library_key
         )
