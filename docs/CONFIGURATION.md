@@ -9,7 +9,7 @@ The bot supports two configuration modes:
   `config.example.json`.
 
 The two modes produce the same internal configuration. Docker additionally
-provides four fixed container mount paths and automatically builds commands for
+provides six fixed container mount paths and automatically builds commands for
 the sibling Python tools.
 
 ## Secret-handling rules
@@ -88,16 +88,22 @@ ALLOWED_CHAT_IDS=123456789,-1004446532115
 | `LIBRARY_VIDEO_SERIES_NAME` | `Video Series` | display label |
 | `LIBRARY_VIDEO_MOVIE_PATH` | `/media/video-movie` | movie |
 | `LIBRARY_VIDEO_MOVIE_NAME` | `Video Movies` | display label |
+| `LIBRARY_ANIME_SERIES_PATH` | `/media/anime-series` | series, AniList search |
+| `LIBRARY_ANIME_SERIES_NAME` | `Anime Series` | display label |
+| `LIBRARY_ANIME_MOVIE_PATH` | `/media/anime-movie` | movie, AniList search |
+| `LIBRARY_ANIME_MOVIE_NAME` | `Anime Movies` | display label |
 | `DEFAULT_LIBRARY_KEY` | `animation_series` | initial/fallback selection |
 
-Valid default keys in the current four-library environment are:
+Valid default keys in the current six-library environment are:
 
 - `animation_series`
 - `animation_movies`
 - `video_series`
 - `video_movies`
+- `anime_series`
+- `anime_movies`
 
-The Compose file deliberately overrides the four `*_PATH` variables with
+The Compose file deliberately overrides the six `*_PATH` variables with
 container paths. The host paths are configured separately for bind mounts:
 
 | Variable | Meaning |
@@ -106,6 +112,8 @@ container paths. The host paths are configured separately for bind mounts:
 | `HOST_ANIMATION_MOVIE_PATH` | Existing host animated-movie directory |
 | `HOST_VIDEO_SERIES_PATH` | Existing host live-action series directory |
 | `HOST_VIDEO_MOVIE_PATH` | Existing host live-action movie directory |
+| `HOST_ANIME_SERIES_PATH` | Existing host anime-series directory |
+| `HOST_ANIME_MOVIE_PATH` | Existing host anime-movie directory |
 
 For the current NAS:
 
@@ -114,6 +122,8 @@ HOST_ANIMATION_SERIES_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999
 HOST_ANIMATION_MOVIE_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/animation-movie
 HOST_VIDEO_SERIES_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/video-serise
 HOST_VIDEO_MOVIE_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/video-movie
+HOST_ANIME_SERIES_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-series
+HOST_ANIME_MOVIE_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-movie
 ```
 
 Do not replace those host paths with `/media/...`; `/media/...` exists only
@@ -144,6 +154,7 @@ bind-mounted, so replacing the image does not erase them.
 | `SORTER_TIMEOUT_SECONDS` | `1800` | Maximum subprocess time for a series organizer command |
 | `MOVIE_SORTER_TIMEOUT_SECONDS` | `1800` | Maximum subprocess time for a movie organizer command |
 | `FUZZY_SEARCH_TIMEOUT_SECONDS` | `20` | Maximum IMDb helper subprocess time |
+| `ANILIST_SEARCH_TIMEOUT_SECONDS` | `20` | Maximum AniList helper subprocess time |
 
 Keep both confirmation values enabled for normal safe operation. Increasing
 parallel downloads can increase disk and Telegram API load; it does not change
@@ -282,6 +293,7 @@ API port on the LAN.
 | `sorter_command` | Argument list for the series organizer; `{mode}` and `{folder}` are replaced by the bot |
 | `movie_sorter_command` | Argument list ending in `movie_organizer.py` |
 | `fuzzy_search_command` | Argument list ending in `imdb_tool.py` |
+| `anilist_search_command` | Argument list ending in `anilist_tool.py` |
 
 Relative paths are resolved from the `telegram_jellyfin_bot` directory. The
 provided example uses sibling directories, so keep the root repository layout
@@ -293,7 +305,7 @@ child paths before use.
 
 ### Multiple Windows libraries
 
-The Docker environment constructs four libraries automatically. A Windows JSON
+The Docker environment constructs six libraries automatically. A Windows JSON
 deployment can provide a `media_libraries` array using the same shape:
 
 ```json
@@ -302,7 +314,8 @@ deployment can provide a `media_libraries` array using the same shape:
     "key": "animation_series",
     "name": "Animation Series",
     "media_kind": "series",
-    "path": "D:\\Media\\animation-serise"
+    "path": "D:\\Media\\animation-serise",
+    "metadata_provider": "imdb"
   },
   {
     "key": "animation_movies",
@@ -320,14 +333,30 @@ deployment can provide a `media_libraries` array using the same shape:
     "key": "video_movies",
     "name": "Video Movies",
     "media_kind": "movie",
-    "path": "D:\\Media\\video-movie"
+    "path": "D:\\Media\\video-movie",
+    "metadata_provider": "imdb"
+  },
+  {
+    "key": "anime_series",
+    "name": "Anime Series",
+    "media_kind": "series",
+    "path": "D:\\Media\\anime-series",
+    "metadata_provider": "anilist"
+  },
+  {
+    "key": "anime_movies",
+    "name": "Anime Movies",
+    "media_kind": "movie",
+    "path": "D:\\Media\\anime-movie",
+    "metadata_provider": "anilist"
   }
 ],
 "default_library_key": "animation_series"
 ```
 
-Each `key` must be unique, `media_kind` must be `series` or `movie`, and the
-path must point at the corresponding library root.
+Each `key` must be unique, `media_kind` must be `series` or `movie`,
+`metadata_provider` must be `imdb` or `anilist`, and the path must point at the
+corresponding library root. If omitted, `metadata_provider` defaults to IMDb.
 
 ### Other Windows keys
 
@@ -350,6 +379,7 @@ The lowercase JSON forms correspond directly to the Docker settings:
 - `jellyfin_scan_poll_interval_seconds`
 - `jellyfin_scan_monitor_timeout_seconds`
 - `fuzzy_search_timeout_seconds`
+- `anilist_search_timeout_seconds`
 - `n8n_agent_enabled`
 - `n8n_agent_url`
 - `n8n_agent_secret`
@@ -366,6 +396,10 @@ cd /path/to/jellyfin-compose/video-manager-compose
 docker compose config
 docker compose up -d
 ```
+
+For an upgrade from the earlier four-library Compose file, add the two
+`HOST_ANIME_*` values to the existing `.env` first. `install-or-update.sh`
+preserves that file and never silently inserts storage paths.
 
 No image rebuild is needed for environment-only changes. Rebuild when Python
 source, dependencies, or either Dockerfile changes:
@@ -386,8 +420,8 @@ changes.
 Before normal use:
 
 - all placeholder tokens/keys have been replaced or intentionally left empty;
-- the four host library paths already exist;
-- the bot process can write all four `/media/...` mounts;
+- the six host library paths already exist;
+- the bot process can write all six `/media/...` mounts;
 - movie staging is writable and outside final libraries;
 - the Local Bot API is healthy;
 - `N8N_AGENT_URL` uses `/webhook/media-identify`, not `/workflow/...`;

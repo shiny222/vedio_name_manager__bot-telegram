@@ -68,6 +68,9 @@ Allowed `library_key` values are:
 - `video_series`
 - `video_movie` (compatibility key sent by the bot)
 - `video_movies`
+- `anime_series`
+- `anime_movie` (compatibility key sent by the bot)
+- `anime_movies`
 
 `media_kind` must be `series` or `movie` and must agree with the chosen library.
 The workflow treats `media_kind` and `library_key` as authoritative and never
@@ -92,7 +95,8 @@ allows the AI response to replace them.
 ```
 
 This is an identification suggestion, not permission to rename or move media.
-The Python bot uses `title_query` with the existing IMDb fuzzy-search tool,
+The Python bot uses `title_query` with IMDb for animation/video libraries and
+AniList for the dedicated anime libraries,
 shows the result for confirmation, and falls back to its existing manual flow
 if n8n is unavailable or returns `ok: false`.
 

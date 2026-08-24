@@ -14,12 +14,12 @@ The system is built around six goals:
    send, review, and confirm. Repeated episodes should not require repeated
    folder selection.
 3. **Independent deterministic tools.** Series organization, movie import, and
-   IMDb search can each run without the Telegram bot.
+   IMDb and AniList search can each run without the Telegram bot.
 4. **No silent destructive action.** Existing media is not overwritten unless
    the user explicitly selects the overwrite policy.
 5. **Recoverability.** File moves have history and journals. Downloads have
    persistent queue state and `.part` files.
-6. **Optional network intelligence.** n8n/AI and IMDb improve identification,
+6. **Optional network intelligence.** n8n/AI, IMDb, and AniList improve identification,
    but manual operations remain available when either is unavailable.
 
 ## Components and responsibilities
@@ -30,6 +30,7 @@ The system is built around six goals:
 | Local Telegram Bot API | Receive Telegram API calls and download large Telegram files into local storage | Organize media or decide destinations |
 | n8n filename agent | Convert an untrusted filename/caption into a structured title/season/episode suggestion | Poll Telegram, see the media file, choose a library, or touch the filesystem |
 | `fuzzy_search` | Search IMDb for canonical title/year/ID candidates and cache successful exact queries | Move files or make the final user decision |
+| `anilist_search` | Search AniList for canonical anime title/year/ID candidates and cache successful exact queries | Move files or make the final user decision |
 | `organizer` | Detect episode numbers, create season layout, move/rename videos and subtitles, record history, undo/recover | Guess the series title from the release filename; the parent folder is trusted |
 | `movie_organizer` | Import one confirmed staged movie and subtitles into one Jellyfin movie folder; record/undo moves | Search IMDb or download Telegram files |
 | Jellyfin bridge | Trigger a library refresh and monitor the requested scheduled task | Install or configure Jellyfin |
@@ -73,6 +74,7 @@ mounts:
 - `/app/logs` — bot logs;
 - `/app/staging` — completed movies waiting for import or retry;
 - `/app/fuzzy_search/data` — IMDb cache;
+- `/app/anilist_search/data` — AniList cache;
 - `/media/animation-serise` — animated series library;
 - `/media/animation-movie` — animated movie library;
 - `/media/video-serise` — live-action series library;
@@ -175,9 +177,11 @@ For series it should contain a searchable title and, where identifiable, season
 and episode. Invalid, missing, or unavailable responses leave the queue item
 undownloaded and expose manual/current-folder fallbacks.
 
-### 4. IMDb and existing-folder matching
+### 4. Provider search and existing-folder matching
 
-The bot sends the suggested title to the independent IMDb fuzzy-search tool.
+The bot sends the suggested title to the provider assigned to the selected
+library. Animation/video libraries use the independent IMDb tool. Dedicated
+anime libraries use the independent AniList GraphQL tool.
 The top result proposes the Jellyfin folder form:
 
 ```text
@@ -186,7 +190,8 @@ Official Title (Year) [imdbid-tt1234567]
 
 An existing folder is reused automatically only for conservative matches:
 
-- a unique exact IMDb ID;
+- a unique exact IMDb ID for IMDb libraries;
+- an exact AniList title/year plus the stored AniList queue identity for anime libraries;
 - an exact expected canonical folder name; or
 - a unique normalized title match, with year used to disambiguate duplicates.
 
@@ -194,20 +199,22 @@ Fuzzy score alone does not authorize writing into an existing folder. If a
 folder match is not reliable, a new identity requires confirmation. All queued
 episodes in the same new-series group share that decision.
 
-If IMDb is unavailable, a unique existing normalized title can still be reused.
+If the selected provider is unavailable, a unique existing normalized title
+can still be reused and manual confirmation remains available.
 Otherwise the bot asks for a manual decision rather than guessing.
 
 ### 5. Final naming and download plan
 
-The bot stores the resolved folder, IMDb identity, season, episode, and planned
-download name in each queue row. The review shown by `/download` uses the actual
-final Jellyfin filename, for example:
+The bot stores the resolved folder, provider identity, season, episode, and the
+unchanged Telegram filename in each queue row. The review shown by `/download`
+uses the actual final Jellyfin filename, for example:
 
 ```text
 Witch Hat Atelier - S01E01.mkv
 ```
 
-It does not show an internal `Incoming` filename as the final result.
+Season and episode remain structured queue data; they are never encoded by
+replacing the real source filename with an internal `Incoming` name.
 
 ### 6. Download and publish
 
@@ -215,16 +222,20 @@ The downloader asks the Local Telegram Bot API for the local source path, then
 copies it into a destination ending in `.part`. When Telegram provides an
 expected size, the copied byte count must match before publication.
 
-The `.part` file is renamed into its planned loose destination only after the
-copy is complete and verified. If the final path exists, the queue item enters
-the conflict flow. `skip` leaves it alone, `save_with_suffix` finds a free name,
-and `overwrite` is used only after explicit selection.
+For series, the `.part` file is renamed to the unchanged Telegram filename in
+the selected series folder only after the copy is complete and verified. If
+that path exists, the queue item enters the conflict flow. `skip` leaves it
+alone, `save_with_suffix` finds a free name, and `overwrite` is used only after
+explicit selection.
 
 ### 7. Series organization
 
-After all applicable downloads finish, the bot invokes the standalone series
-organizer for each affected folder. The folder name is the trusted series
-title. Release filenames are used only for season/episode detection.
+After all applicable downloads finish, the bot first invokes the standalone
+series organizer in dry-run mode for each affected folder. Only a successful
+preview is followed by the real organizer run. The folder name is the trusted
+series title. The AI season/episode assignment is passed separately for the
+specific original filename, while the standalone tool can still detect episode
+numbers itself when used without the bot.
 
 The organizer creates `Season NN`, uses Season 01 when only an episode is known,
 moves unrecognized files to `_Unsorted`, moves unapproved target-name conflicts
@@ -232,6 +243,10 @@ to `_Conflicts`, and brings same-stem subtitles with their video. For an
 explicitly approved episode replacement, it matches the existing season/episode
 across supported video extensions and older filenames, archives that media,
 then installs the new episode in one rollback batch.
+
+Because the loose source keeps its Telegram name, `.rename_history.json`
+records that real original filename and path. Undo therefore restores the
+downloaded release name rather than a synthetic transport name.
 
 Successful automatic sorting is quiet. Full subprocess output is retained in
 the sorter run record and can be viewed with `/sort_status`. Failures remain

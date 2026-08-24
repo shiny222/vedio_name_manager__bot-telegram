@@ -16,12 +16,14 @@ services:
       VIDEO_MANAGER_CONFIG_MODE: env
       LOCAL_BOT_API_BASE_URL: http://telegram-bot-api:8081/bot
       LOCAL_BOT_API_BASE_FILE_URL: http://telegram-bot-api:8081/file/bot
-      # These are container paths, so all four destinations remain available
+      # These are container paths, so all six destinations remain available
       # even when upgrading an older .env that only had one library pair.
       LIBRARY_ANIMATION_SERIES_PATH: /media/animation-serise
       LIBRARY_ANIMATION_MOVIE_PATH: /media/animation-movie
       LIBRARY_VIDEO_SERIES_PATH: /media/video-serise
       LIBRARY_VIDEO_MOVIE_PATH: /media/video-movie
+      LIBRARY_ANIME_SERIES_PATH: /media/anime-series
+      LIBRARY_ANIME_MOVIE_PATH: /media/anime-movie
     extra_hosts:
       - "host.docker.internal:host-gateway"
     read_only: true
@@ -38,6 +40,9 @@ services:
       - type: bind
         source: ./data/fuzzy-search
         target: /app/fuzzy_search/data
+      - type: bind
+        source: ./data/anilist-search
+        target: /app/anilist_search/data
       - type: bind
         source: ./logs
         target: /app/logs
@@ -68,6 +73,16 @@ services:
       - type: bind
         source: ${HOST_VIDEO_SERIES_PATH:?Set HOST_VIDEO_SERIES_PATH in .env}
         target: /media/video-serise
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_ANIME_MOVIE_PATH:?Set HOST_ANIME_MOVIE_PATH in .env}
+        target: /media/anime-movie
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOST_ANIME_SERIES_PATH:?Set HOST_ANIME_SERIES_PATH in .env}
+        target: /media/anime-series
         bind:
           create_host_path: false
     networks:

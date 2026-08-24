@@ -102,6 +102,7 @@ class N8nMediaIdentifier:
         webhook_library_key = {
             "animation_movies": "animation_movie",
             "video_movies": "video_movie",
+            "anime_movies": "anime_movie",
         }.get(library_key, library_key)
         payload = {
             "request_id": request_id,

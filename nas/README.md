@@ -6,7 +6,7 @@ The Python and Telegram API images are built locally on the NAS from this Git
 repository. n8n and Jellyfin continue using their upstream images.
 
 This guide uses the current NAS paths exactly. If the storage UUID or directory
-names change, replace the host paths consistently; do not change the four
+names change, replace the host paths consistently; do not change the six
 container `/media/...` paths in the Video Manager Compose file.
 
 ## Before you begin
@@ -15,9 +15,9 @@ Confirm these prerequisites:
 
 - the NAS reports `x86_64` from `uname -m`;
 - Docker Engine and `docker compose` are installed;
-- the existing Jellyfin container is healthy and already serves the four media
+- the existing Jellyfin container is healthy and already serves the six media
   libraries;
-- the four host media directories exist;
+- the six host media directories exist;
 - Git is installed on the NAS;
 - you have a BotFather token plus numeric `api_id` and `api_hash` from
   `my.telegram.org`;
@@ -53,6 +53,11 @@ jellyfin-compose/
 
 Runtime `.env` files and persistent directories are outside the Git source
 clone. A later `git pull` cannot replace them.
+
+When upgrading an existing four-library deployment, the installer still does
+not edit `.env`. Add `HOST_ANIME_SERIES_PATH` and `HOST_ANIME_MOVIE_PATH`
+manually before recreating Video Manager; the new Compose file intentionally
+refuses to invent either host directory.
 
 The existing root `docker-compose.yml`, `config/`, and `cache/` shown above
 belong to Jellyfin. The installer does not read or rewrite them.
@@ -106,23 +111,25 @@ JELLYFIN_API_KEY=your_jellyfin_api_key
 Leave `JELLYFIN_API_KEY` empty if scan/status commands are not needed yet. The
 download and organizer functions still work.
 
-All four NAS libraries are exposed to the bot at the same time:
+All six NAS libraries are exposed to the bot at the same time:
 
 ```env
 LIBRARY_ANIMATION_SERIES_PATH=/media/animation-serise
 LIBRARY_ANIMATION_MOVIE_PATH=/media/animation-movie
 LIBRARY_VIDEO_SERIES_PATH=/media/video-serise
 LIBRARY_VIDEO_MOVIE_PATH=/media/video-movie
+LIBRARY_ANIME_SERIES_PATH=/media/anime-series
+LIBRARY_ANIME_MOVIE_PATH=/media/anime-movie
 DEFAULT_LIBRARY_KEY=animation_series
 ```
 
 After the bot starts, send `/libraries` and choose Animation Series, Animation
-Movies, Video Series, or Video Movies. The choice is stored separately for each
+Movies, Video Series, Video Movies, Anime Series, or Anime Movies. The choice is stored separately for each
 chat and automatically changes that chat to series or movie mode. Every queued
 file remembers the chosen library, so selecting another destination later does
 not reroute it.
 
-Set the four host bind-mount paths to existing directories. For this NAS they
+Set the six host bind-mount paths to existing directories. For this NAS they
 are already provided in the generated example:
 
 ```env
@@ -130,6 +137,8 @@ HOST_ANIMATION_SERIES_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999
 HOST_ANIMATION_MOVIE_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/animation-movie
 HOST_VIDEO_SERIES_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/video-serise
 HOST_VIDEO_MOVIE_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/video-movie
+HOST_ANIME_SERIES_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-series
+HOST_ANIME_MOVIE_PATH=/srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-movie
 ```
 
 The misspelling `serise` is kept because it is the real existing directory.
@@ -159,7 +168,7 @@ Stop the Windows bot and Windows Local Telegram Bot API before starting the NAS
 copies. Do not run two Local Bot API servers or two polling bot processes for
 the same bot token at the same time.
 
-## 4. Leave Jellyfin unchanged
+## 4. Keep Jellyfin installed; add only the two new mounts
 
 Confirm that the already-installed Jellyfin server is still available:
 
@@ -167,11 +176,56 @@ Confirm that the already-installed Jellyfin server is still available:
 curl http://127.0.0.1:8096/System/Info/Public
 ```
 
-Do not run any new Jellyfin installation or Compose command for this deployment.
-The existing server already publishes port `8096`. Video Manager reaches that
-port through Docker's `host.docker.internal` host-gateway mapping. Jellyfin does
-not join the automation network and its existing Compose file, container,
-configuration, cache, libraries, plugins, and metadata remain untouched.
+Do not install a second Jellyfin server. The existing server already publishes
+port `8096`, and Video Manager reaches it through Docker's
+`host.docker.internal` host-gateway mapping.
+
+Jellyfin still needs read access to the two new host directories. Add these two
+bind mounts to the **existing** Jellyfin service; do not merge the Video Manager
+Compose project into it:
+
+```yaml
+      - type: bind
+        source: /srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-series
+        target: /anime-series
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-movie
+        target: /anime-movie
+        bind:
+          create_host_path: false
+```
+
+Then recreate only the existing Jellyfin service and add two Jellyfin
+libraries in the dashboard:
+
+- **Anime Series** — content type **Shows**, folder `/anime-series`;
+- **Anime Movies** — content type **Movies**, folder `/anime-movie`.
+
+Enable/prioritize the AniList metadata provider for the Anime Series library.
+The bot uses AniList's official title/year, but Jellyfin's own enabled plugins
+remain responsible for downloading posters and metadata. Do not use a Mixed
+library: separate Shows and Movies roots give Jellyfin the correct scanner and
+episode rules.
+
+If the new host directories do not exist yet, create them before Compose
+validation and give the existing NAS media group write access:
+
+```bash
+mkdir -p \
+  /srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-series \
+  /srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-movie
+chown 65534:100 \
+  /srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-series \
+  /srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-movie
+chmod 2775 \
+  /srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-series \
+  /srv/dev-disk-by-uuid-e5048a2d-8521-41d1-8efc-880e999ecc6f/Archive/VIDEO_ARCHIVE/jellyfin/anime-movie
+```
+
+This is the only Jellyfin Compose change required. Existing configuration,
+cache, plugins, metadata, and the four original library mounts remain intact.
 
 ## 5. Build and start Local Telegram Bot API
 

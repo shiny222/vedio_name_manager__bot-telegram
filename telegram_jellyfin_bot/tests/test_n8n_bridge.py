@@ -130,6 +130,20 @@ class N8nMediaIdentifierTests(unittest.TestCase):
 
         asyncio.run(exercise())
 
+    def test_maps_plural_anime_movie_key_for_workflow_compatibility(self):
+        async def exercise():
+            session = _FakeSession()
+            client = N8nMediaIdentifier(self._config(), session)
+            await client.identify(
+                chat_id=123,
+                media_kind="movie",
+                library_key="anime_movies",
+                filename="Anime.Movie.2026.mkv",
+            )
+            self.assertEqual(session.request["json"]["library_key"], "anime_movie")
+
+        asyncio.run(exercise())
+
     def test_rejects_multiple_identification_results(self):
         class MultipleSession(_FakeSession):
             def post(self, url, **kwargs):

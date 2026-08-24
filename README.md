@@ -1,7 +1,7 @@
 # Jellyfin Video Manager
 
 Jellyfin Video Manager is a Telegram-driven download and organization system
-for TV episodes and movies. It keeps four media destinations available at the
+for TV episodes and movies. It keeps six media destinations available at the
 same time, remembers the selected destination per Telegram chat, can use an
 optional n8n AI workflow to interpret release filenames, and applies all file
 changes through independent, rollback-aware organizer tools.
@@ -25,7 +25,8 @@ real final names, and approve one queued download plan.
 For series, the bot can:
 
 - identify title, season, and episode from the filename/caption through n8n;
-- use the existing IMDb fuzzy-search tool to obtain a canonical folder name;
+- use IMDb for the existing animation/video libraries or AniList for the
+  dedicated anime libraries to obtain a canonical folder name;
 - automatically reuse a conservatively matched existing series folder;
 - group episodes of the same new series under one confirmation;
 - route mixed-series uploads independently;
@@ -37,7 +38,7 @@ For movies, the bot can:
 
 - identify a title and year automatically or accept a manual search;
 - group a short burst into one compact identification result;
-- automatically accept only an exact high-confidence title/year IMDb match;
+- automatically accept only an exact high-confidence provider title/year match;
 - refuse automatic acceptance when a clear year in the source filename differs
   from the proposed movie year;
 - detect library/queue identity collisions before downloading and ask whether
@@ -65,10 +66,10 @@ flowchart LR
     T --> B[Python Video Manager bot]
     B -->|filename/caption only| N[n8n identification workflow]
     N -->|title, season, episode suggestion| B
-    B --> I[IMDb fuzzy-search tool]
+    B --> I[IMDb or AniList search tool]
     B --> S[Series organizer]
     B --> M[Movie organizer]
-    S --> L[(Four mounted media libraries)]
+    S --> L[(Six mounted media libraries)]
     M --> L
     B -->|scan/status API| J[Existing Jellyfin server]
     J --> L
@@ -80,7 +81,7 @@ Important boundaries:
 - n8n receives a passive webhook request only when identification is needed.
 - AI cannot select a library, access the NAS, download media, rename files, or
   scan Jellyfin.
-- IMDb search proposes identity; the organizers perform deterministic file
+- IMDb/AniList search proposes identity; the organizers perform deterministic file
   operations after the bot has selected or confirmed a destination.
 - Jellyfin reads the same host media folders but remains a separate service.
 
@@ -95,16 +96,17 @@ video-manager/
 |-- organizer/                   Independent TV-series organizer and rollback
 |-- movie_organizer/             Independent staged movie importer and rollback
 |-- fuzzy_search/                Optional IMDb fuzzy-title search and cache
+|-- anilist_search/              Optional AniList anime search and cache
 |-- nas/                         Separate Docker Compose deployment templates
 |-- docs/                        Architecture, configuration, and operations
-|-- Dockerfile                   Python bot plus all three local tools
+|-- Dockerfile                   Python bot plus all independent local tools
 |-- Dockerfile.telegram-bot-api  Runtime for the supplied Linux API binary
 |-- telegram-bot-api             Linux amd64 Local Bot API binary
 |-- telegram-bot-api.sha256      Integrity check for that binary
 `-- update.bat                   Safe updater for a Windows Git clone
 ```
 
-The four Python sub-projects remain usable separately:
+The five Python sub-projects remain usable separately:
 
 | Component | Can run alone | External dependency |
 |---|---:|---|
@@ -112,6 +114,7 @@ The four Python sub-projects remain usable separately:
 | Series organizer | Yes | `guessit` is optional but recommended |
 | Movie organizer | Yes | Python standard library only |
 | IMDb fuzzy search | Yes | IMDb search endpoint; cached exact queries can work offline |
+| AniList search | Yes | Public AniList GraphQL API; cached exact queries can work offline |
 
 Supported video extensions are `.mkv`, `.mp4`, `.avi`, `.mov`, `.webm`, and
 `.m4v`. The organizers also recognize `.srt`, `.ass`, and `.vtt` subtitle
@@ -121,14 +124,16 @@ standalone organizers.
 
 ## Media layout
 
-The recommended NAS deployment mounts four existing Jellyfin library roots:
+The recommended NAS deployment mounts six existing Jellyfin library roots:
 
 ```text
 VIDEO_ARCHIVE/jellyfin/
 |-- animation-serise/   # animated TV series (spelling kept for existing path)
 |-- animation-movie/    # animated movies
 |-- video-serise/       # live-action TV series
-`-- video-movie/        # live-action movies
+|-- video-movie/        # live-action movies
+|-- anime-series/       # anime series; AniList identity
+`-- anime-movie/        # anime movies; AniList identity
 ```
 
 Inside a series library:
@@ -162,7 +167,7 @@ Prerequisites:
 - an existing, working Jellyfin server;
 - a Telegram bot token from BotFather;
 - Telegram `api_id` and `api_hash` from `my.telegram.org`;
-- four existing host media directories;
+- six existing host media directories;
 - optional: a Jellyfin API key and an existing n8n instance/workflow.
 
 Clone the repository beneath the directory that already contains the Jellyfin
@@ -246,6 +251,8 @@ The system is designed around these invariants:
 - paths must stay under the selected configured library;
 - incomplete downloads use `.part` files;
 - final byte count is checked against Telegram's reported size when available;
+- series downloads keep their real Telegram filename until the organizer has
+  completed an automatic dry-run;
 - movies download outside the final library and are imported only after a
   successful internal dry-run;
 - every organizer move is recorded in `.rename_history.json`;
@@ -353,6 +360,9 @@ Set-Location organizer
 
 Set-Location ..\fuzzy_search
 .\.venv\Scripts\python.exe -m unittest test_imdb_tool.py -v
+
+Set-Location ..\anilist_search
+.\.venv\Scripts\python.exe -m unittest test_anilist_tool.py -v
 ```
 
 The Local Telegram Bot API integration test is skipped unless its explicit test

@@ -127,8 +127,13 @@ class DownloadManager:
             folder = self.config.target_path(
                 folder_name, str(item.get("library_key") or "") or None
             )
+        # Series downloads must reach the organizer with Telegram's real
+        # filename intact. Season/episode assignments are passed separately;
+        # encoding them in a synthetic filename would break truthful rollback.
         filename = validate_original_filename(
-            item.get("download_filename") or item["original_filename"]
+            item["original_filename"]
+            if item.get("media_kind", "series") == "series"
+            else item.get("download_filename") or item["original_filename"]
         )
         return folder / filename, folder_name
 

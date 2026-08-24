@@ -46,6 +46,7 @@ sync_stack n8n-compose
 
 mkdir -p \
   "$TARGET_ROOT/video-manager-compose/data/fuzzy-search" \
+  "$TARGET_ROOT/video-manager-compose/data/anilist-search" \
   "$TARGET_ROOT/video-manager-compose/logs" \
   "$TARGET_ROOT/video-manager-compose/staging" \
   "$TARGET_ROOT/telegram-bot-api-compose/data" \

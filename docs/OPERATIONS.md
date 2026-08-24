@@ -234,7 +234,7 @@ directories.
 | Data | Why it matters |
 |---|---|
 | `video-manager-compose/.env` | bot token, library paths, behavior settings |
-| `video-manager-compose/data/` | queue, chat settings, sorter/import ownership, IMDb cache |
+| `video-manager-compose/data/` | queue, chat settings, sorter/import ownership, IMDb and AniList caches |
 | `video-manager-compose/staging/` | movie jobs waiting for import or retry |
 | `video-manager-compose/logs/` | optional diagnostics |
 | `telegram-bot-api-compose/.env` | Telegram application credentials |

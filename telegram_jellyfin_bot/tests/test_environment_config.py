@@ -80,6 +80,36 @@ class EnvironmentConfigTests(unittest.TestCase):
                 (root / "video-movies").resolve(),
             )
 
+    def test_adds_two_anilist_libraries_when_explicitly_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            environment = {
+                "VIDEO_MANAGER_CONFIG_MODE": "env",
+                "BOT_TOKEN": "123456:test-token",
+                "LIBRARY_ANIMATION_SERIES_PATH": str(root / "animation-series"),
+                "LIBRARY_ANIMATION_MOVIE_PATH": str(root / "animation-movies"),
+                "LIBRARY_VIDEO_SERIES_PATH": str(root / "video-series"),
+                "LIBRARY_VIDEO_MOVIE_PATH": str(root / "video-movies"),
+                "LIBRARY_ANIME_SERIES_PATH": str(root / "anime-series"),
+                "LIBRARY_ANIME_MOVIE_PATH": str(root / "anime-movies"),
+                "MOVIE_STAGING_PATH": str(root / "staging"),
+                "DATA_PATH": str(root / "data"),
+                "LOGS_PATH": str(root / "logs"),
+            }
+            with mock.patch.dict(os.environ, environment, clear=True):
+                config = load_config(create_from_example=False)
+
+            self.assertEqual(len(config.media_libraries), 6)
+            self.assertEqual(
+                config.library("anime_series").metadata_provider, "anilist"
+            )
+            self.assertEqual(
+                config.library("anime_movies").metadata_provider, "anilist"
+            )
+            self.assertEqual(
+                config.library("video_series").metadata_provider, "imdb"
+            )
+
     def test_rejects_invalid_environment_boolean(self) -> None:
         environment = {
             "VIDEO_MANAGER_CONFIG_MODE": "env",

@@ -1196,7 +1196,11 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                     self.assertEqual(item["status"], "queued")
                     self.assertEqual(item["series_season"], 4)
                     self.assertEqual(item["series_episode"], 25)
-                    self.assertEqual(item["download_filename"], "Incoming - S04E25.mkv")
+                    self.assertIsNone(item["download_filename"])
+                    self.assertEqual(
+                        item["original_filename"],
+                        "[AWHT] Dr. Stone S4 - 25 [480p].mkv",
+                    )
                     self.assertEqual(
                         item["target_folder"],
                         "Dr. Stone (2019) [imdbid-tt9679542]",
@@ -2143,7 +2147,7 @@ class MenuNavigationTests(unittest.TestCase):
                 "Movies",
                 "Jellyfin",
                 "Episodes",
-                "IMDb",
+                "Titles",
             ],
         )
         commands = [item["command"] for item in BOT_COMMANDS]
@@ -2851,6 +2855,70 @@ class EpisodeCatalogTests(unittest.TestCase):
 
 
 class FolderSuggestionTests(unittest.TestCase):
+    def test_anime_library_uses_anilist_and_keeps_provider_identity(self):
+        async def exercise():
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                data = config_data(root)
+                data["media_libraries"] = [
+                    {
+                        "key": "anime_series",
+                        "name": "Anime Series",
+                        "media_kind": "series",
+                        "path": str(root / "anime-series"),
+                        "metadata_provider": "anilist",
+                    },
+                    {
+                        "key": "anime_movies",
+                        "name": "Anime Movies",
+                        "media_kind": "movie",
+                        "path": str(root / "anime-movies"),
+                        "metadata_provider": "anilist",
+                    },
+                ]
+                data["default_library_key"] = "anime_series"
+                path = root / "config.json"
+                path.write_text(json.dumps(data), encoding="utf-8")
+                cfg = load_config(path, create_from_example=False)
+                app = BotApp(cfg)
+
+                async def fake_send(chat_id, text, reply_markup=None):
+                    return None
+
+                async def fake_anilist(query, limit=8, media_type="any"):
+                    self.assertEqual(media_type, "series")
+                    return ([{
+                        "provider": "anilist",
+                        "provider_id": "116674",
+                        "anilist_id": 116674,
+                        "imdb_id": "",
+                        "title": "BLEACH: Thousand-Year Blood War",
+                        "year": 2022,
+                        "type": "TV",
+                        "score": 98.0,
+                        "folder_name": "BLEACH_ Thousand-Year Blood War (2022)",
+                    }], "online")
+
+                async def forbidden_imdb(*args, **kwargs):
+                    raise AssertionError("Anime libraries must not query IMDb")
+
+                app.send = fake_send
+                app.anilist.search = fake_anilist
+                app.imdb.search = forbidden_imdb
+                try:
+                    await app._run_imdb_search(1, "bleach tybw", "use")
+                    choice = next(iter(app.imdb_choices.values()))
+                    self.assertEqual(choice["metadata_provider"], "anilist")
+                    self.assertEqual(choice["metadata_provider_id"], "116674")
+                    self.assertEqual(
+                        choice["folder_name"],
+                        "BLEACH_ Thousand-Year Blood War (2022)",
+                    )
+                finally:
+                    app.store.close()
+
+        asyncio.run(exercise())
+
     def test_search_proposes_before_commit_and_manual_fallback(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
@@ -2953,7 +3021,7 @@ class FolderSuggestionTests(unittest.TestCase):
                     )
                     self.assertEqual(rename_calls, [])
                     self.assertTrue(
-                        any("changed after this IMDb search" in text for text in sent)
+                        any("changed after this title search" in text for text in sent)
                     )
                 finally:
                     app.store.close()

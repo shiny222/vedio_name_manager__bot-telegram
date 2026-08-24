@@ -36,7 +36,7 @@ Each chat has independent settings, queue, confirmations, and history. Members
 of one Telegram group share that group's state.
 
 The library choice is persistent. You do **not** choose a destination for every
-upload. Change it only when the next files belong in another one of the four
+upload. Change it only when the next files belong in another one of the six
 libraries. Each queue item records the choice active when it arrived, so
 changing the current library does not reroute older queued items.
 
@@ -69,8 +69,9 @@ workflow. The AI suggests:
 - movie title and year; or
 - series title, season, and episode.
 
-The existing IMDb fuzzy-search tool can then find the official Jellyfin folder
-identity. If a reliable IMDb ID or unique exact-title match already exists in
+The bot then uses IMDb for Animation/Video libraries or AniList for Anime
+libraries to find the official Jellyfin folder identity. If a reliable provider
+ID or unique exact-title match already exists in
 the selected library, the bot uses that folder automatically. A new series is
 confirmed once and all matching queued episodes share that answer. The AI does
 not download, move, rename, delete, or scan anything.
@@ -143,7 +144,10 @@ Open **Downloads**:
 The bot downloads incomplete data as `.part`, verifies the completed file, and
 never overwrites silently. Movies are staged and then imported safely.
 AI-confirmed series episodes are organized automatically after their downloads
-finish. A successful automatic sort stays quiet; detailed output remains
+finish. The loose download keeps its real Telegram filename, and the AI
+season/episode assignment is passed separately. The bot runs the organizer's
+dry-run first; only a successful preview is followed by the real history-backed
+rename. A successful automatic sort stays quiet; detailed output remains
 available through `/sort_status` when troubleshooting is needed.
 
 ### 5. Refresh and check
@@ -167,7 +171,7 @@ destination.
 | One or several movies | Batches the status, automatically accepts exact high-confidence title/year matches, and asks only for uncertain items |
 | A movie or episode already in the library/queue | Shows both files and asks Replace or Cancel before transfer |
 | A destination file already exists | Stops that item for `skip`, `save_with_suffix`, or explicit `overwrite` |
-| n8n or IMDb is unavailable | Keeps the item safe in the queue and offers manual tools instead of guessing |
+| n8n, IMDb, or AniList is unavailable | Keeps the item safe in the queue and offers manual tools instead of guessing |
 
 Do not mix movies and episodes under one selected library. Choose the correct
 movie or series library first; selecting the library automatically changes
@@ -288,7 +292,9 @@ sort undo restores the previous media.
 - `/fix_metadata_current` — rename only matched episode NFO/artwork sidecars.
 - `/sort_status` — show retained sorter diagnostics.
 - `/episodes [NAME]`, `/library_episodes` — episode inventory.
-- `/imdb_search NAME`, `/imdb_fix_current [NAME]` — manual IMDb identity tools.
+- `/imdb_search NAME`, `/imdb_fix_current [NAME]` — legacy command names for
+  manual provider search. They use AniList in Anime libraries and IMDb in the
+  other libraries.
 
 ### History, movies, and Jellyfin
 
@@ -347,12 +353,14 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 
 ### ۱. یک بار کتابخانه را انتخاب کنید
 
-**انتخاب کتابخانه** را بزنید و یکی از چهار مقصد را انتخاب کنید:
+**انتخاب کتابخانه** را بزنید و یکی از شش مقصد را انتخاب کنید:
 
 - Animation Series
 - Animation Movies
 - Video Series
 - Video Movies
+- Anime Series
+- Anime Movies
 
 این انتخاب تا زمانی که خودتان آن را تغییر ندهید برای همان چت باقی می‌ماند.
 کتابخانه سریال حالت سریال و کتابخانه فیلم حالت فیلم را فعال می‌کند. هوش
@@ -367,11 +375,12 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 
 پس از فعال شدن اتصال AI، ربات فقط نام فایل، کپشن اختیاری، نوع رسانه و کلید
 کتابخانه انتخاب‌شده را برای تشخیص به n8n می‌فرستد. نتیجه پیشنهادی شامل نام و
-سال فیلم یا نام سریال و شماره فصل و قسمت است. سپس ابزار جستجوی تقریبی IMDb
-می‌تواند نام رسمی مناسب Jellyfin را پیدا کند. هوش مصنوعی اجازه دانلود، جابه‌جایی،
+سال فیلم یا نام سریال و شماره فصل و قسمت است. سپس ربات برای کتابخانه‌های
+Animation/Video از IMDb و برای کتابخانه‌های Anime از AniList استفاده می‌کند
+تا نام رسمی مناسب Jellyfin را پیدا کند. هوش مصنوعی اجازه دانلود، جابه‌جایی،
 تغییر نام، حذف یا اسکن را ندارد.
 
-اگر پوشه‌ای با IMDb ID معتبر یا تطبیق یکتای نام دقیق در کتابخانه انتخاب‌شده
+اگر پوشه‌ای با شناسه معتبر سرویس یا تطبیق یکتای نام دقیق در کتابخانه انتخاب‌شده
 وجود داشته باشد، ربات بدون تأیید دوباره از همان پوشه استفاده می‌کند. برای یک
 سریال جدید فقط یک بار تأیید گرفته می‌شود و همه قسمت‌های مطابق همان پاسخ را
 استفاده می‌کنند.
@@ -411,7 +420,7 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 
 - اگر درست بود تأیید کنید.
 - اگر اطلاعات کافی نبود، ربات باید فقط یک سؤال کوتاه بپرسد.
-- اگر AI یا IMDb در دسترس نبود، نام دستی را وارد کنید یا **پیشرفته** را باز
+- اگر AI، IMDb یا AniList در دسترس نبود، نام دستی را وارد کنید یا **پیشرفته** را باز
   کنید. خرابی سرویس نباید کتابخانه دیگری را خودکار انتخاب کند.
 
 دو نوع تأیید جدا وجود دارد:
@@ -421,7 +430,7 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 - **تأیید دانلود:** `/download` برنامه نهایی همه موارد آماده را نشان می‌دهد و
   `/confirm_download` همان برنامه را شروع می‌کند.
 
-پوشه موجود فقط با IMDb ID دقیق، نام کامل دقیق یا تطبیق یکتای عنوان استفاده
+پوشه موجود فقط با provider ID دقیق، نام کامل دقیق یا تطبیق یکتای عنوان استفاده
 می‌شود. امتیاز fuzzy به‌تنهایی اجازه انتخاب بی‌سؤال پوشه موجود را نمی‌دهد.
 
 ### ۴. دانلود را شروع کنید
@@ -430,7 +439,10 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 فایل ناقص را با پسوند `.part` نگه می‌دارد، فایل کامل را بررسی می‌کند و بدون
 اجازه بازنویسی نمی‌کند. فیلم‌ها ابتدا وارد staging و سپس به‌صورت امن وارد
 کتابخانه می‌شوند. قسمت‌های سریال که با AI تأیید شده‌اند، بعد از پایان دانلود
-به‌صورت خودکار مرتب می‌شوند.
+به‌صورت خودکار مرتب می‌شوند. فایل سریال ابتدا با همان نام اصلی تلگرام ذخیره
+می‌شود و فصل و قسمت به‌صورت جداگانه به ابزار مرتب‌سازی داده می‌شوند. ربات ابتدا
+dry-run را اجرا می‌کند و فقط در صورت موفقیت، تغییر نام واقعی همراه با تاریخچه
+بازگردانی انجام می‌شود.
 مرتب‌سازی خودکار موفق پیام طولانی نمی‌فرستد؛ در صورت نیاز جزئیات با
 `/sort_status` در دسترس است.
 
@@ -454,7 +466,7 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 | یک یا چند فیلم | خلاصه دسته‌ای، پذیرش خودکار تطبیق دقیق و مطمئن نام/سال، و سؤال فقط برای موارد نامطمئن |
 | فیلم یا قسمت موجود در کتابخانه یا صف | نمایش هر دو فایل و پرسش جایگزینی یا لغو پیش از انتقال |
 | فایل مقصد موجود است | توقف همان مورد برای `skip`، `save_with_suffix` یا `overwrite` صریح |
-| n8n یا IMDb قطع است | عدم حدس زدن و ارائه روش دستی پیش از دانلود |
+| n8n، IMDb یا AniList قطع است | عدم حدس زدن و ارائه روش دستی پیش از دانلود |
 
 فیلم و قسمت سریال را زیر یک کتابخانه انتخاب‌شده مخلوط نکنید. ابتدا کتابخانه
 درست فیلم یا سریال را انتخاب کنید؛ انتخاب کتابخانه حالت را نیز تغییر می‌دهد.
@@ -554,7 +566,8 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 - `/resort_current` اصلاح نام قسمت‌های قبلی بعد از اصلاح نام پوشه.
 - `/fix_metadata_current` اصلاح فقط NFO و تصویرهای قسمت قابل تطبیق.
 - `/sort_status` جزئیات مرتب‌ساز؛ `/episodes [NAME]` و `/library_episodes` موجودی.
-- `/imdb_search NAME` و `/imdb_fix_current [NAME]` اصلاح دستی IMDb.
+- `/imdb_search NAME` و `/imdb_fix_current [NAME]` نام‌های قدیمی فرمان جستجوی
+  دستی هستند؛ در کتابخانه Anime از AniList و در بقیه از IMDb استفاده می‌کنند.
 
 ### تاریخچه، فیلم و Jellyfin
 

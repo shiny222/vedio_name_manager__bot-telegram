@@ -44,6 +44,11 @@
     "fuzzy_search\\imdb_tool.py"
   ],
   "fuzzy_search_timeout_seconds": 20,
+  "anilist_search_command": [
+    "anilist_search\\.venv\\Scripts\\python.exe",
+    "anilist_search\\anilist_tool.py"
+  ],
+  "anilist_search_timeout_seconds": 20,
   "n8n_agent_enabled": false,
   "n8n_agent_url": "http://127.0.0.1:5678/webhook/media-identify",
   "n8n_agent_secret": "",

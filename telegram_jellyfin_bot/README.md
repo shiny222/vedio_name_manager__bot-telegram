@@ -2,14 +2,16 @@
 
 This bot watches an allowed Telegram group or channel, queues video files,
 downloads them only after your command/confirmation, and can optionally call
-the separate series organizer, movie organizer, and IMDb fuzzy-title tool.
+the separate series organizer, movie organizer, IMDb fuzzy-title tool, and
+AniList anime-title tool.
 
 The bot is intentionally separate from the other tools:
 
 - `telegram_jellyfin_bot` downloads and manages the queue.
 - `organizer` sorts/renames files for Jellyfin.
 - `movie_organizer` safely imports one confirmed movie at a time.
-- `fuzzy_search` is optional and only helps suggest official folder names.
+- `fuzzy_search` and `anilist_search` are optional and only help suggest
+  official folder names.
 
 For the complete project architecture, Docker/NAS deployment, every
 configuration variable, updates, backups, and recovery, start at the root
@@ -68,7 +70,7 @@ damaged.
 - `jellyfin_movie_library_path`: a separate Jellyfin Movies library. Leave it
   empty to disable movie mode.
 - `media_libraries`: optional named destinations for installations with more
-  than one series or movie root. Docker configures the four NAS libraries from
+  than one series or movie root. Docker configures the six NAS libraries from
   environment variables automatically.
 - `movie_staging_path`: a separate temporary download folder outside both
   Jellyfin libraries. Leave it empty when movie mode is disabled.
@@ -126,7 +128,7 @@ shows the current one.
 
 The main menu separates routine use from maintenance:
 
-- **Normal, AI assisted:** choose one of the four libraries once, send one or
+- **Normal, AI assisted:** choose one of the six libraries once, send one or
   more videos, review the final saved filenames, then use
   **Downloads → Download → Confirm**. The chosen library persists for that
   chat until explicitly changed, and AI is never allowed to select it. A short
@@ -134,6 +136,9 @@ The main menu separates routine use from maintenance:
   routed independently; an existing reliable series match is automatic, while
   a new series asks for one shared confirmation. An exact high-confidence movie
   title/year match is automatic; uncertain or inconsistent matches still ask.
+  Series files are first downloaded under their unchanged Telegram filenames.
+  The organizer receives AI season/episode data separately, performs a dry-run,
+  and only then creates rollback history and applies the Jellyfin rename.
 - **Advanced, no AI required:** manually select or create series folders,
   correct IMDb identity, sort/resort episodes, repair metadata, resolve queue
   conflicts, and use history/undo/recovery tools.
@@ -223,8 +228,8 @@ file in staging, where `/movie_import ID` can retry it after you fix the problem
 - `/jellyfin_status` — test Jellyfin and show live scan state/progress.
 - `/episodes [NAME]` — show known and missing episodes for one series.
 - `/library_episodes` — show an episode summary for the whole library.
-- `/imdb_search NAME` — fuzzy-search an official IMDb folder name.
-- `/imdb_fix_current [NAME]` — safely rename the current folder using IMDb results.
+- `/imdb_search NAME` — search the selected library provider (legacy command name).
+- `/imdb_fix_current [NAME]` — safely rename using IMDb or AniList for the selected library.
 - `/movie_mode` — choose a movie library and enter the movie flow.
 - `/series_mode` — choose a series library and enter the episode flow.
 - `/movie_current` — show the latest movie job and its status.
@@ -244,7 +249,7 @@ Telegram channels cannot pre-fill editable slash commands the same way normal ch
 In a private chat, group, or supergroup, send `/menu` once to enable a persistent
 keyboard beside the message box. The main keyboard intentionally contains only
 **Downloads**, **Episodes**, **Jellyfin**, **Bot**, **Choose Library**, and
-**Advanced**. Choose Library opens the four configured destinations directly.
+**Advanced**. Choose Library opens the six configured destinations directly.
 Advanced contains the less-frequent folder, sorting, undo/recovery, IMDb,
 series-workflow, and movie-workflow menus. Commands remain available by slash
 command even when their buttons are under Advanced.

@@ -55,7 +55,7 @@ def now_iso() -> str:
 def series_file_title(folder_name: str) -> str:
     """Keep year/provider metadata on the folder, but not episode filenames."""
     title = re.sub(
-        r"\s*\[(?:imdbid|tmdbid|tvdbid)-[^\]]+\]\s*",
+        r"\s*\[(?:imdbid|tmdbid|tvdbid|anilistid)-[^\]]+\]\s*",
         " ",
         folder_name,
         flags=re.IGNORECASE,
@@ -715,9 +715,10 @@ def organize_video(
     operation: str = "organize",
     dry_run_state: DryRunState | None = None,
     replace_existing: bool = False,
+    detected_override: tuple[int, int] | None = None,
 ) -> bool:
     series_folder = library / series_name
-    detected = detect_episode(video)
+    detected = detected_override or detect_episode(video)
 
     if detected is None:
         target_folder = series_folder / "_Unsorted"
@@ -1163,6 +1164,7 @@ def run_organizer(
     library: Path | None = None,
     dry_run: bool = False,
     replace_episodes: set[tuple[int, int]] | None = None,
+    episode_overrides: dict[str, tuple[int, int]] | None = None,
 ) -> int:
     """Organize exactly one selected series folder.
 
@@ -1196,15 +1198,21 @@ def run_organizer(
             subtitles_by_stem.setdefault(item.stem.casefold(), []).append(item)
 
     replacements = replace_episodes or set()
+    overrides = {
+        filename.casefold(): detected
+        for filename, detected in (episode_overrides or {}).items()
+    }
     failures = 0
     dry_run_state = DryRunState() if dry_run else None
     for video in videos:
         matching_subtitles = subtitles_by_stem.pop(video.stem.casefold(), [])
-        detected = detect_episode(video)
+        detected_override = overrides.get(video.name.casefold())
+        detected = detected_override or detect_episode(video)
         if not organize_video(
             video, series_folder.name, library, matching_subtitles,
             batch_id, dry_run, dry_run_state=dry_run_state,
             replace_existing=bool(detected and detected in replacements),
+            detected_override=detected_override,
         ):
             failures += 1
             if replacements:
@@ -1912,6 +1920,14 @@ def build_parser() -> argparse.ArgumentParser:
             metavar="S01E02",
             help="archive and replace this already-existing episode (repeatable)",
         )
+        sub.add_argument(
+            "--episode-override",
+            action="append",
+            default=[],
+            nargs=2,
+            metavar=("FILENAME", "S01E02"),
+            help="assign a detected episode to one downloaded filename (repeatable)",
+        )
 
     last = subparsers.add_parser("undo-last", help="undo the newest active batch")
     last.add_argument("--library", required=True, type=Path)
@@ -1976,11 +1992,30 @@ def main(argv: list[str] | None = None) -> int:
                         f"Invalid replacement episode marker: {marker}"
                     )
                 replacements.add((int(match.group(1)), int(match.group(2))))
+            overrides: dict[str, tuple[int, int]] = {}
+            for filename, marker in args.episode_override:
+                if Path(filename).name != filename or filename in {"", ".", ".."}:
+                    raise ValueError(
+                        f"Invalid episode override filename: {filename}"
+                    )
+                match = re.fullmatch(
+                    r"(?i)S(\d{1,3})E(\d{1,4})", str(marker).strip()
+                )
+                if not match or int(match.group(1)) < 1 or int(match.group(2)) < 1:
+                    raise ValueError(f"Invalid episode override marker: {marker}")
+                key = filename.casefold()
+                detected = (int(match.group(1)), int(match.group(2)))
+                if key in overrides and overrides[key] != detected:
+                    raise ValueError(
+                        f"Conflicting episode overrides for filename: {filename}"
+                    )
+                overrides[key] = detected
             return run_organizer(
                 args.series_folder.expanduser(),
                 args.library.expanduser() if args.library else None,
                 dry_run=args.command == "dry-run",
                 replace_episodes=replacements,
+                episode_overrides=overrides,
             )
         if args.command == "undo-last":
             return undo_last(args.library.expanduser())

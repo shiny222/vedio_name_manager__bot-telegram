@@ -39,6 +39,7 @@ class SorterBridge:
         dry_run: bool = False,
         library_key: str | None = None,
         replace_episodes: set[tuple[int, int]] | None = None,
+        episode_overrides: dict[str, tuple[int, int]] | None = None,
     ) -> list[str]:
         if not self.config.sorter_command:
             raise ValueError("sorter_command is not configured in config.json.")
@@ -57,6 +58,16 @@ class SorterBridge:
                 raise ValueError("Replacement season and episode must be positive.")
             command.extend(
                 ["--replace-episode", f"S{season:02d}E{episode:02d}"]
+            )
+        for filename, (season, episode) in sorted(
+            (episode_overrides or {}).items(), key=lambda entry: entry[0].casefold()
+        ):
+            if Path(filename).name != filename or filename in {"", ".", ".."}:
+                raise ValueError("Episode override filename must be one file name.")
+            if season < 1 or episode < 1:
+                raise ValueError("Episode override values must be positive.")
+            command.extend(
+                ["--episode-override", filename, f"S{season:02d}E{episode:02d}"]
             )
         return self._resolve_program_paths(command)
 
@@ -147,9 +158,14 @@ class SorterBridge:
         chat_id: int | None = None,
         library_key: str | None = None,
         replace_episodes: set[tuple[int, int]] | None = None,
+        episode_overrides: dict[str, tuple[int, int]] | None = None,
     ) -> tuple[bool, str]:
         command = self.build_command(
-            folder, dry_run, library_key, replace_episodes
+            folder,
+            dry_run,
+            library_key,
+            replace_episodes,
+            episode_overrides,
         )
         return await self._execute(
             folder, command, chat_id, "series", library_key=library_key
