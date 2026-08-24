@@ -55,7 +55,7 @@ def now_iso() -> str:
 def series_file_title(folder_name: str) -> str:
     """Keep year/provider metadata on the folder, but not episode filenames."""
     title = re.sub(
-        r"\s*\[(?:imdbid|tmdbid|tvdbid|anilistid)-[^\]]+\]\s*",
+        r"\s*\[(?:imdbid|tmdbid|tvdbid)-[^\]]+\]\s*",
         " ",
         folder_name,
         flags=re.IGNORECASE,

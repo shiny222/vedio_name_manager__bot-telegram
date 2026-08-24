@@ -95,8 +95,7 @@ allows the AI response to replace them.
 ```
 
 This is an identification suggestion, not permission to rename or move media.
-The Python bot uses `title_query` with IMDb for animation/video libraries and
-AniList for the dedicated anime libraries,
+The Python bot uses `title_query` with IMDb for all six media libraries,
 shows the result for confirmation, and falls back to its existing manual flow
 if n8n is unavailable or returns `ok: false`.
 

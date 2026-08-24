@@ -25,8 +25,7 @@ real final names, and approve one queued download plan.
 For series, the bot can:
 
 - identify title, season, and episode from the filename/caption through n8n;
-- use IMDb for the existing animation/video libraries or AniList for the
-  dedicated anime libraries to obtain a canonical folder name;
+- use IMDb for every selected library to obtain a canonical folder name;
 - automatically reuse a conservatively matched existing series folder;
 - group episodes of the same new series under one confirmation;
 - route mixed-series uploads independently;
@@ -66,7 +65,7 @@ flowchart LR
     T --> B[Python Video Manager bot]
     B -->|filename/caption only| N[n8n identification workflow]
     N -->|title, season, episode suggestion| B
-    B --> I[IMDb or AniList search tool]
+    B --> I[IMDb search tool]
     B --> S[Series organizer]
     B --> M[Movie organizer]
     S --> L[(Six mounted media libraries)]
@@ -81,7 +80,7 @@ Important boundaries:
 - n8n receives a passive webhook request only when identification is needed.
 - AI cannot select a library, access the NAS, download media, rename files, or
   scan Jellyfin.
-- IMDb/AniList search proposes identity; the organizers perform deterministic file
+- IMDb search proposes identity; the organizers perform deterministic file
   operations after the bot has selected or confirmed a destination.
 - Jellyfin reads the same host media folders but remains a separate service.
 
@@ -96,7 +95,6 @@ video-manager/
 |-- organizer/                   Independent TV-series organizer and rollback
 |-- movie_organizer/             Independent staged movie importer and rollback
 |-- fuzzy_search/                Optional IMDb fuzzy-title search and cache
-|-- anilist_search/              Optional AniList anime search and cache
 |-- nas/                         Separate Docker Compose deployment templates
 |-- docs/                        Architecture, configuration, and operations
 |-- Dockerfile                   Python bot plus all independent local tools
@@ -114,7 +112,6 @@ The five Python sub-projects remain usable separately:
 | Series organizer | Yes | `guessit` is optional but recommended |
 | Movie organizer | Yes | Python standard library only |
 | IMDb fuzzy search | Yes | IMDb search endpoint; cached exact queries can work offline |
-| AniList search | Yes | Public AniList GraphQL API; cached exact queries can work offline |
 
 Supported video extensions are `.mkv`, `.mp4`, `.avi`, `.mov`, `.webm`, and
 `.m4v`. The organizers also recognize `.srt`, `.ass`, and `.vtt` subtitle
@@ -132,8 +129,8 @@ VIDEO_ARCHIVE/jellyfin/
 |-- animation-movie/    # animated movies
 |-- video-serise/       # live-action TV series
 |-- video-movie/        # live-action movies
-|-- anime-series/       # anime series; AniList identity
-`-- anime-movie/        # anime movies; AniList identity
+|-- anime-series/       # separate anime series library
+`-- anime-movie/        # separate anime movie library
 ```
 
 Inside a series library:
@@ -361,8 +358,6 @@ Set-Location organizer
 Set-Location ..\fuzzy_search
 .\.venv\Scripts\python.exe -m unittest test_imdb_tool.py -v
 
-Set-Location ..\anilist_search
-.\.venv\Scripts\python.exe -m unittest test_anilist_tool.py -v
 ```
 
 The Local Telegram Bot API integration test is skipped unless its explicit test

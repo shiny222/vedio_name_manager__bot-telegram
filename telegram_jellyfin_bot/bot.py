@@ -33,7 +33,6 @@ if __package__ in {None, ""}:
         EpisodeCatalog, detect_episode, format_series_inventory
     )
     from telegram_jellyfin_bot.jellyfin_bridge import JellyfinBridge
-    from telegram_jellyfin_bot.anilist_bridge import AniListSearchBridge
     from telegram_jellyfin_bot.imdb_bridge import (
         ImdbFuzzySearchBridge, movie_query_from_filename
     )
@@ -60,7 +59,6 @@ else:
     from .downloader import DownloadManager
     from .episode_catalog import EpisodeCatalog, detect_episode, format_series_inventory
     from .jellyfin_bridge import JellyfinBridge
-    from .anilist_bridge import AniListSearchBridge
     from .imdb_bridge import ImdbFuzzySearchBridge, movie_query_from_filename
     from .movie_sorter_bridge import MovieSorterBridge
     from .n8n_bridge import MediaIdentification, N8nMediaIdentifier
@@ -80,7 +78,6 @@ LOG = logging.getLogger(__name__)
 SERIES_BATCH_WINDOW_SECONDS = 2.0
 MOVIE_BATCH_WINDOW_SECONDS = 2.0
 IMDB_FOLDER_ID_RE = re.compile(r"\[imdbid-(tt\d+)\]", re.IGNORECASE)
-ANILIST_FOLDER_ID_RE = re.compile(r"\[anilistid-(\d+)\]", re.IGNORECASE)
 FOLDER_YEAR_RE = re.compile(r"\s*[\(\[]((?:19|20)\d{2})[\)\]]\s*$")
 IMPORTANT_OPEN = "\ue000"
 IMPORTANT_CLOSE = "\ue001"
@@ -147,7 +144,7 @@ def _telegram_html(value: str) -> str:
 def _series_file_title(folder_name: str) -> str:
     """Return the episode-file title used by the standalone organizer."""
     title = re.sub(
-        r"\s*\[(?:imdbid|tmdbid|tvdbid|anilistid)-[^\]]+\]\s*",
+        r"\s*\[(?:imdbid|tmdbid|tvdbid)-[^\]]+\]\s*",
         " ",
         folder_name,
         flags=re.IGNORECASE,
@@ -159,7 +156,7 @@ def _series_file_title(folder_name: str) -> str:
 def _normalized_title(value: str) -> str:
     """Normalize a title only for conservative existing-folder matching."""
     value = re.sub(
-        r"\s*\[(?:imdbid|tmdbid|tvdbid|anilistid)-[^\]]+\]\s*",
+        r"\s*\[(?:imdbid|tmdbid|tvdbid)-[^\]]+\]\s*",
         " ",
         value,
         flags=re.IGNORECASE,
@@ -215,8 +212,8 @@ HELP = """Commands:
 /jellyfin_status - Check Jellyfin connection
 /episodes [NAME] - Show episodes for one series
 /library_episodes - Show a summary of all series
-/imdb_search NAME - Search the selected library's title provider
-/imdb_fix_current [NAME] - Rename the current folder using its provider
+/imdb_search NAME - Fuzzy-search the correct IMDb title
+/imdb_fix_current [NAME] - Rename the current folder using IMDb search
 /movie_mode - Send new files as independent movie jobs
 /series_mode - Return to TV-series episode mode
 /movie_current - Show the latest movie job
@@ -275,8 +272,8 @@ HELP_FA = """دستورها:
 /jellyfin_status - بررسی اتصال و وضعیت Jellyfin
 /episodes [NAME] - نمایش قسمت‌های یک سریال
 /library_episodes - خلاصه قسمت‌های کل کتابخانه
-/imdb_search NAME - جستجوی نام رسمی در سرویس کتابخانه
-/imdb_fix_current [NAME] - اصلاح نام پوشه فعلی با سرویس کتابخانه"""
+/imdb_search NAME - جستجوی نام رسمی در IMDb
+/imdb_fix_current [NAME] - اصلاح نام پوشه فعلی با IMDb"""
 
 GUIDE_EN = """How to use the Telegram Jellyfin Bot
 
@@ -497,8 +494,8 @@ BOT_COMMANDS = [
     {"command": "episodes", "description": "Episodes: Show one series"},
     {"command": "library_episodes", "description": "Episodes: Show the library summary"},
     # Optional IMDb title tools
-    {"command": "imdb_search", "description": "Titles: Search the selected provider"},
-    {"command": "imdb_fix_current", "description": "Titles: Fix the current folder name"},
+    {"command": "imdb_search", "description": "IMDb: Search for an official title"},
+    {"command": "imdb_fix_current", "description": "IMDb: Fix the current folder name"},
 ]
 
 CHANNEL_MENU = {
@@ -785,7 +782,7 @@ ADVANCED_MENU = {
         ],
         [
             {"text": "↩️ Undo & Recovery", "callback_data": "nav:undo"},
-            {"text": "🔎 Title Search", "callback_data": "nav:imdb"},
+            {"text": "🔎 IMDb", "callback_data": "nav:imdb"},
         ],
         [
             {"text": "📺 Series tools", "callback_data": "nav:series"},
@@ -803,7 +800,7 @@ CATEGORY_SUBMENUS = {
     "nav:series": ("TV-series workflow:", SERIES_MENU),
     "nav:movies": ("Independent movie workflow:", MOVIE_MENU),
     "nav:jellyfin": ("Jellyfin commands:", JELLYFIN_MENU),
-    "nav:imdb": ("Title-provider search commands:", IMDB_MENU),
+    "nav:imdb": ("IMDb fuzzy-search commands:", IMDB_MENU),
     "nav:episodes": ("Episode inventory commands:", EPISODE_MENU),
     "nav:bot": ("Bot information and help:", BOT_MENU),
     "nav:advanced": ("Advanced commands:", ADVANCED_MENU),
@@ -815,7 +812,7 @@ REPLY_CATEGORY_ACTIONS = {
     "🧹 Sorting": "nav:sorting",
     "↩️ Undo & Recovery": "nav:undo",
     "🎬 Jellyfin": "nav:jellyfin",
-    "🔎 Title Search": "nav:imdb",
+    "🔎 IMDb": "nav:imdb",
     "📺 Episodes": "nav:episodes",
     "⚙️ Bot": "nav:bot",
     "🗄 Choose Library": "menu:libraries",
@@ -982,7 +979,6 @@ class BotApp:
         self.movie_sorter = MovieSorterBridge(config, self.store)
         self.catalog = EpisodeCatalog(config.allowed_video_extensions)
         self.imdb = ImdbFuzzySearchBridge(config)
-        self.anilist = AniListSearchBridge(config)
         self.imdb_choices: dict[str, dict] = {}
         self.movie_choices: dict[str, dict] = {}
         self.movie_manual_pending: dict[int, int] = {}
@@ -997,42 +993,6 @@ class BotApp:
         self.background_tasks: set[asyncio.Task] = set()
         self.task_chat_ids: dict[asyncio.Task, int] = {}
         self.chat_types: dict[int, str] = {}
-
-    @staticmethod
-    def _provider_label(library: MediaLibrary) -> str:
-        return "AniList" if library.metadata_provider == "anilist" else "IMDb"
-
-    async def _search_metadata(
-        self,
-        library: MediaLibrary,
-        query: str,
-        *,
-        media_type: str,
-    ) -> tuple[list[dict], str, str]:
-        """Search only the provider assigned to the selected library."""
-        if library.metadata_provider == "anilist":
-            results, source = await self.anilist.search(
-                query, media_type=media_type
-            )
-            return results, source, "AniList"
-        results, source = await self.imdb.search(query, media_type=media_type)
-        return results, source, "IMDb"
-
-    @staticmethod
-    def _result_provider(result: dict, library: MediaLibrary) -> tuple[str, str]:
-        provider = str(
-            result.get("provider") or library.metadata_provider or "imdb"
-        ).strip().casefold()
-        if provider == "anilist":
-            provider_id = str(
-                result.get("provider_id") or result.get("anilist_id") or ""
-            ).strip()
-        else:
-            provider = "imdb"
-            provider_id = str(
-                result.get("provider_id") or result.get("imdb_id") or ""
-            ).strip()
-        return provider, provider_id
 
     def track_task(
         self, awaitable: Any, name: str, chat_id: int | None = None
@@ -1859,7 +1819,7 @@ class BotApp:
             ):
                 await self.send(
                     int(chat_id),
-                    "This title-search result expired. Run /imdb_search again.",
+                    "This IMDb result expired. Run /imdb_search again.",
                 )
                 return
             await self._offer_folder_confirmation(int(chat_id), token, choice)
@@ -1886,7 +1846,7 @@ class BotApp:
             ):
                 await self.send(
                     int(chat_id),
-                    "The selected library changed after this title search. "
+                    "The selected library changed after this IMDb search. "
                     "Nothing was changed. Start the folder search again.",
                 )
                 return
@@ -1898,14 +1858,14 @@ class BotApp:
                 if not source_folder or current_folder != source_folder:
                     await self.send(
                         int(chat_id),
-                        "The selected folder changed after this title search. "
+                        "The selected folder changed after this IMDb search. "
                         "Nothing was renamed. Run /imdb_fix_current again.",
                     )
                     return
                 if library_key and current_library.key != library_key:
                     await self.send(
                         int(chat_id),
-                        "The selected library changed after this title search. "
+                        "The selected library changed after this IMDb search. "
                         "Nothing was renamed. Run /imdb_fix_current again.",
                     )
                     return
@@ -1914,7 +1874,7 @@ class BotApp:
                 ).is_dir():
                     await self.send(
                         int(chat_id),
-                        "The folder used for this title search no longer exists. "
+                        "The folder used for this IMDb search no longer exists. "
                         "Nothing was renamed.",
                     )
                     return
@@ -2530,18 +2490,6 @@ class BotApp:
                 download_filename=None,
                 imdb_id=str(entry.get("imdb_id") or choice.get("imdb_id") or "")
                 or None,
-                metadata_provider=str(
-                    entry.get("metadata_provider")
-                    or choice.get("metadata_provider")
-                    or ""
-                )
-                or None,
-                metadata_provider_id=str(
-                    entry.get("metadata_provider_id")
-                    or choice.get("metadata_provider_id")
-                    or ""
-                )
-                or None,
                 status=(
                     "waiting_overwrite"
                     if existing is not None or queued_conflict is not None
@@ -2665,10 +2613,6 @@ class BotApp:
 
     @staticmethod
     def _movie_identity_key(value: dict) -> str:
-        provider = str(value.get("metadata_provider") or "").strip().casefold()
-        provider_id = str(value.get("metadata_provider_id") or "").strip().casefold()
-        if provider and provider_id:
-            return f"{provider}:{provider_id}"
         imdb_id = str(value.get("imdb_id") or "").strip().casefold()
         if imdb_id:
             return f"imdb:{imdb_id}"
@@ -2712,19 +2656,13 @@ class BotApp:
 
     @staticmethod
     def _movie_choice_from_result(
-        pending_id: int,
-        result: dict,
-        source: str,
-        library: MediaLibrary,
+        pending_id: int, result: dict, source: str
     ) -> dict:
-        provider, provider_id = BotApp._result_provider(result, library)
         return {
             "pending_id": pending_id,
             "title": str(result["title"]),
             "year": result.get("year"),
             "imdb_id": str(result.get("imdb_id") or ""),
-            "metadata_provider": provider,
-            "metadata_provider_id": provider_id,
             "folder_name": str(result["folder_name"]),
             "source": source,
             "created_at": time.time(),
@@ -2735,8 +2673,6 @@ class BotApp:
         library_key: str,
         folder_name: str,
         imdb_id: str = "",
-        metadata_provider: str = "",
-        metadata_provider_id: str = "",
     ) -> Path | None:
         """Return an existing final video without changing the library."""
         try:
@@ -2746,27 +2682,13 @@ class BotApp:
             return None
         candidates = [expected]
         wanted_id = str(imdb_id or "").strip().casefold()
-        wanted_provider = str(metadata_provider or "").strip().casefold()
-        wanted_provider_id = str(metadata_provider_id or "").strip().casefold()
-        if wanted_id or (wanted_provider and wanted_provider_id):
+        if wanted_id:
             try:
                 for folder in library.path.iterdir():
                     if not folder.is_dir() or folder == expected:
                         continue
                     match = IMDB_FOLDER_ID_RE.search(folder.name)
-                    anilist_match = ANILIST_FOLDER_ID_RE.search(folder.name)
-                    imdb_match = bool(
-                        wanted_id
-                        and match
-                        and match.group(1).casefold() == wanted_id
-                    )
-                    provider_match = bool(
-                        wanted_provider == "anilist"
-                        and wanted_provider_id
-                        and anilist_match
-                        and anilist_match.group(1).casefold() == wanted_provider_id
-                    )
-                    if imdb_match or provider_match:
+                    if match and match.group(1).casefold() == wanted_id:
                         candidates.append(folder)
             except OSError:
                 pass
@@ -2789,15 +2711,9 @@ class BotApp:
         library_key: str,
         folder_name: str,
         imdb_id: str = "",
-        metadata_provider: str = "",
-        metadata_provider_id: str = "",
     ) -> str | None:
         existing = self._movie_library_conflict_path(
-            library_key,
-            folder_name,
-            imdb_id,
-            metadata_provider,
-            metadata_provider_id,
+            library_key, folder_name, imdb_id
         )
         return (
             f"already in the library as {existing.name}"
@@ -2964,8 +2880,6 @@ class BotApp:
             movie_title=choice["title"],
             movie_year=choice.get("year"),
             imdb_id=choice.get("imdb_id") or None,
-            metadata_provider=choice.get("metadata_provider") or None,
-            metadata_provider_id=choice.get("metadata_provider_id") or None,
             status="awaiting_identification",
             overwrite_policy=None,
             error=None,
@@ -2973,11 +2887,7 @@ class BotApp:
         updated = self.store.get_item(int(item["pending_id"]), chat_id=chat_id)
         assert updated is not None
         existing = self._movie_library_conflict_path(
-            library.key,
-            folder_name,
-            str(choice.get("imdb_id") or ""),
-            str(choice.get("metadata_provider") or ""),
-            str(choice.get("metadata_provider_id") or ""),
+            library.key, folder_name, str(choice.get("imdb_id") or "")
         )
         if existing is not None and existing.parent.name != folder_name:
             folder_name = existing.parent.name
@@ -3056,50 +2966,38 @@ class BotApp:
             await self.send(chat_id, "This movie is no longer waiting for identification.")
             return
         try:
-            library = self.config.library(
-                str(item.get("library_key") or ""), "movie"
-            )
-            provider_label = self._provider_label(library)
             if not quiet:
                 await self.send(
-                    chat_id,
-                    f"Searching {provider_label} movies for: {_important(query)}",
+                    chat_id, f"Searching IMDb movies for: {_important(query)}"
                 )
-            results, source, provider_label = await self._search_metadata(
-                library, query, media_type="movie"
+            results, source = await self.imdb.search(
+                query, media_type="movie"
             )
         except Exception as exc:
-            provider_label = locals().get("provider_label", "metadata")
-            LOG.warning("Optional %s movie search failed: %s", provider_label, exc)
+            LOG.warning("Optional IMDb movie search failed: %s", exc)
             if manual_query:
                 await self._offer_manual_movie_fallback(
-                    chat_id,
-                    pending_id,
-                    query,
-                    f"{provider_label} search is unavailable: {exc}",
+                    chat_id, pending_id, query, f"IMDb search is unavailable: {exc}"
                 )
             else:
                 self.movie_manual_pending[chat_id] = pending_id
                 await self.send(
                     chat_id,
-                    f"{provider_label} filename search is unavailable: {exc}\n\n"
+                    f"IMDb filename search is unavailable: {exc}\n\n"
                     "Send the movie title manually. The bot will let you use that "
-                    f"exact name if {provider_label} remains unavailable.",
+                    "exact name if IMDb remains unavailable.",
                 )
             return
         if not results:
             if manual_query:
                 await self._offer_manual_movie_fallback(
-                    chat_id,
-                    pending_id,
-                    query,
-                    f"{provider_label} did not return a movie result.",
+                    chat_id, pending_id, query, "IMDb did not return a movie result."
                 )
             else:
                 self.movie_manual_pending[chat_id] = pending_id
                 await self.send(
                     chat_id,
-                    f"{provider_label} did not recognize the filename. Send the movie title "
+                    "IMDb did not recognize the filename. Send the movie title "
                     "manually, preferably with its year.",
                 )
             return
@@ -3112,7 +3010,7 @@ class BotApp:
             )
             if automatic is not None:
                 choice = self._movie_choice_from_result(
-                    pending_id, automatic, source, library
+                    pending_id, automatic, source
                 )
                 await self._confirm_movie_choice(
                     chat_id, choice, notify=False
@@ -3128,7 +3026,7 @@ class BotApp:
         for result in results:
             token = uuid.uuid4().hex[:16]
             self.movie_choices[token] = self._movie_choice_from_result(
-                pending_id, result, source, library
+                pending_id, result, source
             )
             rows.append([{
                 "text": (
@@ -3159,18 +3057,13 @@ class BotApp:
                 if item.get("movie_title")
                 else ""
             )
-            + f"Source: {provider_label} {source}",
+            + f"Source: {source}",
             {"inline_keyboard": rows},
         )
 
     async def _offer_manual_movie_fallback(
         self, chat_id: int, pending_id: int, query: str, reason: str
     ) -> None:
-        item = self._movie_item_for_chat(pending_id, chat_id)
-        library = self.config.library(
-            str((item or {}).get("library_key") or ""), "movie"
-        )
-        provider_label = self._provider_label(library)
         try:
             title, year, folder_name = self._manual_movie_identity(query)
         except ValueError as exc:
@@ -3187,10 +3080,8 @@ class BotApp:
             "title": title,
             "year": year,
             "imdb_id": "",
-            "metadata_provider": library.metadata_provider,
-            "metadata_provider_id": "",
             "folder_name": folder_name,
-            "source": f"Manual name ({provider_label} unavailable)",
+            "source": "Manual name (IMDb unavailable)",
             "created_at": time.time(),
         }
         self.movie_choices[token] = choice
@@ -3235,12 +3126,7 @@ class BotApp:
                 int(item["movie_year"]) == int(choice.get("year") or 0)
             )
             if not (same_title and same_year):
-                mismatch += "\n⚠️ The selected metadata identity differs from the detected title/year."
-        provider = str(choice.get("metadata_provider") or "imdb").casefold()
-        provider_label = "AniList" if provider == "anilist" else "IMDb"
-        provider_id = str(
-            choice.get("metadata_provider_id") or choice.get("imdb_id") or ""
-        )
+                mismatch += "\n⚠️ The selected IMDb identity differs from the detected title/year."
         await self.send(
             chat_id,
             "Confirm this movie identity:\n"
@@ -3248,7 +3134,7 @@ class BotApp:
             f"{detected}{mismatch}\n\n"
             f"Title: {_important(choice['title'])}\n"
             f"Year: {choice.get('year') or 'not specified'}\n"
-            f"{provider_label}: {provider_id or 'not available'}\n\n"
+            f"IMDb: {choice.get('imdb_id') or 'not available'}\n\n"
             f"Folder: {_important(choice['folder_name'])}\n"
             f"File: {_important(str(choice['folder_name']) + extension)}",
             {
@@ -3977,8 +3863,6 @@ class BotApp:
                     library_key,
                     str(item.get("target_folder") or ""),
                     str(item.get("imdb_id") or ""),
-                    str(item.get("metadata_provider") or ""),
-                    str(item.get("metadata_provider_id") or ""),
                 )
             else:
                 detected = self._series_episode_identity(item)
@@ -4898,36 +4782,24 @@ class BotApp:
     def _existing_series_result(
         self, library: MediaLibrary, results: list[dict]
     ) -> tuple[dict, str] | None:
-        """Match only the selected provider's best result to one folder."""
+        """Match only IMDb's best result to one reliable existing folder."""
         folders = self._safe_series_folders(library)
         if not folders:
             return None
 
         by_imdb: dict[str, list[Path]] = {}
-        by_anilist: dict[str, list[Path]] = {}
         by_name: dict[str, list[Path]] = {}
         for folder in folders:
             by_name.setdefault(folder.name.casefold(), []).append(folder)
             match = IMDB_FOLDER_ID_RE.search(folder.name)
             if match:
                 by_imdb.setdefault(match.group(1).casefold(), []).append(folder)
-            anilist_match = ANILIST_FOLDER_ID_RE.search(folder.name)
-            if anilist_match:
-                by_anilist.setdefault(
-                    anilist_match.group(1).casefold(), []
-                ).append(folder)
 
         # Provider IDs are authoritative, even if the folder was renamed later.
         # Lower-ranked search results never trigger automatic routing.
         for result in results[:1]:
             imdb_id = str(result.get("imdb_id") or "").casefold()
             matches = by_imdb.get(imdb_id, [])
-            if len(matches) == 1:
-                return result, matches[0].name
-            anilist_id = str(
-                result.get("provider_id") or result.get("anilist_id") or ""
-            ).casefold()
-            matches = by_anilist.get(anilist_id, [])
             if len(matches) == 1:
                 return result, matches[0].name
 
@@ -4960,13 +4832,6 @@ class BotApp:
     def _series_queue_entry(
         pending_id: int, identity: MediaIdentification, result: dict
     ) -> dict:
-        provider = str(result.get("provider") or "imdb").strip().casefold()
-        provider_id = str(
-            result.get("provider_id")
-            or result.get("anilist_id")
-            or result.get("imdb_id")
-            or ""
-        ).strip()
         return {
             "pending_id": pending_id,
             "series_title": str(result.get("title") or identity.title_query or ""),
@@ -4974,8 +4839,6 @@ class BotApp:
             "series_season": identity.season or 1,
             "series_episode": identity.episode,
             "imdb_id": str(result.get("imdb_id") or "") or None,
-            "metadata_provider": provider,
-            "metadata_provider_id": provider_id or None,
         }
 
     def _series_queue_choice(
@@ -5034,7 +4897,7 @@ class BotApp:
         identity: MediaIdentification,
         source: str,
     ) -> None:
-        """Use the AI title conservatively when metadata has no usable result."""
+        """Use the AI title conservatively when IMDb has no usable response."""
         fallback_name = str(identity.title_query or "").strip()
         if identity.year is not None:
             fallback_name = f"{fallback_name} ({identity.year})"
@@ -5053,8 +4916,6 @@ class BotApp:
             "year": identity.year,
             "folder_name": fallback_name,
             "imdb_id": "",
-            "provider": library.metadata_provider,
-            "provider_id": "",
         }
         existing = self._existing_series_result(library, [fallback_result])
         if existing is not None:
@@ -5098,7 +4959,7 @@ class BotApp:
         queue_item: dict | None = None
         if mode == "queue":
             if pending_id is None or identity is None:
-                raise ValueError("Queue metadata search requires an episode identity.")
+                raise ValueError("Queue IMDb search requires an episode identity.")
             queue_item = self._series_item_for_chat(pending_id, chat_id)
             if not queue_item or queue_item.get("status") != "awaiting_identification":
                 return
@@ -5117,15 +4978,9 @@ class BotApp:
             self._chat_setting(chat_id, "current_folder") if mode == "rename" else ""
         )
         try:
-            provider_label = self._provider_label(library)
             if mode != "queue":
-                await self.send(
-                    chat_id,
-                    f"Searching {provider_label} for: {_important(query)}",
-                )
-            results, source, provider_label = await self._search_metadata(
-                library, query, media_type="series"
-            )
+                await self.send(chat_id, f"Searching IMDb for: {_important(query)}")
+            results, source = await self.imdb.search(query, media_type="series")
             if not results:
                 if (
                     mode == "queue"
@@ -5137,14 +4992,14 @@ class BotApp:
                         library,
                         pending_id,
                         identity,
-                        f"AI title ({provider_label} returned no results)",
+                        "AI title (IMDb returned no results)",
                     )
                     return
                 await self._offer_manual_folder_fallback(
                     chat_id,
                     query,
                     mode,
-                    f"{provider_label} did not return any results.",
+                    "IMDb did not return any results.",
                     source_folder,
                     library.key,
                     pending_id,
@@ -5208,15 +5063,6 @@ class BotApp:
                     "series_season": identity.season if identity else None,
                     "series_episode": identity.episode if identity else None,
                     "imdb_id": result.get("imdb_id"),
-                    "metadata_provider": str(
-                        result.get("provider") or library.metadata_provider
-                    ),
-                    "metadata_provider_id": str(
-                        result.get("provider_id")
-                        or result.get("anilist_id")
-                        or result.get("imdb_id")
-                        or ""
-                    ),
                 }
                 title = str(result["title"])
                 year = result.get("year") or "?"
@@ -5235,19 +5081,12 @@ class BotApp:
             )
             await self.send(
                 chat_id,
-                f"{action_text}\nSource: {provider_label} {source}\n"
-                + (
-                    "Final folder format: AniList Title (Year)"
-                    if library.metadata_provider == "anilist"
-                    else "Final folder format: Title (Year) [imdbid-ID]"
-                ),
+                f"{action_text}\nSource: {source}\n"
+                "Final folder format: Title (Year) [imdbid-ID]",
                 {"inline_keyboard": rows},
             )
         except Exception as exc:
-            provider_label = locals().get(
-                "provider_label", self._provider_label(library)
-            )
-            LOG.warning("Optional %s search failed: %s", provider_label, exc)
+            LOG.warning("Optional IMDb fuzzy search failed: %s", exc)
             if mode == "queue" and pending_id is not None and identity is not None:
                 await self._route_series_ai_fallback(
                     chat_id,
@@ -5261,7 +5100,7 @@ class BotApp:
                 chat_id,
                 query,
                 mode,
-                f"Optional {provider_label} search is not available: {exc}",
+                f"Optional IMDb search is not available: {exc}",
                 source_folder,
                 library.key,
                 pending_id,
@@ -5290,7 +5129,7 @@ class BotApp:
                 },
             )
             return
-        source = choice.get("source", "Metadata search")
+        source = choice.get("source", "IMDb fuzzy search")
         action = (
             "Rename current folder"
             if choice["mode"] == "rename"
@@ -5333,17 +5172,12 @@ class BotApp:
             await self.send(chat_id, f"{reason}\nThe manual name is not valid either: {exc}")
             return
         token = uuid.uuid4().hex[:16]
-        selected_library = self.config.library(
-            library_key or self._selected_library(chat_id, "series").key,
-            "series",
-        )
-        provider_label = self._provider_label(selected_library)
         choice = {
             "chat_id": chat_id,
             "folder_name": manual_name,
             "mode": mode,
             "created_at": time.time(),
-            "source": f"Manual fallback ({provider_label} unavailable)",
+            "source": "Manual fallback (IMDb unavailable)",
             "source_folder": source_folder,
             "library_key": library_key
             or self._selected_library(chat_id, "series").key,
@@ -5352,8 +5186,6 @@ class BotApp:
             "series_year": identity.year if identity else None,
             "series_season": identity.season if identity else None,
             "series_episode": identity.episode if identity else None,
-            "metadata_provider": selected_library.metadata_provider,
-            "metadata_provider_id": "",
         }
         self.imdb_choices[token] = choice
         await self.send(

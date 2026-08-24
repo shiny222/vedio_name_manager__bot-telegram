@@ -80,7 +80,7 @@ class EnvironmentConfigTests(unittest.TestCase):
                 (root / "video-movies").resolve(),
             )
 
-    def test_adds_two_anilist_libraries_when_explicitly_configured(self) -> None:
+    def test_adds_two_anime_libraries_when_explicitly_configured(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             environment = {
@@ -99,15 +99,24 @@ class EnvironmentConfigTests(unittest.TestCase):
             with mock.patch.dict(os.environ, environment, clear=True):
                 config = load_config(create_from_example=False)
 
-            self.assertEqual(len(config.media_libraries), 6)
             self.assertEqual(
-                config.library("anime_series").metadata_provider, "anilist"
+                [library.key for library in config.media_libraries],
+                [
+                    "animation_series",
+                    "animation_movies",
+                    "video_series",
+                    "video_movies",
+                    "anime_series",
+                    "anime_movies",
+                ],
             )
             self.assertEqual(
-                config.library("anime_movies").metadata_provider, "anilist"
+                config.target_path("Anime Show", "anime_series").parent,
+                (root / "anime-series").resolve(),
             )
             self.assertEqual(
-                config.library("video_series").metadata_provider, "imdb"
+                config.movie_target_path("Anime Film", "anime_movies").parent,
+                (root / "anime-movies").resolve(),
             )
 
     def test_rejects_invalid_environment_boolean(self) -> None:

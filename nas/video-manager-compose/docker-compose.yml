@@ -41,9 +41,6 @@ services:
         source: ./data/fuzzy-search
         target: /app/fuzzy_search/data
       - type: bind
-        source: ./data/anilist-search
-        target: /app/anilist_search/data
-      - type: bind
         source: ./logs
         target: /app/logs
       - type: bind

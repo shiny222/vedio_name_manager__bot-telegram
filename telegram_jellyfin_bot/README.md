@@ -2,16 +2,14 @@
 
 This bot watches an allowed Telegram group or channel, queues video files,
 downloads them only after your command/confirmation, and can optionally call
-the separate series organizer, movie organizer, IMDb fuzzy-title tool, and
-AniList anime-title tool.
+the separate series organizer, movie organizer, and IMDb fuzzy-title tool.
 
 The bot is intentionally separate from the other tools:
 
 - `telegram_jellyfin_bot` downloads and manages the queue.
 - `organizer` sorts/renames files for Jellyfin.
 - `movie_organizer` safely imports one confirmed movie at a time.
-- `fuzzy_search` and `anilist_search` are optional and only help suggest
-  official folder names.
+- `fuzzy_search` is optional and only helps suggest official folder names.
 
 For the complete project architecture, Docker/NAS deployment, every
 configuration variable, updates, backups, and recovery, start at the root
@@ -228,8 +226,8 @@ file in staging, where `/movie_import ID` can retry it after you fix the problem
 - `/jellyfin_status` — test Jellyfin and show live scan state/progress.
 - `/episodes [NAME]` — show known and missing episodes for one series.
 - `/library_episodes` — show an episode summary for the whole library.
-- `/imdb_search NAME` — search the selected library provider (legacy command name).
-- `/imdb_fix_current [NAME]` — safely rename using IMDb or AniList for the selected library.
+- `/imdb_search NAME` — search IMDb for an official folder identity.
+- `/imdb_fix_current [NAME]` — safely rename the current folder using IMDb.
 - `/movie_mode` — choose a movie library and enter the movie flow.
 - `/series_mode` — choose a series library and enter the episode flow.
 - `/movie_current` — show the latest movie job and its status.

@@ -14,12 +14,12 @@ The system is built around six goals:
    send, review, and confirm. Repeated episodes should not require repeated
    folder selection.
 3. **Independent deterministic tools.** Series organization, movie import, and
-   IMDb and AniList search can each run without the Telegram bot.
+   IMDb search can each run without the Telegram bot.
 4. **No silent destructive action.** Existing media is not overwritten unless
    the user explicitly selects the overwrite policy.
 5. **Recoverability.** File moves have history and journals. Downloads have
    persistent queue state and `.part` files.
-6. **Optional network intelligence.** n8n/AI, IMDb, and AniList improve identification,
+6. **Optional network intelligence.** n8n/AI and IMDb improve identification,
    but manual operations remain available when either is unavailable.
 
 ## Components and responsibilities
@@ -30,7 +30,6 @@ The system is built around six goals:
 | Local Telegram Bot API | Receive Telegram API calls and download large Telegram files into local storage | Organize media or decide destinations |
 | n8n filename agent | Convert an untrusted filename/caption into a structured title/season/episode suggestion | Poll Telegram, see the media file, choose a library, or touch the filesystem |
 | `fuzzy_search` | Search IMDb for canonical title/year/ID candidates and cache successful exact queries | Move files or make the final user decision |
-| `anilist_search` | Search AniList for canonical anime title/year/ID candidates and cache successful exact queries | Move files or make the final user decision |
 | `organizer` | Detect episode numbers, create season layout, move/rename videos and subtitles, record history, undo/recover | Guess the series title from the release filename; the parent folder is trusted |
 | `movie_organizer` | Import one confirmed staged movie and subtitles into one Jellyfin movie folder; record/undo moves | Search IMDb or download Telegram files |
 | Jellyfin bridge | Trigger a library refresh and monitor the requested scheduled task | Install or configure Jellyfin |
@@ -74,7 +73,6 @@ mounts:
 - `/app/logs` — bot logs;
 - `/app/staging` — completed movies waiting for import or retry;
 - `/app/fuzzy_search/data` — IMDb cache;
-- `/app/anilist_search/data` — AniList cache;
 - `/media/animation-serise` — animated series library;
 - `/media/animation-movie` — animated movie library;
 - `/media/video-serise` — live-action series library;
@@ -179,9 +177,8 @@ undownloaded and expose manual/current-folder fallbacks.
 
 ### 4. Provider search and existing-folder matching
 
-The bot sends the suggested title to the provider assigned to the selected
-library. Animation/video libraries use the independent IMDb tool. Dedicated
-anime libraries use the independent AniList GraphQL tool.
+The bot sends the suggested title to the independent IMDb tool for every
+selected library, including the two dedicated anime libraries.
 The top result proposes the Jellyfin folder form:
 
 ```text
@@ -190,8 +187,7 @@ Official Title (Year) [imdbid-tt1234567]
 
 An existing folder is reused automatically only for conservative matches:
 
-- a unique exact IMDb ID for IMDb libraries;
-- an exact AniList title/year plus the stored AniList queue identity for anime libraries;
+- a unique exact IMDb ID;
 - an exact expected canonical folder name; or
 - a unique normalized title match, with year used to disambiguate duplicates.
 

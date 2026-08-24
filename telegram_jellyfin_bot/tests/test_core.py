@@ -2147,7 +2147,7 @@ class MenuNavigationTests(unittest.TestCase):
                 "Movies",
                 "Jellyfin",
                 "Episodes",
-                "Titles",
+                "IMDb",
             ],
         )
         commands = [item["command"] for item in BOT_COMMANDS]
@@ -2855,7 +2855,7 @@ class EpisodeCatalogTests(unittest.TestCase):
 
 
 class FolderSuggestionTests(unittest.TestCase):
-    def test_anime_library_uses_anilist_and_keeps_provider_identity(self):
+    def test_anime_library_uses_the_same_imdb_search_as_other_libraries(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
                 root = Path(td)
@@ -2866,14 +2866,12 @@ class FolderSuggestionTests(unittest.TestCase):
                         "name": "Anime Series",
                         "media_kind": "series",
                         "path": str(root / "anime-series"),
-                        "metadata_provider": "anilist",
                     },
                     {
                         "key": "anime_movies",
                         "name": "Anime Movies",
                         "media_kind": "movie",
                         "path": str(root / "anime-movies"),
-                        "metadata_provider": "anilist",
                     },
                 ]
                 data["default_library_key"] = "anime_series"
@@ -2885,34 +2883,29 @@ class FolderSuggestionTests(unittest.TestCase):
                 async def fake_send(chat_id, text, reply_markup=None):
                     return None
 
-                async def fake_anilist(query, limit=8, media_type="any"):
+                async def fake_imdb(query, limit=8, media_type="any"):
                     self.assertEqual(media_type, "series")
                     return ([{
-                        "provider": "anilist",
-                        "provider_id": "116674",
-                        "anilist_id": 116674,
-                        "imdb_id": "",
+                        "imdb_id": "tt14986406",
                         "title": "BLEACH: Thousand-Year Blood War",
                         "year": 2022,
-                        "type": "TV",
                         "score": 98.0,
-                        "folder_name": "BLEACH_ Thousand-Year Blood War (2022)",
+                        "folder_name": (
+                            "BLEACH_ Thousand-Year Blood War (2022) "
+                            "[imdbid-tt14986406]"
+                        ),
                     }], "online")
 
-                async def forbidden_imdb(*args, **kwargs):
-                    raise AssertionError("Anime libraries must not query IMDb")
-
                 app.send = fake_send
-                app.anilist.search = fake_anilist
-                app.imdb.search = forbidden_imdb
+                app.imdb.search = fake_imdb
                 try:
                     await app._run_imdb_search(1, "bleach tybw", "use")
                     choice = next(iter(app.imdb_choices.values()))
-                    self.assertEqual(choice["metadata_provider"], "anilist")
-                    self.assertEqual(choice["metadata_provider_id"], "116674")
+                    self.assertEqual(choice["imdb_id"], "tt14986406")
                     self.assertEqual(
                         choice["folder_name"],
-                        "BLEACH_ Thousand-Year Blood War (2022)",
+                        "BLEACH_ Thousand-Year Blood War (2022) "
+                        "[imdbid-tt14986406]",
                     )
                 finally:
                     app.store.close()
@@ -3021,7 +3014,7 @@ class FolderSuggestionTests(unittest.TestCase):
                     )
                     self.assertEqual(rename_calls, [])
                     self.assertTrue(
-                        any("changed after this title search" in text for text in sent)
+                        any("changed after this IMDb search" in text for text in sent)
                     )
                 finally:
                     app.store.close()

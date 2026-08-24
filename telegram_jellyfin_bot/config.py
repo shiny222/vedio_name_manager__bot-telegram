@@ -60,7 +60,6 @@ def _environment_config() -> dict[str, Any]:
             ).strip(),
             "media_kind": "series",
             "path": animation_series,
-            "metadata_provider": "imdb",
         },
         {
             "key": "animation_movies",
@@ -69,7 +68,6 @@ def _environment_config() -> dict[str, Any]:
             ).strip(),
             "media_kind": "movie",
             "path": animation_movie,
-            "metadata_provider": "imdb",
         },
         {
             "key": "video_series",
@@ -78,7 +76,6 @@ def _environment_config() -> dict[str, Any]:
             ).strip(),
             "media_kind": "series",
             "path": video_series,
-            "metadata_provider": "imdb",
         },
         {
             "key": "video_movies",
@@ -87,7 +84,6 @@ def _environment_config() -> dict[str, Any]:
             ).strip(),
             "media_kind": "movie",
             "path": video_movie,
-            "metadata_provider": "imdb",
         },
     ]
     if anime_series:
@@ -99,7 +95,6 @@ def _environment_config() -> dict[str, Any]:
                 ).strip(),
                 "media_kind": "series",
                 "path": anime_series,
-                "metadata_provider": "anilist",
             }
         )
     if anime_movie:
@@ -111,7 +106,6 @@ def _environment_config() -> dict[str, Any]:
                 ).strip(),
                 "media_kind": "movie",
                 "path": anime_movie,
-                "metadata_provider": "anilist",
             }
         )
     has_multi_library_env = any(
@@ -270,13 +264,6 @@ def _environment_config() -> dict[str, Any]:
         "fuzzy_search_timeout_seconds": int(
             os.environ.get("FUZZY_SEARCH_TIMEOUT_SECONDS", "20")
         ),
-        "anilist_search_command": [
-            python,
-            str(PROJECT_ROOT / "anilist_search" / "anilist_tool.py"),
-        ],
-        "anilist_search_timeout_seconds": int(
-            os.environ.get("ANILIST_SEARCH_TIMEOUT_SECONDS", "20")
-        ),
         "n8n_agent_enabled": _env_bool("N8N_AGENT_ENABLED", False),
         "n8n_agent_url": os.environ.get(
             "N8N_AGENT_URL", "http://n8n:5678/webhook/media-identify"
@@ -306,7 +293,6 @@ class MediaLibrary:
     name: str
     media_kind: str
     path: Path
-    metadata_provider: str = "imdb"
 
 
 @dataclass(frozen=True)
@@ -348,8 +334,6 @@ class Config:
     jellyfin_scan_monitor_timeout_seconds: int
     fuzzy_search_command: list[str]
     fuzzy_search_timeout_seconds: int
-    anilist_search_command: list[str]
-    anilist_search_timeout_seconds: int
     n8n_agent_enabled: bool
     n8n_agent_url: str
     n8n_agent_secret: str
@@ -490,17 +474,6 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
         isinstance(x, str) for x in fuzzy_search_command
     ):
         raise ValueError("fuzzy_search_command must be a list of arguments.")
-    anilist_search_command = raw.get(
-        "anilist_search_command",
-        [
-            sys.executable,
-            str(PROJECT_ROOT / "anilist_search" / "anilist_tool.py"),
-        ],
-    )
-    if not isinstance(anilist_search_command, list) or not all(
-        isinstance(x, str) for x in anilist_search_command
-    ):
-        raise ValueError("anilist_search_command must be a list of arguments.")
     default_folder = str(raw.get("default_target_folder", "")).strip()
     raw_libraries = raw.get("media_libraries")
     libraries: list[MediaLibrary] = []
@@ -514,9 +487,6 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
             key = str(entry.get("key", "")).strip()
             name = str(entry.get("name", "")).strip()
             media_kind = str(entry.get("media_kind", "")).strip().casefold()
-            metadata_provider = str(
-                entry.get("metadata_provider", "imdb")
-            ).strip().casefold()
             path_text = str(entry.get("path", "")).strip()
             if not re.fullmatch(r"[a-z0-9_]{1,40}", key):
                 raise ValueError(
@@ -528,10 +498,6 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
                 raise ValueError(
                     f"Library {key!r} needs name, media_kind (series/movie), and path."
                 )
-            if metadata_provider not in {"imdb", "anilist"}:
-                raise ValueError(
-                    f"Library {key!r} metadata_provider must be imdb or anilist."
-                )
             seen_keys.add(key)
             libraries.append(
                 MediaLibrary(
@@ -539,7 +505,6 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
                     name,
                     media_kind,
                     _path(path_text, base),
-                    metadata_provider,
                 )
             )
     if not libraries:
@@ -639,10 +604,6 @@ def load_config(path: Path | None = None, create_from_example: bool = True) -> C
                     raw.get("organisation_timeout_seconds", 20),
                 )
             ),
-        ),
-        anilist_search_command=anilist_search_command,
-        anilist_search_timeout_seconds=max(
-            2, int(raw.get("anilist_search_timeout_seconds", 20))
         ),
         n8n_agent_enabled=bool(raw.get("n8n_agent_enabled", False)),
         n8n_agent_url=str(raw.get("n8n_agent_url", "")).strip(),

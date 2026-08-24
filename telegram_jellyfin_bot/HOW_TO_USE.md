@@ -69,8 +69,8 @@ workflow. The AI suggests:
 - movie title and year; or
 - series title, season, and episode.
 
-The bot then uses IMDb for Animation/Video libraries or AniList for Anime
-libraries to find the official Jellyfin folder identity. If a reliable provider
+The bot then uses IMDb in all six libraries to find the official Jellyfin
+folder identity. If a reliable IMDb
 ID or unique exact-title match already exists in
 the selected library, the bot uses that folder automatically. A new series is
 confirmed once and all matching queued episodes share that answer. The AI does
@@ -171,7 +171,7 @@ destination.
 | One or several movies | Batches the status, automatically accepts exact high-confidence title/year matches, and asks only for uncertain items |
 | A movie or episode already in the library/queue | Shows both files and asks Replace or Cancel before transfer |
 | A destination file already exists | Stops that item for `skip`, `save_with_suffix`, or explicit `overwrite` |
-| n8n, IMDb, or AniList is unavailable | Keeps the item safe in the queue and offers manual tools instead of guessing |
+| n8n or IMDb is unavailable | Keeps the item safe in the queue and offers manual tools instead of guessing |
 
 Do not mix movies and episodes under one selected library. Choose the correct
 movie or series library first; selecting the library automatically changes
@@ -292,9 +292,8 @@ sort undo restores the previous media.
 - `/fix_metadata_current` — rename only matched episode NFO/artwork sidecars.
 - `/sort_status` — show retained sorter diagnostics.
 - `/episodes [NAME]`, `/library_episodes` — episode inventory.
-- `/imdb_search NAME`, `/imdb_fix_current [NAME]` — legacy command names for
-  manual provider search. They use AniList in Anime libraries and IMDb in the
-  other libraries.
+- `/imdb_search NAME`, `/imdb_fix_current [NAME]` — manually search IMDb or
+  correct the current folder using IMDb.
 
 ### History, movies, and Jellyfin
 
@@ -375,8 +374,8 @@ Advanced submenus. In channels, copy the template, paste it, and add the value.
 
 پس از فعال شدن اتصال AI، ربات فقط نام فایل، کپشن اختیاری، نوع رسانه و کلید
 کتابخانه انتخاب‌شده را برای تشخیص به n8n می‌فرستد. نتیجه پیشنهادی شامل نام و
-سال فیلم یا نام سریال و شماره فصل و قسمت است. سپس ربات برای کتابخانه‌های
-Animation/Video از IMDb و برای کتابخانه‌های Anime از AniList استفاده می‌کند
+سال فیلم یا نام سریال و شماره فصل و قسمت است. سپس ربات برای هر شش کتابخانه
+از IMDb استفاده می‌کند
 تا نام رسمی مناسب Jellyfin را پیدا کند. هوش مصنوعی اجازه دانلود، جابه‌جایی،
 تغییر نام، حذف یا اسکن را ندارد.
 
@@ -420,7 +419,7 @@ Animation/Video از IMDb و برای کتابخانه‌های Anime از AniLi
 
 - اگر درست بود تأیید کنید.
 - اگر اطلاعات کافی نبود، ربات باید فقط یک سؤال کوتاه بپرسد.
-- اگر AI، IMDb یا AniList در دسترس نبود، نام دستی را وارد کنید یا **پیشرفته** را باز
+- اگر AI یا IMDb در دسترس نبود، نام دستی را وارد کنید یا **پیشرفته** را باز
   کنید. خرابی سرویس نباید کتابخانه دیگری را خودکار انتخاب کند.
 
 دو نوع تأیید جدا وجود دارد:
@@ -466,7 +465,7 @@ dry-run را اجرا می‌کند و فقط در صورت موفقیت، تغ�
 | یک یا چند فیلم | خلاصه دسته‌ای، پذیرش خودکار تطبیق دقیق و مطمئن نام/سال، و سؤال فقط برای موارد نامطمئن |
 | فیلم یا قسمت موجود در کتابخانه یا صف | نمایش هر دو فایل و پرسش جایگزینی یا لغو پیش از انتقال |
 | فایل مقصد موجود است | توقف همان مورد برای `skip`، `save_with_suffix` یا `overwrite` صریح |
-| n8n، IMDb یا AniList قطع است | عدم حدس زدن و ارائه روش دستی پیش از دانلود |
+| n8n یا IMDb قطع است | عدم حدس زدن و ارائه روش دستی پیش از دانلود |
 
 فیلم و قسمت سریال را زیر یک کتابخانه انتخاب‌شده مخلوط نکنید. ابتدا کتابخانه
 درست فیلم یا سریال را انتخاب کنید؛ انتخاب کتابخانه حالت را نیز تغییر می‌دهد.
@@ -566,8 +565,8 @@ dry-run را اجرا می‌کند و فقط در صورت موفقیت، تغ�
 - `/resort_current` اصلاح نام قسمت‌های قبلی بعد از اصلاح نام پوشه.
 - `/fix_metadata_current` اصلاح فقط NFO و تصویرهای قسمت قابل تطبیق.
 - `/sort_status` جزئیات مرتب‌ساز؛ `/episodes [NAME]` و `/library_episodes` موجودی.
-- `/imdb_search NAME` و `/imdb_fix_current [NAME]` نام‌های قدیمی فرمان جستجوی
-  دستی هستند؛ در کتابخانه Anime از AniList و در بقیه از IMDb استفاده می‌کنند.
+- `/imdb_search NAME` و `/imdb_fix_current [NAME]` برای جستجوی دستی IMDb و
+  اصلاح پوشه فعلی با IMDb هستند.
 
 ### تاریخچه، فیلم و Jellyfin
 

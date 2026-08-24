@@ -145,6 +145,44 @@ class SortRevisionTests(unittest.TestCase):
             "Correct Official Title",
         )
 
+    def test_episode_override_keeps_real_source_name_in_undo_history(self):
+        with tempfile.TemporaryDirectory() as td:
+            library = Path(td) / "Library"
+            series = library / "Correct Show (2026) [imdbid-tt1234567]"
+            series.mkdir(parents=True)
+            original = series / "[Group] unusual release name [720p].mkv"
+            original.write_bytes(b"episode")
+            original_full_path = original.resolve()
+
+            override = {original.name: (2, 5)}
+            self.assertEqual(
+                organizer.run_organizer(
+                    series, dry_run=True, episode_overrides=override
+                ),
+                0,
+            )
+            self.assertTrue(original.exists())
+
+            self.assertEqual(
+                organizer.run_organizer(series, episode_overrides=override),
+                0,
+            )
+            destination = series / "Season 02" / "Correct Show - S02E05.mkv"
+            self.assertTrue(destination.exists())
+            history = json.loads(
+                (destination.parent / organizer.HISTORY_NAME).read_text(
+                    encoding="utf-8"
+                )
+            )
+            record = history[-1]
+            self.assertEqual(record["original_filename"], original.name)
+            self.assertEqual(Path(record["original_full_path"]), original_full_path)
+            self.assertEqual(Path(record["new_full_path"]), destination.resolve())
+
+            self.assertEqual(organizer.undo_last(library), 0)
+            self.assertTrue(original.exists())
+            self.assertFalse(destination.exists())
+
     def test_existing_resort_and_simple_back_forward(self):
         with tempfile.TemporaryDirectory() as td:
             series = Path(td) / "Correct Show (2026) [imdbid-tt123]"

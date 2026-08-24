@@ -65,8 +65,6 @@ class StateStore:
                     series_episode INTEGER,
                     download_filename TEXT,
                     imdb_id TEXT,
-                    metadata_provider TEXT,
-                    metadata_provider_id TEXT,
                     movie_batch_id TEXT,
                     status TEXT NOT NULL DEFAULT 'queued',
                     error TEXT,
@@ -108,8 +106,6 @@ class StateStore:
                 "series_episode": "INTEGER",
                 "download_filename": "TEXT",
                 "imdb_id": "TEXT",
-                "metadata_provider": "TEXT",
-                "metadata_provider_id": "TEXT",
                 "movie_batch_id": "TEXT",
             }
             for name, declaration in migrations.items():
@@ -377,9 +373,8 @@ class StateStore:
                       message_id,chat_id,file_id,file_unique_id,original_filename,
                       file_size,received_at,target_folder,library_key,media_kind,movie_title,
                       movie_year,series_title,series_year,series_season,series_episode,
-                      download_filename,imdb_id,metadata_provider,metadata_provider_id,
-                      movie_batch_id,status,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                      download_filename,imdb_id,movie_batch_id,status,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         values["message_id"], values["chat_id"], values["file_id"],
@@ -396,8 +391,6 @@ class StateStore:
                         values.get("series_episode"),
                         values.get("download_filename") or None,
                         values.get("imdb_id") or None,
-                        values.get("metadata_provider") or None,
-                        values.get("metadata_provider_id") or None,
                         values.get("movie_batch_id") or None,
                         values.get("status", "queued"), now, now,
                     ),

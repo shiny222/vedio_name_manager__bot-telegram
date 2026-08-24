@@ -203,9 +203,8 @@ libraries in the dashboard:
 - **Anime Series** — content type **Shows**, folder `/anime-series`;
 - **Anime Movies** — content type **Movies**, folder `/anime-movie`.
 
-Enable/prioritize the AniList metadata provider for the Anime Series library.
-The bot uses AniList's official title/year, but Jellyfin's own enabled plugins
-remain responsible for downloading posters and metadata. Do not use a Mixed
+The bot uses IMDb for title identification in all six libraries. Jellyfin's
+own enabled plugins remain responsible for downloading posters and metadata. Do not use a Mixed
 library: separate Shows and Movies roots give Jellyfin the correct scanner and
 episode rules.
 
