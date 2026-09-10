@@ -2086,11 +2086,50 @@ class BotApp:
             chat_id, f"Identifying {len(items)} movie(s)…"
         )
         status_message_id = self._sent_message_id(status_result)
-
-        # Free AI endpoints are commonly rate-limited, so identify sequentially.
+        resolution_cache: dict[tuple[str, str], tuple[list[dict], str]] = {}
+        groups: dict[tuple[str, int | None], list[dict]] = {}
+        unresolved: list[tuple[int, str]] = []
         for pending_id, caption in items:
+            item = self._movie_item_for_chat(int(pending_id), chat_id)
+            if not item:
+                continue
+            query = movie_query_from_filename(str(item["original_filename"]))
+            try:
+                title, year, _ = self._manual_movie_identity(query)
+            except ValueError:
+                title, year = "", None
+            if not title or title.casefold().startswith("telegram_video_"):
+                unresolved.append((int(pending_id), str(caption)))
+                continue
+            groups.setdefault((_normalized_title(title), year), []).append({
+                "pending_id": int(pending_id),
+                "movie_title": title,
+                "movie_year": year,
+            })
+
+        for group_entries in groups.values():
+            representative = group_entries[0]
+            identity = MediaIdentification(
+                title_query=str(representative["movie_title"]),
+                season=None, episode=None,
+                year=representative.get("movie_year"),
+                confidence=1.0, needs_user_input=False, question=None,
+            )
+            await self._run_movie_search(
+                chat_id,
+                int(representative["pending_id"]),
+                str(representative["movie_title"])
+                + (f" {representative['movie_year']}" if representative.get("movie_year") else ""),
+                manual_query=False,
+                ai_identity=identity,
+                quiet=True,
+                group_entries=group_entries,
+                resolution_cache=resolution_cache,
+            )
+        # AI remains a fallback only for files whose local title extraction failed.
+        for pending_id, caption in unresolved:
             await self._run_ai_movie_identification(
-                chat_id, int(pending_id), str(caption), quiet=True
+                chat_id, pending_id, caption, quiet=True
             )
 
         ready_items: list[dict] = []
@@ -2762,9 +2801,10 @@ class BotApp:
 
     @staticmethod
     def _movie_choice_from_result(
-        pending_id: int, result: dict, source: str
+        pending_id: int, result: dict, source: str,
+        group_entries: list[dict] | None = None,
     ) -> dict:
-        return {
+        choice = {
             "pending_id": pending_id,
             "title": str(result["title"]),
             "year": result.get("year"),
@@ -2773,6 +2813,9 @@ class BotApp:
             "source": source,
             "created_at": time.time(),
         }
+        if group_entries:
+            choice["group_entries"] = group_entries
+        return choice
 
     def _movie_library_conflict_path(
         self,
@@ -2975,7 +3018,10 @@ class BotApp:
     async def _confirm_movie_choice(
         self, chat_id: int, choice: dict, *, notify: bool = True
     ) -> bool:
-        item = self._movie_item_for_chat(int(choice["pending_id"]), chat_id)
+        entries = choice.get("group_entries")
+        if not isinstance(entries, list) or not entries:
+            entries = [{"pending_id": int(choice["pending_id"])}]
+        item = self._movie_item_for_chat(int(entries[0]["pending_id"]), chat_id)
         if not item or item.get("status") != "awaiting_identification":
             if notify:
                 await self.send(chat_id, "This movie is no longer waiting for a name.")
@@ -2988,50 +3034,48 @@ class BotApp:
         except ValueError as exc:
             await self.send(chat_id, f"Could not prepare the movie destination: {exc}")
             return False
-        self.store.update_item(
-            int(item["pending_id"]),
-            target_folder=folder_name,
-            movie_title=choice["title"],
-            movie_year=choice.get("year"),
-            imdb_id=choice.get("imdb_id") or None,
-            status="awaiting_identification",
-            overwrite_policy=None,
-            error=None,
-        )
-        updated = self.store.get_item(int(item["pending_id"]), chat_id=chat_id)
-        assert updated is not None
-        existing = self._movie_library_conflict_path(
-            library.key, folder_name, str(choice.get("imdb_id") or "")
-        )
-        if existing is not None and existing.parent.name != folder_name:
-            folder_name = existing.parent.name
+        queued_count = 0
+        for entry in entries:
+            pending_id = int(entry.get("pending_id") or 0)
+            current = self._movie_item_for_chat(pending_id, chat_id)
+            if not current or current.get("status") != "awaiting_identification":
+                continue
             self.store.update_item(
-                int(item["pending_id"]), target_folder=folder_name
+                pending_id, target_folder=folder_name,
+                movie_title=choice["title"], movie_year=choice.get("year"),
+                imdb_id=choice.get("imdb_id") or None,
+                status="awaiting_identification", overwrite_policy=None, error=None,
             )
-            updated["target_folder"] = folder_name
-        queued = self._movie_queue_conflict_item(
-            chat_id, int(item["pending_id"]), updated, library.key
-        )
+            updated = self.store.get_item(pending_id, chat_id=chat_id)
+            assert updated is not None
+            item_folder_name = folder_name
+            existing = self._movie_library_conflict_path(
+                library.key, folder_name, str(choice.get("imdb_id") or "")
+            )
+            if existing is not None and existing.parent.name != folder_name:
+                item_folder_name = existing.parent.name
+                self.store.update_item(pending_id, target_folder=item_folder_name)
+                updated["target_folder"] = item_folder_name
+            queued = self._movie_queue_conflict_item(chat_id, pending_id, updated, library.key)
+            if existing is not None or queued is not None:
+                await self._hold_for_library_conflict(chat_id, updated, existing=existing, queued=queued)
+                continue
+            self.store.update_item(pending_id, status="queued", error=None)
+            queued_count += 1
         self.movie_choices = {
             token: saved
             for token, saved in self.movie_choices.items()
-            if int(saved.get("pending_id") or 0) != int(item["pending_id"])
+            if int(saved.get("pending_id") or 0) not in {
+                int(entry.get("pending_id") or 0) for entry in entries
+            }
         }
-        if existing is not None or queued is not None:
-            await self._hold_for_library_conflict(
-                chat_id, updated, existing=existing, queued=queued
-            )
-            return False
-        self.store.update_item(
-            int(item["pending_id"]), status="queued", error=None
-        )
-        if notify:
+        if notify and queued_count:
             await self.send(
                 chat_id,
-                f"✅ Movie ready: {_important(folder_name)}\n\nNext: /download",
+                f"✅ {queued_count} movie(s) ready: {_important(folder_name)}\n\nNext: /download",
                 MOVIE_MENU,
             )
-        return True
+        return bool(queued_count)
 
     @staticmethod
     def _manual_movie_identity(query: str) -> tuple[str, int | None, str]:
@@ -3074,6 +3118,8 @@ class BotApp:
         manual_query: bool,
         ai_identity: MediaIdentification | None = None,
         quiet: bool = False,
+        group_entries: list[dict] | None = None,
+        resolution_cache: dict[tuple[str, str], tuple[list[dict], str]] | None = None,
     ) -> None:
         item = self._movie_item_for_chat(pending_id, chat_id)
         if not item or item.get("status") != "awaiting_identification":
@@ -3084,9 +3130,14 @@ class BotApp:
                 await self.send(
                     chat_id, f"Searching IMDb movies for: {_important(query)}"
                 )
-            results, source = await self.imdb.search(
-                query, media_type="movie"
-            )
+            cache_key = (_normalized_title(str(ai_identity.title_query if ai_identity else query)), "movie")
+            cached = resolution_cache.get(cache_key) if resolution_cache is not None else None
+            if cached is None:
+                results, source = await self.imdb.search(query, media_type="movie")
+                if resolution_cache is not None and results:
+                    resolution_cache[cache_key] = (results, source)
+            else:
+                results, source = cached
         except Exception as exc:
             LOG.warning("Optional IMDb movie search failed: %s", exc)
             if manual_query:
@@ -3124,7 +3175,7 @@ class BotApp:
             )
             if automatic is not None:
                 choice = self._movie_choice_from_result(
-                    pending_id, automatic, source
+                    pending_id, automatic, source, group_entries
                 )
                 await self._confirm_movie_choice(
                     chat_id, choice, notify=False
@@ -3140,7 +3191,7 @@ class BotApp:
         for result in results:
             token = uuid.uuid4().hex[:16]
             self.movie_choices[token] = self._movie_choice_from_result(
-                pending_id, result, source
+                pending_id, result, source, group_entries
             )
             rows.append([{
                 "text": (
