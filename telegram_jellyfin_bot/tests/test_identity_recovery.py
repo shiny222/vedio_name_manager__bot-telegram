@@ -82,18 +82,32 @@ class IdentityRecoveryTests(unittest.IsolatedAsyncioTestCase):
         item = await self.route()
         self.assertEqual(item["status"], "awaiting_identification")
 
-    async def test_ai_missing_year_or_low_confidence_never_calls_imdb(self):
+    async def test_ai_missing_year_or_low_confidence_continues_to_imdb(self):
         pending = self.queue()
         self.app.ai_identifier = AsyncMock()
         self.app.imdb = AsyncMock()
-        for year, confidence in ((None, 0.99), (2025, 0.4)):
+        self.app.imdb.search.return_value = ([self.result], "test")
+        for year, confidence in ((None, 0.99), (2025, 0.4), (None, 0.0)):
             with self.subTest(year=year, confidence=confidence):
+                self.app.store.update_item(pending, status="awaiting_identification", target_folder=None)
+                self.app.imdb.search.reset_mock()
                 self.app.ai_identifier.identify.return_value = MediaIdentification(
                     "Example", 1, 1, year, confidence, False, None)
                 await self.app._run_ai_series_identification(self.chat, pending)
-                self.app.imdb.search.assert_not_called()
-                self.assertEqual(self.app.store.get_item(pending)["status"], "awaiting_identification")
-                self.assertEqual(list(self.cfg.library("series", "series").path.iterdir()), [])
+                self.app.imdb.search.assert_awaited_once_with(
+                    "Example" if year is None else "Example 2025", media_type="series")
+                self.assertEqual(self.app.store.get_item(pending)["status"], "queued")
+
+    async def test_movie_ai_missing_year_and_low_confidence_continues(self):
+        pending = self.queue("movie")
+        self.app.ai_identifier = AsyncMock()
+        self.app.ai_identifier.identify.return_value = MediaIdentification(
+            "Example", None, None, None, 0.0, False, None)
+        self.app.imdb = AsyncMock()
+        self.app.imdb.search.return_value = ([self.result], "test")
+        await self.app._run_ai_movie_identification(self.chat, pending)
+        self.app.imdb.search.assert_awaited_once()
+        self.assertEqual(self.app.store.get_item(pending)["status"], "queued")
 
     async def test_manual_name_creates_without_id_and_without_imdb(self):
         pending = self.queue()

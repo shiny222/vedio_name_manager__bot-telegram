@@ -315,10 +315,10 @@ NORMAL WORKFLOW — AI ASSISTED
    ID remains attached to that movie/episode while you review the batch. Press
    Remove one item (or send /remove), reply with its ID, then reopen /download.
    After /confirm_download starts the batch, the next batch starts at 1. A
-   missing AI year or confidence below 85% stops identification. If IMDb is
+   missing AI year or low AI confidence does not block processing. If IMDb is
    unavailable, the extracted name can be used without an ID; partial folder
    matches still require confirmation.
-   Movies with an exact high-confidence AI/IMDb title and year are queued
+   Movies with a matching AI/IMDb title and consistent available years are queued
    automatically only when a clear year in the filename also agrees.
    Ambiguous/year-mismatched movies still ask. A movie or episode identity
    already in the library/queue shows both filenames and asks Replace or Cancel
@@ -392,9 +392,9 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
    می‌دهد و هر فایل یک شناسه موقت همان دسته دارد که هنگام بررسی ثابت می‌ماند.
    دکمه حذف یک مورد یا /remove را بزنید، شناسه را بفرستید و /download را دوباره
    باز کنید. پس از شروع دسته با /confirm_download، دسته بعدی دوباره از ۱ شروع
-   می‌شود. نبود سال AI یا اطمینان کمتر از ۸۵٪ پردازش را متوقف می‌کند.
+   می‌شود. نبود سال AI یا اطمینان پایین مانع ادامه پردازش نمی‌شود.
    اگر IMDb در دسترس نباشد، نام بدون شناسه استفاده می‌شود؛ تطبیق ناقص تأیید می‌خواهد.
-   فیلم با نام و سال دقیق و اطمینان بالای AI/IMDb خودکار آماده می‌شود؛ نتیجه
+   فیلم با نام مطابق و سال‌های موجود سازگار خودکار آماده می‌شود؛ نتیجه
    مبهم یا سال ناسازگار سؤال می‌پرسد و سال واضح نام فایل نیز باید برابر باشد.
    اگر هویت فیلم یا قسمت از قبل در کتابخانه/صف باشد، نام هر دو فایل نمایش داده
    می‌شود و پیش از دانلود جایگزینی یا لغو می‌پرسد. جایگزینی، فایل قدیمی را برای
@@ -2195,10 +2195,6 @@ class BotApp:
             )
             return
 
-        if result.year is None or not result.confidence >= 0.85:
-            await self.send(chat_id, "AI year is missing or confidence is too low. This movie remains unchanged.")
-            return
-
         if result.needs_user_input or not result.title_query:
             self.movie_manual_pending[chat_id] = pending_id
             await self.send(
@@ -2420,10 +2416,6 @@ class BotApp:
                 "Choose manual details or use the current folder.",
                 self._series_identification_markup(pending_id),
             )
-            return
-
-        if result.year is None or not result.confidence >= 0.85:
-            await self.send(chat_id, "AI year is missing or confidence is too low. This episode remains unchanged.")
             return
 
         await self._continue_series_identification(chat_id, pending_id, result)
@@ -2659,12 +2651,8 @@ class BotApp:
         results: list[dict],
         filename_year: int | None = None,
     ) -> dict | None:
-        """Accept only an exact, high-confidence top result without a click."""
-        if (
-            not results
-            or not identity.confidence >= 0.85
-            or identity.year is None
-        ):
+        """Check the search result using available identity values, not AI confidence."""
+        if not results:
             return None
         result = results[0]
         if _normalized_title(str(result.get("title") or "")) != _normalized_title(
@@ -2677,12 +2665,13 @@ class BotApp:
             return None
         if not score >= 90:
             return None
+        # Unknown years do not block processing. Compare only supplied years.
+        years = [year for year in (identity.year, result.get("year"), filename_year)
+                 if year is not None]
         try:
-            if int(result.get("year")) != int(identity.year):
+            if len({int(year) for year in years}) > 1:
                 return None
         except (TypeError, ValueError):
-            return None
-        if filename_year is not None and int(identity.year) != filename_year:
             return None
         return result
 

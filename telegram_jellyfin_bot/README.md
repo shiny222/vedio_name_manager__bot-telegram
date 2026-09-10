@@ -132,7 +132,7 @@ The main menu separates routine use from maintenance:
   chat until explicitly changed, and AI is never allowed to select it. A short
   burst of episodes or movies is handled as one compact batch. Mixed series are
   routed independently; an existing reliable series match is automatic, while
-  a verified new series folder is created automatically; partial identity matches ask for confirmation. An exact high-confidence movie
+  a verified new series folder is created automatically; partial identity matches ask for confirmation. A matching movie
   title/year match is automatic; uncertain or inconsistent matches still ask.
   Series files are first downloaded under their unchanged Telegram filenames.
   The organizer receives AI season/episode data separately, performs a dry-run,
@@ -155,7 +155,7 @@ Movie mode is independent of the currently selected series folder:
 1. Send `/libraries` and choose the correct movie library. `/movie_mode` opens
    only the movie-library choices.
 2. Send one movie or a short burst of movies.
-3. With AI enabled, exact high-confidence IMDb title/year matches are queued
+3. With AI enabled, IMDb title matches with consistent available years are queued
    automatically and shown in one summary. If the title/year is ambiguous or
    inconsistent, select the correct result or enter the name manually. A clear
    year in the incoming filename must also match before automatic acceptance.
