@@ -50,6 +50,7 @@ if __package__ in {None, ""}:
     )
     from telegram_jellyfin_bot.queue_manager import QueueManager
     from telegram_jellyfin_bot.sorter_bridge import SorterBridge
+    from telegram_jellyfin_bot.series_grouping import group_series_filenames
     from telegram_jellyfin_bot.state_store import StateStore
     from telegram_jellyfin_bot.utils import (
         format_size, sanitize_folder_name, setup_logging, validate_original_filename
@@ -71,6 +72,7 @@ else:
     )
     from .queue_manager import QueueManager
     from .sorter_bridge import SorterBridge
+    from .series_grouping import group_series_filenames
     from .state_store import StateStore
     from .utils import format_size, sanitize_folder_name, setup_logging, validate_original_filename
 
@@ -2292,11 +2294,59 @@ class BotApp:
         )
         status_message_id = self._sent_message_id(status_result)
 
-        # Free AI endpoints are commonly rate-limited. Sequential requests keep
-        # a multi-episode Telegram upload reliable while still batching its UI.
-        for pending_id, caption in items:
-            await self._run_ai_series_identification(
-                chat_id, int(pending_id), str(caption)
+        # Parse and group locally first. IMDb identifies the show/movie, while
+        # season and episode remain properties of each queued file.
+        groups = group_series_filenames([
+            str((self.store.get_item(int(pending_id), chat_id=chat_id) or {}).get("original_filename") or "")
+            for pending_id, _ in items
+        ])
+        item_by_filename = {
+            str((self.store.get_item(int(pending_id), chat_id=chat_id) or {}).get("original_filename") or "").casefold():
+            (int(pending_id), str(caption))
+            for pending_id, caption in items
+        }
+        for group in groups:
+            entries: list[dict] = []
+            representative: tuple[int, str] | None = None
+            for parsed in group.files:
+                item = item_by_filename.get(parsed.filename.casefold())
+                if not item:
+                    continue
+                pending_id, caption = item
+                current = self._series_item_for_chat(pending_id, chat_id)
+                if not current or current.get("status") != "awaiting_identification":
+                    continue
+                detected = (parsed.season or 1, parsed.episode or 0)
+                if detected[1] < 1:
+                    representative = None
+                    break
+                if representative is None:
+                    representative = (pending_id, caption)
+                entries.append({
+                    "pending_id": pending_id,
+                    "series_season": detected[0],
+                    "series_episode": detected[1],
+                })
+            if not representative or not group.candidate_title.strip():
+                # AI remains a fallback for malformed/unparseable names.
+                for parsed in group.files:
+                    item = item_by_filename.get(parsed.filename.casefold())
+                    if item:
+                        await self._run_ai_series_identification(chat_id, item[0], item[1])
+                continue
+            pending_id, _ = representative
+            identity = MediaIdentification(
+                title_query=group.candidate_title,
+                season=entries[0]["series_season"],
+                episode=entries[0]["series_episode"],
+                year=group.year,
+                confidence=1.0,
+                needs_user_input=False,
+                question=None,
+            )
+            await self._run_imdb_search(
+                chat_id, group.candidate_title, "queue", pending_id=pending_id,
+                identity=identity, group_entries=entries,
             )
 
         ready_items: list[dict] = []
@@ -4870,7 +4920,7 @@ class BotApp:
     async def _route_series_result(
         self, chat_id: int, library: MediaLibrary, pending_id: int,
         identity: MediaIdentification, result: dict, source: str,
-        *, verified: bool = True,
+        *, verified: bool = True, group_entries: list[dict] | None = None,
     ) -> None:
         full = self._existing_series_result(library, [result])
         wanted_title = _normalized_title(str(result.get("title") or ""))
@@ -4883,6 +4933,7 @@ class BotApp:
             choice = self._series_queue_choice(
                 chat_id, library, pending_id, identity, result, source,
                 folder_name=full[1] if full else None,
+                group_entries=group_entries,
             )
             await self._confirm_series_queue_choice(chat_id, choice, notify=False)
             return
@@ -4901,6 +4952,7 @@ class BotApp:
             choice = self._series_queue_choice(
                 chat_id, library, pending_id, identity, candidate, source,
                 folder_name=folder_name,
+                group_entries=group_entries,
             )
             choice["match_note"] = (
                 "Some identity values are missing or differ. Confirm the destination."
@@ -4933,8 +4985,19 @@ class BotApp:
         source: str,
         *,
         folder_name: str | None = None,
+        group_entries: list[dict] | None = None,
     ) -> dict:
         entry = self._series_queue_entry(pending_id, identity, result)
+        if group_entries:
+            entry_by_id = {int(item["pending_id"]): item for item in group_entries}
+            entry.update(entry_by_id.get(pending_id, {}))
+            queue_entries = []
+            for group_entry in group_entries:
+                group_item = dict(entry)
+                group_item.update(group_entry)
+                queue_entries.append(group_item)
+        else:
+            queue_entries = [entry]
         return {
             "chat_id": chat_id,
             "folder_name": folder_name or result["folder_name"],
@@ -4944,7 +5007,7 @@ class BotApp:
             "source_folder": "",
             "library_key": library.key,
             **entry,
-            "queue_entries": [entry],
+            "queue_entries": queue_entries,
         }
 
     def _merge_series_queue_choice(self, choice: dict) -> tuple[str, bool]:
@@ -4978,6 +5041,7 @@ class BotApp:
         pending_id: int,
         identity: MediaIdentification,
         source: str,
+        group_entries: list[dict] | None = None,
     ) -> None:
         """Use the AI title conservatively when IMDb has no usable response."""
         fallback_name = str(identity.title_query or "").strip()
@@ -5000,7 +5064,8 @@ class BotApp:
             "imdb_id": "",
         }
         await self._route_series_result(
-            chat_id, library, pending_id, identity, fallback_result, source
+            chat_id, library, pending_id, identity, fallback_result, source,
+            group_entries=group_entries,
         )
 
     async def _run_imdb_search(
@@ -5011,6 +5076,7 @@ class BotApp:
         *,
         pending_id: int | None = None,
         identity: MediaIdentification | None = None,
+        group_entries: list[dict] | None = None,
     ) -> None:
         queue_item: dict | None = None
         if mode == "queue":
@@ -5051,6 +5117,7 @@ class BotApp:
                         pending_id,
                         identity,
                         "AI title (IMDb returned no results)",
+                        group_entries,
                     )
                     return
                 await self._offer_manual_folder_fallback(
@@ -5069,6 +5136,7 @@ class BotApp:
                 await self._route_series_result(
                     chat_id, library, pending_id, identity, results[0], source,
                     verified=self._automatic_media_result(identity, results) is not None,
+                    group_entries=group_entries,
                 )
                 return
             now = time.time()
@@ -5127,6 +5195,7 @@ class BotApp:
                     pending_id,
                     identity,
                     "AI title fallback",
+                    group_entries,
                 )
                 return
             await self._offer_manual_folder_fallback(

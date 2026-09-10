@@ -36,6 +36,9 @@ from telegram_jellyfin_bot.jellyfin_bridge import JellyfinBridge
 from telegram_jellyfin_bot.imdb_bridge import movie_query_from_filename
 from telegram_jellyfin_bot.n8n_bridge import MediaIdentification
 from telegram_jellyfin_bot.queue_manager import QueueManager
+from telegram_jellyfin_bot.series_grouping import (
+    group_series_filenames, parse_series_filename,
+)
 from telegram_jellyfin_bot.sorter_bridge import SorterBridge
 from telegram_jellyfin_bot.state_store import StateStore
 from telegram_jellyfin_bot.utils import safe_child, sanitize_folder_name
@@ -78,6 +81,42 @@ def config_data(root: Path) -> dict:
 
 
 class ConfigAndPathTests(unittest.TestCase):
+    def test_series_filenames_group_before_remote_resolution(self):
+        names = [
+            f"Breaking.Bad.S{season:02d}E{episode:02d}.mkv"
+            for season, episode in [(1, 1), (1, 2), (2, 1)]
+        ]
+        names += [
+            "Better.Call.Saul.S01E01.mkv",
+            "Better.Call.Saul.S01E02.mkv",
+            "The.Office.US.S01E01.mkv",
+        ]
+        groups = group_series_filenames(names)
+        self.assertEqual(len(names), 6)
+        self.assertEqual(sorted(len(group.files) for group in groups), [1, 2, 3])
+        breaking = next(group for group in groups if group.candidate_title == "Breaking Bad")
+        self.assertEqual([(item.season, item.episode) for item in breaking.files], [(1, 1), (1, 2), (2, 1)])
+
+    def test_same_title_different_years_are_separate_groups(self):
+        groups = group_series_filenames(["Dune.1984.2160p.mkv", "Dune.2021.2160p.mkv"])
+        self.assertEqual([(group.candidate_title, group.year) for group in groups], [("Dune", 1984), ("Dune", 2021)])
+
+    def test_grouping_parser_keeps_file_episode_metadata(self):
+        parsed = parse_series_filename("Breaking.Bad.S02E05.1080p.WEB-DL.mkv")
+        self.assertEqual((parsed.candidate_title, parsed.season, parsed.episode), ("Breaking Bad", 2, 5))
+
+    def test_one_hundred_episodes_form_one_group(self):
+        names = [f"Breaking.Bad.S{season:02d}E{episode:02d}.mkv"
+                 for season in range(1, 6) for episode in range(1, 21)]
+        groups = group_series_filenames(names)
+        self.assertEqual(len(names), 100)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups[0].files), 100)
+
+    def test_malformed_filename_has_no_confident_local_episode(self):
+        parsed = parse_series_filename("BB-final-205-new.mkv")
+        self.assertEqual(parsed.episode, None)
+
     def test_read_config(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
