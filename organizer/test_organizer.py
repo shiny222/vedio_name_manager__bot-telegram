@@ -8,6 +8,58 @@ import organizer
 
 
 class EpisodeDetectionTests(unittest.TestCase):
+    def test_folder_rename_migrates_incomplete_move_journal(self):
+        with tempfile.TemporaryDirectory() as td:
+            old = Path(td) / "Old (2020) [imdbid-tt1234567]"
+            old.mkdir()
+            source = old / "release.S01E01.mkv"
+            destination = old / "Season 01" / "Old S01E01.mkv"
+            destination.parent.mkdir()
+            destination.write_bytes(b"episode")
+            details = dict(operation_id="pending-move", batch_id="batch", action="move", timestamp="2026-01-01",
+                           original_full_path=str(source), new_full_path=str(destination),
+                           original_filename=source.name, new_filename=destination.name,
+                           file_size=7, file_type="video", status="done")
+            organizer.append_journal(old, "move-planned", details)
+            renamed, _, _ = organizer.rename_series_folder(old, "New (2020) [imdbid-tt1234567]")
+            self.assertEqual(organizer.recover_folder(renamed), 0)
+            history = json.loads((renamed / organizer.HISTORY_NAME).read_text())
+            self.assertEqual(len(history), 1)
+            self.assertEqual(Path(history[0]["original_full_path"]).parent, renamed)
+            self.assertTrue(Path(history[0]["new_full_path"]).is_file())
+
+    def test_folder_rename_migrates_undo_journal_history_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            old = Path(td) / "Old"
+            old.mkdir()
+            source = old / "release.mkv"
+            source.write_bytes(b"episode")
+            destination = old / "Old S01E01.mkv"
+            history_path = old / organizer.HISTORY_NAME
+            record = dict(operation_id="move", batch_id="batch", timestamp="2026-01-01",
+                          original_full_path=str(source), new_full_path=str(destination),
+                          original_filename=source.name, new_filename=destination.name,
+                          file_size=7, file_type="video", status="done")
+            history_path.write_text(json.dumps([record]), encoding="utf-8")
+            organizer.append_journal(old, "undo-planned", {
+                **record, "operation_id": "undo", "related_operation_id": "move",
+                "action": "undo", "history_path": str(history_path), "history_index": 0,
+            })
+            renamed, _, _ = organizer.rename_series_folder(old, "New")
+            self.assertEqual(organizer.recover_folder(renamed), 0)
+            history = json.loads((renamed / organizer.HISTORY_NAME).read_text())
+            self.assertEqual(history[0]["status"], "undone")
+
+    def test_damaged_journal_prevents_folder_rename(self):
+        with tempfile.TemporaryDirectory() as td:
+            old = Path(td) / "Old"
+            old.mkdir()
+            (old / organizer.JOURNAL_NAME).write_text("broken", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                organizer.rename_series_folder(old, "New")
+            self.assertTrue(old.is_dir())
+            self.assertFalse((old.parent / "New").exists())
+
     def test_anime_season_dash_episode(self):
         result = organizer.detect_episode(
             Path("[AWHT] Dr. Stone S4 - 25 [480p].mkv")

@@ -1431,7 +1431,7 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                                 title_query=title,
                                 season=1,
                                 episode=episode,
-                                year=None,
+                                year=2026 if title.startswith("Witch") else 2024,
                                 confidence=0.95,
                                 needs_user_input=False,
                                 question=None,
@@ -1448,7 +1448,7 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
 
         asyncio.run(exercise())
 
-    def test_new_series_episodes_share_one_folder_confirmation(self):
+    def test_new_series_episodes_create_and_reuse_folder_automatically(self):
         async def exercise():
             with tempfile.TemporaryDirectory() as td:
                 root = Path(td)
@@ -1506,15 +1506,8 @@ class AiIdentificationWorkflowTests(unittest.TestCase):
                                 question=None,
                             ),
                         )
-                    self.assertEqual(len(app.imdb_choices), 1)
-                    choice = next(iter(app.imdb_choices.values()))
-                    self.assertEqual(len(choice["queue_entries"]), 3)
-                    self.assertEqual(
-                        sum("New series:" in text for text, _ in sent), 1
-                    )
-                    await app._confirm_series_queue_choice(
-                        987654321, choice
-                    )
+                    self.assertEqual(app.imdb_choices, {})
+                    self.assertEqual(sent, [])
                     for pending_id in pending_ids:
                         item = app.store.get_item(
                             pending_id, chat_id=987654321
@@ -2151,7 +2144,7 @@ class MenuNavigationTests(unittest.TestCase):
             ],
         )
         commands = [item["command"] for item in BOT_COMMANDS]
-        self.assertEqual(len(commands), 46)
+        self.assertEqual(len(commands), 48)
         self.assertEqual(len(commands), len(set(commands)))
 
     def test_bilingual_guide_fits_telegram_and_language_callback_opens_it(self):

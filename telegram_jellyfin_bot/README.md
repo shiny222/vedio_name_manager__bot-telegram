@@ -132,7 +132,7 @@ The main menu separates routine use from maintenance:
   chat until explicitly changed, and AI is never allowed to select it. A short
   burst of episodes or movies is handled as one compact batch. Mixed series are
   routed independently; an existing reliable series match is automatic, while
-  a new series asks for one shared confirmation. An exact high-confidence movie
+  a verified new series folder is created automatically; partial identity matches ask for confirmation. An exact high-confidence movie
   title/year match is automatic; uncertain or inconsistent matches still ask.
   Series files are first downloaded under their unchanged Telegram filenames.
   The organizer receives AI season/episode data separately, performs a dry-run,

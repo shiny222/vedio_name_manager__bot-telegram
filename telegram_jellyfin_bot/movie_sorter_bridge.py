@@ -136,6 +136,42 @@ class MovieSorterBridge:
             allow_partial=True,
         )
 
+    async def recover_movie(self, item: dict) -> dict:
+        library = self.config.library(item.get("library_key") or None, "movie")
+        folder = self.config.movie_target_path(str(item["target_folder"]), library.key)
+        source = str(item.get("movie_source_path") or "")
+        staging = self.config.movie_staging_path.resolve()
+        if not source:
+            current = Path(str(item.get("downloaded_path") or "")).resolve()
+            if staging in current.parents:
+                source = str(current)
+            else:
+                history_path = folder / ".rename_history.json"
+                records = json.loads(history_path.read_text(encoding="utf-8")) if history_path.exists() else []
+                if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
+                    raise ValueError("Invalid movie history; staging path cannot be verified.")
+                matches = {
+                    str(row.get("original_full_path") or "") for row in records
+                    if row.get("operation") == "import" and row.get("file_type") == "video"
+                    and row.get("batch_id") == item.get("movie_batch_id")
+                    and Path(str(row.get("new_full_path") or "")).resolve() == current
+                }
+                if len(matches) == 1:
+                    source = matches.pop()
+        if not source:
+            raise ValueError("This older job has no recorded staging path; inspect its history before recovery.")
+        if staging not in Path(source).resolve().parents:
+            raise ValueError("Recorded movie source is outside staging.")
+        result = await self._execute(
+            self._prefix() + ["recover-folder", str(folder),
+                              "--staging", str(self.config.movie_staging_path),
+                              "--source", source, "--json"],
+            str(folder), chat_id=int(item["chat_id"]), library_key=library.key,
+            allow_partial=True,
+        )
+        result["movie_source_path"] = source
+        return result
+
     async def _execute(
         self,
         command: list[str],

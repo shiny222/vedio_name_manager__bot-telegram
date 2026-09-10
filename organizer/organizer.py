@@ -346,6 +346,28 @@ def rename_series_folder(series_folder: Path, new_name: str) -> tuple[Path, int,
             }
         )
 
+    # Incomplete operations need the same migration as completed history.
+    # Preserve phases: a rename does not complete a pending move/undo/redo.
+    for journal_path in old_root.rglob(JOURNAL_NAME):
+        try:
+            entries = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"Invalid journal file {journal_path}: {exc}") from exc
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise ValueError(f"Invalid journal record: {journal_path}")
+            for field in ("original_full_path", "new_full_path", "history_path"):
+                current = entry.get(field)
+                if isinstance(current, str):
+                    replacement = _replace_path_prefix(current, old_root, new_root)
+                    if replacement is not None:
+                        entry[field] = replacement
+        plans.append({
+            "relative": journal_path.relative_to(old_root),
+            "content": "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            "existed": True,
+        })
+
     folder_history = old_root / FOLDER_HISTORY_NAME
     if folder_history.exists():
         try:

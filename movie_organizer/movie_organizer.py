@@ -66,6 +66,15 @@ def movie_base_name(title: str, year: int | None, imdb_id: str) -> str:
     return base
 
 
+def folder_identity(name: str) -> tuple[str, int | None, str]:
+    match = re.search(r"\s*\[imdbid-(tt\d+)\]", name, re.I)
+    clean = re.sub(r"\s*\[(?:imdbid|tmdbid|tvdbid)-[^\]]+\]\s*", " ", name, flags=re.I)
+    year = re.search(r"\s*[\(\[]((?:19|20)\d{2})[\)\]]\s*$", clean)
+    title = clean[:year.start()] if year else clean
+    return (re.sub(r"[^\w]+", "", title).casefold(),
+            int(year[1]) if year else None, match[1].casefold() if match else "")
+
+
 def safe_child(root: Path, name: str) -> Path:
     root = root.resolve()
     candidate = (root / name).resolve()
@@ -159,6 +168,23 @@ def plan_import(
 
     canonical_name = movie_base_name(title, year, imdb_id)
     base_name = sanitize_title(destination_name) if destination_name else canonical_name
+    wanted_title, wanted_year, wanted_id = folder_identity(canonical_name)
+    matches = []
+    if library.is_dir():
+        for folder in library.iterdir():
+            if not folder.is_dir() or folder.is_symlink() or folder.resolve().parent != library:
+                continue
+            old_title, old_year, old_id = folder_identity(folder.name)
+            if ((wanted_id and old_id == wanted_id)
+                or (old_title == wanted_title and old_year == wanted_year
+                    and wanted_year is not None and (not wanted_id or not old_id))):
+                matches.append(folder)
+    if len(matches) > 1:
+        raise FileExistsError("Multiple movie folders match this identity; resolve them before importing.")
+    if matches:
+        if destination_name and base_name not in {canonical_name, matches[0].name}:
+            raise ValueError("Selected destination conflicts with an existing movie identity.")
+        base_name = matches[0].name
     destination_folder = safe_child(library, base_name)
     destination_video = destination_folder / f"{base_name}{source.suffix}"
 
@@ -253,6 +279,8 @@ def _rollback_move(destination: Path, source: Path, expected_size: int) -> bool:
 
 
 def move_and_record(plan: MovePlan, history_path: Path, batch_id: str) -> dict:
+    # Validate history before the first filesystem mutation, including backups.
+    records = load_history(history_path)
     operation_id = uuid.uuid4().hex
     details = {
         "operation_id": operation_id,
@@ -291,7 +319,6 @@ def move_and_record(plan: MovePlan, history_path: Path, batch_id: str) -> dict:
         "batch_id": batch_id,
         "operation_id": operation_id,
     }
-    records = load_history(history_path)
     records.append(record)
     try:
         save_history(history_path, records)
@@ -426,6 +453,12 @@ def import_movie(
         return result
 
     history_path = destination_folder / HISTORY_NAME
+    load_history(history_path)
+    append_journal(destination_folder, "batch-planned", {
+        "operation_id": f"batch-{batch_id}", "batch_id": batch_id,
+        "operation": "batch", "original_full_path": str(source.resolve()),
+        "planned_files": len(plans),
+    })
     completed: list[dict] = []
     try:
         for plan in plans:
@@ -467,6 +500,12 @@ def undo_batch(library: Path, batch_id: str) -> dict:
         "batch_id": batch_id,
         "restored": restored,
         "skipped": skipped,
+        "files": [record for history_path in dict.fromkeys(row[1] for row in candidates)
+                  for record in load_history(history_path)
+                  if record.get("batch_id") == batch_id
+                  and record.get("status") == "undone"
+                  and record.get("operation") == "import"
+                  and record.get("file_type") == "video"],
     }
 
 
@@ -496,6 +535,105 @@ def undo_folder(folder: Path) -> dict:
         "restored": restored,
         "skipped": skipped,
     }
+
+
+def recover_folder(folder: Path, staging: Path, source: Path) -> dict:
+    """Reconcile disk/history and roll back incomplete replacement/import batches."""
+    folder, staging, source = (path.expanduser().resolve() for path in (folder, staging, source))
+    if staging not in source.parents:
+        raise ValueError("Recovery source must be within staging.")
+    journal = folder / JOURNAL_NAME
+    operations = {}
+    if journal.exists():
+        for line in journal.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            if not isinstance(entry, dict) or not entry.get("operation_id"):
+                raise ValueError("Invalid movie journal record.")
+            operations[entry["operation_id"]] = entry
+    history_path = folder / HISTORY_NAME
+    records = load_history(history_path)
+    repaired = skipped = 0
+    source_batches = {
+        entry.get("batch_id"): entry.get("planned_files") for entry in operations.values()
+        if entry.get("operation") == "batch"
+        and Path(str(entry.get("original_full_path") or "")).resolve() == source
+    }
+    terminal = {"move-done", "undo-done", "move-rolled-back", "move-conflict",
+                "history-save-rolled-back", "recovered-done", "recovered-no-change"}
+    for entry in operations.values():
+        if entry.get("operation") == "batch":
+            continue
+        if entry.get("phase") in terminal:
+            continue
+        details = {key: value for key, value in entry.items() if key not in {"phase", "timestamp"}}
+        try:
+            original = Path(entry["original_full_path"]).resolve()
+            new = Path(entry["new_full_path"]).resolve()
+            size = entry["file_size"]
+            if (not isinstance(size, int) or isinstance(size, bool) or size < 0
+                or folder not in new.parents
+                or not (staging in original.parents or folder in original.parents)):
+                raise ValueError("Journal paths or size are outside recovery scope.")
+            undo = str(entry.get("phase", "")).startswith("undo-")
+            desired, starting = (original, new) if undo else (new, original)
+            desired_ok = desired.is_file() and desired.stat().st_size == size and not starting.exists()
+            starting_ok = starting.is_file() and starting.stat().st_size == size and not desired.exists()
+            if not desired_ok and not starting_ok:
+                skipped += 1
+                continue
+            if desired_ok:
+                related_id = entry.get("related_operation_id") if undo else entry["operation_id"]
+                record = next((row for row in records if row.get("operation_id") == related_id), None)
+                if undo:
+                    if record is None:
+                        skipped += 1
+                        continue
+                    record.update(status="undone", undone_timestamp=now_iso())
+                elif record is None:
+                    records.append({**details, "timestamp": entry.get("timestamp", now_iso()),
+                                    "original_filename": original.name, "new_filename": new.name,
+                                    "status": "done"})
+                save_history(history_path, records)
+                repaired += 1
+            append_journal(folder, "recovered-done" if desired_ok else "recovered-no-change", details)
+        except (OSError, KeyError, TypeError, ValueError):
+            skipped += 1
+    # If a batch never reached all its files, undo its completed records so
+    # retry starts with the original video/subtitles and restored old media.
+    if skipped == 0:
+        for batch_id, planned_count in source_batches.items():
+            active = _active_records([history_path], batch_id)
+            recorded_count = sum(row.get("batch_id") == batch_id for row in records)
+            incomplete = isinstance(planned_count, int) and recorded_count < planned_count
+            backups_only = source.is_file() and all(row[3].get("operation") == "replace-existing" for row in active)
+            if active and (incomplete or backups_only):
+                restored, conflicts = undo_records(active)
+                repaired += restored
+                skipped += conflicts
+        records = load_history(history_path)
+    # Locate the caller's video using recorded paths, not a guessed filename.
+    matching = [row for row in records
+                if row.get("operation") == "import" and row.get("file_type") == "video"
+                and Path(str(row.get("original_full_path") or "")).resolve() == source]
+    latest = matching[-1] if matching else None
+    current = source if latest is None or latest.get("status") == "undone" else Path(latest["new_full_path"])
+    valid = current.is_file()
+    if latest is not None:
+        other = Path(latest["new_full_path"]) if current == source else source
+        restored_old = current == source and any(
+            row.get("batch_id") == latest.get("batch_id")
+            and row.get("operation") == "replace-existing" and row.get("status") == "undone"
+            and Path(str(row.get("original_full_path") or "")).resolve() == other.resolve()
+            and other.is_file() and other.stat().st_size == row.get("file_size")
+            for row in records
+        )
+        valid = valid and (not other.exists() or restored_old) and current.stat().st_size == latest.get("file_size")
+    return {"ok": skipped == 0 and valid, "restored": repaired, "skipped": skipped,
+            "downloaded_path": str(current) if valid else "",
+            "status": "imported" if valid and current != source else "movie_undone",
+            "batch_id": latest.get("batch_id") if latest else None}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -531,6 +669,11 @@ def build_parser() -> argparse.ArgumentParser:
     folder = subparsers.add_parser("undo-folder")
     folder.add_argument("folder_path", type=Path)
     folder.add_argument("--json", action="store_true")
+    recovery = subparsers.add_parser("recover-folder")
+    recovery.add_argument("folder_path", type=Path)
+    recovery.add_argument("--staging", required=True, type=Path)
+    recovery.add_argument("--source", required=True, type=Path)
+    recovery.add_argument("--json", action="store_true")
     return parser
 
 
@@ -553,6 +696,8 @@ def main(argv: list[str] | None = None) -> int:
             result = undo_last(args.library)
         elif args.command == "undo-batch":
             result = undo_batch(args.library, args.batch_id)
+        elif args.command == "recover-folder":
+            result = recover_folder(args.folder_path, args.staging, args.source)
         else:
             result = undo_folder(args.folder_path)
         if args.json:

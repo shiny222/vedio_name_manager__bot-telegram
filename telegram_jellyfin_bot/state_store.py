@@ -107,6 +107,7 @@ class StateStore:
                 "download_filename": "TEXT",
                 "imdb_id": "TEXT",
                 "movie_batch_id": "TEXT",
+                "movie_source_path": "TEXT",
             }
             for name, declaration in migrations.items():
                 if name not in columns:

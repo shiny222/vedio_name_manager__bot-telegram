@@ -165,6 +165,14 @@ def _normalized_title(value: str) -> str:
     return re.sub(r"[^\w]+", "", value, flags=re.UNICODE).casefold()
 
 
+def _folder_identity(name: str) -> tuple[str, int | None, str]:
+    match = IMDB_FOLDER_ID_RE.search(name)
+    without_id = re.sub(r"\s*\[(?:imdbid|tmdbid|tvdbid)-[^\]]+\]\s*", " ", name, flags=re.I)
+    year = FOLDER_YEAR_RE.search(without_id)
+    return (_normalized_title(name), int(year[1]) if year else None,
+            match[1].casefold() if match else "")
+
+
 def _release_year_from_filename(filename: str) -> int | None:
     """Return one unambiguous release year embedded in a source filename."""
     years = {
@@ -218,7 +226,9 @@ HELP = """Commands:
 /series_mode - Return to TV-series episode mode
 /movie_current - Show the latest movie job
 /movie_cancel - Cancel the current unprocessed movie
-/movie_import [ID] - Retry a downloaded movie import
+/movie_import [ID] - Import or retry a staged or undone movie
+/movie_forward [ID] - Import again after undo
+/movie_recover ID - Reconcile an interrupted movie job
 /movie_undo_last - Undo the latest movie import batch
 /movie_undo_batch ID - Undo a specific movie import batch
 /chatid - Show this chat ID
@@ -265,7 +275,9 @@ HELP_FA = """دستورها:
 /series_mode - بازگشت به حالت سریال
 /movie_current - نمایش آخرین عملیات فیلم
 /movie_cancel - لغو فیلم پردازش‌نشده
-/movie_import [ID] - تلاش دوباره برای انتقال فیلم staging
+/movie_import [ID] - انتقال فیلم staging یا انتقال دوباره پس از بازگردانی
+/movie_forward [ID] - انتقال دوباره پس از بازگردانی
+/movie_recover ID - بازیابی وضعیت انتقال نیمه‌تمام فیلم
 /movie_undo_last - بازگردانی آخرین فیلم
 /movie_undo_batch ID - بازگردانی یک دسته فیلم
 /jellyfin_scan - شروع اسکن کتابخانه Jellyfin
@@ -296,14 +308,16 @@ NORMAL WORKFLOW — AI ASSISTED
 3. When the n8n connection is enabled, AI reads the untrusted filename/caption
    and suggests movie title/year or series title/season/episode. The existing
    IMDb tool finds the official Jellyfin identity.
-4. An existing reliable series-folder match is used automatically. A new
-   series asks once for all matching episodes. This identity approval is
-   separate from the one final download approval. Download review shows the
+4. Series folders are reused automatically only when title, year, and IMDb ID
+   all match. New verified series folders are created automatically. Partial
+   matches ask for confirmation. Download review shows the
    final saved filenames, temporary per-batch IDs, file count, and size. Each
    ID remains attached to that movie/episode while you review the batch. Press
    Remove one item (or send /remove), reply with its ID, then reopen /download.
    After /confirm_download starts the batch, the next batch starts at 1. A
-   failed AI/IMDb request must not change the library.
+   missing AI year or confidence below 85% stops identification. If IMDb is
+   unavailable, the extracted name can be used without an ID; partial folder
+   matches still require confirmation.
    Movies with an exact high-confidence AI/IMDb title and year are queued
    automatically only when a clear year in the filename also agrees.
    Ambiguous/year-mismatched movies still ask. A movie or episode identity
@@ -341,7 +355,7 @@ Queue and conflicts:
 
 Undo and recovery:
 • /sort_history, /sort_back, /sort_forward, /undo_sort_batch ID
-• /movie_undo_last, /movie_undo_batch ID
+• /movie_undo_last, /movie_undo_batch ID, /movie_forward ID, /movie_recover ID
 • /recover_current checks only the selected series folder after interruption.
 
 SAFETY
@@ -372,14 +386,14 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
    /download ویرایش می‌شود و برای هر فایل پیام پیشرفت جدا نمی‌آید.
 ۳. پس از فعال شدن اتصال n8n، AI از نام فایل/کپشن نام و سال فیلم یا نام سریال
    و فصل و قسمت را پیشنهاد می‌دهد. ابزار IMDb نام رسمی Jellyfin را پیدا می‌کند.
-۴. پوشه سریال موجود با تطبیق معتبر خودکار استفاده می‌شود. برای سریال جدید فقط
-   یک بار برای همه قسمت‌های مطابق تأیید هویت گرفته می‌شود. این تأیید از تأیید
-   نهایی دانلود جدا است. بررسی دانلود نام نهایی فایل‌ها، تعداد و حجم را نشان
+۴. پوشه سریال فقط با تطبیق نام، سال و شناسه IMDb خودکار استفاده می‌شود.
+   پوشه جدید معتبر خودکار ساخته می‌شود؛ تطبیق ناقص تأیید می‌خواهد.
+   بررسی دانلود نام نهایی فایل‌ها، تعداد و حجم را نشان
    می‌دهد و هر فایل یک شناسه موقت همان دسته دارد که هنگام بررسی ثابت می‌ماند.
    دکمه حذف یک مورد یا /remove را بزنید، شناسه را بفرستید و /download را دوباره
    باز کنید. پس از شروع دسته با /confirm_download، دسته بعدی دوباره از ۱ شروع
-   می‌شود. خرابی AI یا IMDb نباید کتابخانه
-   را تغییر دهد.
+   می‌شود. نبود سال AI یا اطمینان کمتر از ۸۵٪ پردازش را متوقف می‌کند.
+   اگر IMDb در دسترس نباشد، نام بدون شناسه استفاده می‌شود؛ تطبیق ناقص تأیید می‌خواهد.
    فیلم با نام و سال دقیق و اطمینان بالای AI/IMDb خودکار آماده می‌شود؛ نتیجه
    مبهم یا سال ناسازگار سؤال می‌پرسد و سال واضح نام فایل نیز باید برابر باشد.
    اگر هویت فیلم یا قسمت از قبل در کتابخانه/صف باشد، نام هر دو فایل نمایش داده
@@ -417,7 +431,7 @@ GUIDE_FA = """راهنمای استفاده از ربات تلگرام Jellyfin
 
 بازگردانی و بازیابی:
 • /sort_history، /sort_back، /sort_forward، /undo_sort_batch ID
-• /movie_undo_last، /movie_undo_batch ID
+• /movie_undo_last، /movie_undo_batch ID، /movie_forward ID، /movie_recover ID
 • /recover_current فقط پوشه سریال انتخاب‌شده را پس از توقف ناقص بررسی می‌کند.
 
 ایمنی
@@ -485,6 +499,8 @@ BOT_COMMANDS = [
     {"command": "movie_current", "description": "Movies: Show the latest movie job"},
     {"command": "movie_cancel", "description": "Movies: Cancel the current movie job"},
     {"command": "movie_import", "description": "Movies: Retry a staged movie import"},
+    {"command": "movie_forward", "description": "Movies: Import again after undo"},
+    {"command": "movie_recover", "description": "Movies: Recover an interrupted movie job"},
     {"command": "movie_undo_last", "description": "Movies: Undo the latest movie import"},
     {"command": "movie_undo_batch", "description": "Movies: Undo a movie batch by ID"},
     # Jellyfin
@@ -708,6 +724,10 @@ MOVIE_MENU = {
         ],
         [
             {"text": "Undo latest movie", "callback_data": "menu:movie_undo_last"},
+        ],
+        [
+            {"text": "Copy /movie_forward", "copy_text": {"text": "/movie_forward "}},
+            {"text": "Copy /movie_recover", "copy_text": {"text": "/movie_recover "}},
         ],
         [
             {
@@ -2175,6 +2195,10 @@ class BotApp:
             )
             return
 
+        if result.year is None or not result.confidence >= 0.85:
+            await self.send(chat_id, "AI year is missing or confidence is too low. This movie remains unchanged.")
+            return
+
         if result.needs_user_input or not result.title_query:
             self.movie_manual_pending[chat_id] = pending_id
             await self.send(
@@ -2398,6 +2422,10 @@ class BotApp:
             )
             return
 
+        if result.year is None or not result.confidence >= 0.85:
+            await self.send(chat_id, "AI year is missing or confidence is too low. This episode remains unchanged.")
+            return
+
         await self._continue_series_identification(chat_id, pending_id, result)
 
     async def _continue_series_identification(
@@ -2578,28 +2606,32 @@ class BotApp:
                 ):
                     continue
                 result = MediaIdentification(
-                    title_query=title[:300],
+                    title_query=self._manual_movie_identity(title)[0][:300],
                     season=int(entry.get("series_season") or 1),
                     episode=int(entry.get("series_episode") or 0),
-                    year=None,
+                    year=self._manual_movie_identity(title)[1],
                     confidence=1.0,
                     needs_user_input=False,
                     question=None,
                 )
-                await self._continue_series_identification(
-                    chat_id, grouped_pending_id, result
+                await self._route_series_ai_fallback(
+                    chat_id, self.config.library(str(grouped_item.get("library_key") or ""), "series"),
+                    grouped_pending_id, result, "Manual name",
                 )
             return
         result = MediaIdentification(
-            title_query=title[:300],
+            title_query=self._manual_movie_identity(title)[0][:300],
             season=season,
             episode=episode,
-            year=None,
+            year=self._manual_movie_identity(title)[1],
             confidence=1.0,
             needs_user_input=False,
             question=None,
         )
-        await self._continue_series_identification(chat_id, pending_id, result)
+        await self._route_series_ai_fallback(
+            chat_id, self.config.library(str(item.get("library_key") or ""), "series"),
+            pending_id, result, "Manual name",
+        )
 
     def _movie_item_for_chat(self, pending_id: int, chat_id: int) -> dict | None:
         item = self.store.get_item(pending_id, chat_id=chat_id)
@@ -2622,7 +2654,7 @@ class BotApp:
         return f"folder:{folder_name}" if folder_name else ""
 
     @staticmethod
-    def _automatic_movie_result(
+    def _automatic_media_result(
         identity: MediaIdentification,
         results: list[dict],
         filename_year: int | None = None,
@@ -2630,7 +2662,7 @@ class BotApp:
         """Accept only an exact, high-confidence top result without a click."""
         if (
             not results
-            or identity.confidence < 0.85
+            or not identity.confidence >= 0.85
             or identity.year is None
         ):
             return None
@@ -2643,7 +2675,7 @@ class BotApp:
             score = float(result.get("score") or 0)
         except (TypeError, ValueError):
             return None
-        if score < 90:
+        if not score >= 90:
             return None
         try:
             if int(result.get("year")) != int(identity.year):
@@ -2682,13 +2714,21 @@ class BotApp:
             return None
         candidates = [expected]
         wanted_id = str(imdb_id or "").strip().casefold()
-        if wanted_id:
+        wanted_title, wanted_year, _ = _folder_identity(folder_name)
+        if wanted_id or wanted_title:
             try:
                 for folder in library.path.iterdir():
-                    if not folder.is_dir() or folder == expected:
+                    if (not folder.is_dir() or folder == expected or folder.is_symlink()
+                        or folder.resolve().parent != library.path.resolve()):
                         continue
-                    match = IMDB_FOLDER_ID_RE.search(folder.name)
-                    if match and match.group(1).casefold() == wanted_id:
+                    title, year, folder_id = _folder_identity(folder.name)
+                    same_id = wanted_id and folder_id == wanted_id
+                    legacy_match = (
+                        title == wanted_title and year == wanted_year
+                        and wanted_year is not None
+                        and (not wanted_id or not folder_id)
+                    )
+                    if same_id or legacy_match:
                         candidates.append(folder)
             except OSError:
                 pass
@@ -3003,7 +3043,7 @@ class BotApp:
             return
 
         if ai_identity is not None:
-            automatic = self._automatic_movie_result(
+            automatic = self._automatic_media_result(
                 ai_identity,
                 results,
                 _release_year_from_filename(str(item["original_filename"])),
@@ -3362,6 +3402,8 @@ class BotApp:
             "/movie_current": self.cmd_movie_current,
             "/movie_cancel": self.cmd_movie_cancel,
             "/movie_import": self.cmd_movie_import,
+            "/movie_forward": self.cmd_movie_import,
+            "/movie_recover": self.cmd_movie_recover,
             "/movie_undo_last": self.cmd_movie_undo_last,
             "/movie_undo_batch": self.cmd_movie_undo_batch,
         }
@@ -4048,7 +4090,7 @@ class BotApp:
                 )
             if failed_movies:
                 summary += (
-                    "\n\nStaged failures remain safe. Use /movie_import ID "
+                    "\n\nUse /movie_recover ID to verify failed jobs, then /movie_import ID "
                     "after fixing them."
                 )
             await self.send(chat_id, summary)
@@ -4113,12 +4155,14 @@ class BotApp:
     ) -> bool:
         pending_id = int(item["pending_id"])
         try:
+            self.store.update_item(pending_id, movie_source_path=str(item.get("downloaded_path") or ""))
             if notify:
                 await self.send(
                     chat_id,
                     f"Checking movie recovery job #{pending_id}...",
                 )
             preview = await self.movie_sorter.import_movie(item, dry_run=True)
+            self.store.update_item(pending_id, target_folder=Path(preview["destination"]).name)
             if notify:
                 await self.send(
                     chat_id,
@@ -4139,6 +4183,7 @@ class BotApp:
                 pending_id,
                 status="imported",
                 error=None,
+                target_folder=Path(result["destination"]).name,
                 downloaded_path=video or item.get("downloaded_path"),
                 movie_batch_id=result.get("batch_id"),
             )
@@ -4170,9 +4215,10 @@ class BotApp:
             if notify:
                 await self.send(
                     chat_id,
-                    "Movie download is safe in staging, but import failed for "
+                    "Movie import failed for "
                     f"recovery job #{pending_id}:\n{exc}\n\n"
-                    f"Fix the problem and use /movie_import {pending_id} to retry.",
+                    f"Use /movie_recover {pending_id} to verify its location, then "
+                    f"/movie_import {pending_id} to retry if it is staged.",
                 )
             return False
 
@@ -4203,9 +4249,9 @@ class BotApp:
             item = self._movie_item_for_chat(pending_id, chat_id)
         else:
             item = self.store.latest_movie_item(
-                ("completed", "movie_import_failed"), chat_id=chat_id
+                ("completed", "movie_import_failed", "movie_undone"), chat_id=chat_id
             )
-        if not item or item.get("status") not in {"completed", "movie_import_failed"}:
+        if not item or item.get("status") not in {"completed", "movie_import_failed", "movie_undone"}:
             await self.send(chat_id, "No downloaded movie is waiting for import.")
             return
         source = Path(str(item.get("downloaded_path") or ""))
@@ -4217,6 +4263,34 @@ class BotApp:
             f"movie-import:{chat_id}:{item['pending_id']}",
             chat_id,
         )
+
+    async def cmd_movie_recover(self, chat_id: int, argument: str) -> None:
+        if not argument.strip().isdigit():
+            await self.send(chat_id, "Correct format: /movie_recover ID")
+            return
+        item = self._movie_item_for_chat(int(argument.strip()), chat_id)
+        if not item:
+            await self.send(chat_id, "That movie job does not belong to this chat.")
+            return
+        if self.downloader and self.downloader.running:
+            await self.send(chat_id, "Wait for the current download to finish first.")
+            return
+        self.track_task(self._recover_movie_item(chat_id, item), f"movie-recover:{chat_id}:{item['pending_id']}", chat_id)
+
+    async def _recover_movie_item(self, chat_id: int, item: dict) -> None:
+        try:
+            result = await self.movie_sorter.recover_movie(item)
+            if not result.get("ok"):
+                await self.send(chat_id, "Movie recovery needs attention; ambiguous files were left unchanged.")
+                return
+            self.store.update_item(int(item["pending_id"]), status=result["status"],
+                                   downloaded_path=result["downloaded_path"],
+                                   movie_source_path=result.get("movie_source_path") or item.get("movie_source_path"),
+                                   movie_batch_id=result.get("batch_id"), error=None)
+            await self.send(chat_id, f"Movie location verified: {result['downloaded_path']}\n"
+                            f"Status: {result['status']}. Use /movie_import {item['pending_id']} if staged.")
+        except Exception as exc:
+            await self.send(chat_id, f"Movie recovery could not complete: {exc}")
 
     async def cmd_status(self, chat_id: int, _: str) -> None:
         all_items = self.store.list_items(chat_id=chat_id)
@@ -4600,6 +4674,16 @@ class BotApp:
                 )
                 if result.get("ok"):
                     self._set_chat_setting(chat_id, "latest_movie_batch_id", "")
+                for restored in result.get("files", []):
+                    source = Path(str(restored.get("original_full_path") or ""))
+                    staging = self.config.movie_staging_path.resolve()
+                    if staging not in source.resolve().parents or not source.is_file():
+                        continue
+                    for item in self.store.list_items(("movie_undone", "movie_undo_partial"), chat_id=chat_id):
+                        if (item.get("movie_batch_id") == actual_batch
+                            and str(item.get("downloaded_path") or "") == restored.get("new_full_path")):
+                            self.store.update_item(int(item["pending_id"]), downloaded_path=str(source),
+                                                   movie_source_path=str(source))
             outcome = (
                 "Movie undo completed.\n"
                 if result.get("ok")
@@ -4609,7 +4693,7 @@ class BotApp:
                 chat_id,
                 outcome + f"Batch ID: {actual_batch or 'unknown'}\n"
                 f"Restored: {result.get('restored', 0)}\n"
-                f"Skipped: {skipped}",
+                f"Skipped: {skipped}\nUse /movie_import ID to move a restored movie forward again.",
                 MOVIE_MENU,
             )
             if (
@@ -4783,50 +4867,59 @@ class BotApp:
         self, library: MediaLibrary, results: list[dict]
     ) -> tuple[dict, str] | None:
         """Match only IMDb's best result to one reliable existing folder."""
-        folders = self._safe_series_folders(library)
-        if not folders:
+        if not results:
             return None
+        result = results[0]
+        wanted = (_normalized_title(str(result.get("title") or "")),
+                  result.get("year"), str(result.get("imdb_id") or "").casefold())
+        if not all(wanted):
+            return None
+        matches = [folder for folder in self._safe_series_folders(library)
+                   if _folder_identity(folder.name) == wanted]
+        return (result, matches[0].name) if len(matches) == 1 else None
 
-        by_imdb: dict[str, list[Path]] = {}
-        by_name: dict[str, list[Path]] = {}
-        for folder in folders:
-            by_name.setdefault(folder.name.casefold(), []).append(folder)
-            match = IMDB_FOLDER_ID_RE.search(folder.name)
-            if match:
-                by_imdb.setdefault(match.group(1).casefold(), []).append(folder)
-
-        # Provider IDs are authoritative, even if the folder was renamed later.
-        # Lower-ranked search results never trigger automatic routing.
-        for result in results[:1]:
-            imdb_id = str(result.get("imdb_id") or "").casefold()
-            matches = by_imdb.get(imdb_id, [])
-            if len(matches) == 1:
-                return result, matches[0].name
-
-        # The exact Jellyfin folder format is the next safest match.
-        for result in results[:1]:
-            expected = str(result.get("folder_name") or "").casefold()
-            matches = by_name.get(expected, [])
-            if len(matches) == 1:
-                return result, matches[0].name
-
-        # Older/manual folders may not have an ID. Only accept a normalized
-        # title when it identifies exactly one folder; ambiguity still asks.
-        for result in results[:1]:
-            title_key = _normalized_title(str(result.get("title") or ""))
-            if not title_key:
+    async def _route_series_result(
+        self, chat_id: int, library: MediaLibrary, pending_id: int,
+        identity: MediaIdentification, result: dict, source: str,
+        *, verified: bool = True,
+    ) -> None:
+        full = self._existing_series_result(library, [result])
+        wanted_title = _normalized_title(str(result.get("title") or ""))
+        wanted_id = str(result.get("imdb_id") or "").casefold()
+        # A year alone is not a show identity: unrelated shows share years.
+        partial = [folder for folder in self._safe_series_folders(library)
+                   if (_folder_identity(folder.name)[0] == wanted_title
+                       or (wanted_id and _folder_identity(folder.name)[2] == wanted_id))]
+        if verified and (full is not None or not partial):
+            choice = self._series_queue_choice(
+                chat_id, library, pending_id, identity, result, source,
+                folder_name=full[1] if full else None,
+            )
+            await self._confirm_series_queue_choice(chat_id, choice, notify=False)
+            return
+        options = [(result, None)]
+        for folder in partial:
+            _, year, imdb_id = _folder_identity(folder.name)
+            # Once explicitly selected, save the destination's actual identity.
+            options.append((dict(title=_series_file_title(folder.name), year=year,
+                                 imdb_id=imdb_id, folder_name=folder.name), folder.name))
+        seen = set()
+        for candidate, folder_name in options:
+            name = folder_name or candidate["folder_name"]
+            if name.casefold() in seen:
                 continue
-            matches = [
-                folder for folder in folders
-                if _normalized_title(folder.name) == title_key
-            ]
-            year = result.get("year")
-            if year is not None and len(matches) > 1:
-                year_text = f"({int(year)})"
-                matches = [folder for folder in matches if year_text in folder.name]
-            if len(matches) == 1:
-                return result, matches[0].name
-        return None
+            seen.add(name.casefold())
+            choice = self._series_queue_choice(
+                chat_id, library, pending_id, identity, candidate, source,
+                folder_name=folder_name,
+            )
+            choice["match_note"] = (
+                "Some identity values are missing or differ. Confirm the destination."
+                if verified else "IMDb needs confirmation against the extracted title/year."
+            )
+            token, created = self._merge_series_queue_choice(choice)
+            if created:
+                await self._offer_folder_confirmation(chat_id, token, self.imdb_choices[token])
 
     @staticmethod
     def _series_queue_entry(
@@ -4917,35 +5010,9 @@ class BotApp:
             "folder_name": fallback_name,
             "imdb_id": "",
         }
-        existing = self._existing_series_result(library, [fallback_result])
-        if existing is not None:
-            result, folder_name = existing
-            choice = self._series_queue_choice(
-                chat_id,
-                library,
-                pending_id,
-                identity,
-                result,
-                source,
-                folder_name=folder_name,
-            )
-            await self._confirm_series_queue_choice(
-                chat_id, choice, notify=False
-            )
-            return
-        choice = self._series_queue_choice(
-            chat_id,
-            library,
-            pending_id,
-            identity,
-            fallback_result,
-            source,
+        await self._route_series_result(
+            chat_id, library, pending_id, identity, fallback_result, source
         )
-        token, created = self._merge_series_queue_choice(choice)
-        if created:
-            await self._offer_folder_confirmation(
-                chat_id, token, self.imdb_choices[token]
-            )
 
     async def _run_imdb_search(
         self,
@@ -4977,10 +5044,12 @@ class BotApp:
         source_folder = (
             self._chat_setting(chat_id, "current_folder") if mode == "rename" else ""
         )
+        search_completed = False
         try:
             if mode != "queue":
                 await self.send(chat_id, f"Searching IMDb for: {_important(query)}")
             results, source = await self.imdb.search(query, media_type="series")
+            search_completed = True
             if not results:
                 if (
                     mode == "queue"
@@ -5008,38 +5077,10 @@ class BotApp:
                 return
             if mode == "queue":
                 assert pending_id is not None and identity is not None
-                existing = self._existing_series_result(library, results)
-                if existing is not None:
-                    result, folder_name = existing
-                    choice = self._series_queue_choice(
-                        chat_id,
-                        library,
-                        pending_id,
-                        identity,
-                        result,
-                        source,
-                        folder_name=folder_name,
-                    )
-                    await self._confirm_series_queue_choice(
-                        chat_id, choice, notify=False
-                    )
-                    return
-
-                # No known folder: offer the best IMDb result once. Additional
-                # episodes resolving to the same series join this confirmation.
-                choice = self._series_queue_choice(
-                    chat_id,
-                    library,
-                    pending_id,
-                    identity,
-                    results[0],
-                    source,
+                await self._route_series_result(
+                    chat_id, library, pending_id, identity, results[0], source,
+                    verified=self._automatic_media_result(identity, results) is not None,
                 )
-                token, created = self._merge_series_queue_choice(choice)
-                if created:
-                    await self._offer_folder_confirmation(
-                        chat_id, token, self.imdb_choices[token]
-                    )
                 return
             now = time.time()
             self.imdb_choices = {
@@ -5087,6 +5128,9 @@ class BotApp:
             )
         except Exception as exc:
             LOG.warning("Optional IMDb fuzzy search failed: %s", exc)
+            if search_completed:
+                await self.send(chat_id, f"Series destination could not be prepared: {exc}")
+                return
             if mode == "queue" and pending_id is not None and identity is not None:
                 await self._route_series_ai_fallback(
                     chat_id,
@@ -5113,8 +5157,8 @@ class BotApp:
         if choice.get("mode") == "queue":
             await self.send(
                 chat_id,
-                f"New series: {_important(choice['folder_name'])}\n"
-                "Is this name correct for the matching queued episodes?",
+                f"Series destination: {_important(choice['folder_name'])}\n"
+                f"{choice.get('match_note', 'Is this name correct for the matching queued episodes?')}",
                 {
                     "inline_keyboard": [[
                         {
