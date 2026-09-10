@@ -2293,6 +2293,7 @@ class BotApp:
             chat_id, f"Identifying {len(items)} episode(s)…"
         )
         status_message_id = self._sent_message_id(status_result)
+        resolution_cache: dict[tuple[str, str], tuple[list[dict], str]] = {}
 
         # Parse and group locally first. IMDb identifies the show/movie, while
         # season and episode remain properties of each queued file.
@@ -2328,11 +2329,27 @@ class BotApp:
                     "series_episode": detected[1],
                 })
             if not representative or not group.candidate_title.strip():
-                # AI remains a fallback for malformed/unparseable names.
-                for parsed in group.files:
-                    item = item_by_filename.get(parsed.filename.casefold())
-                    if item:
-                        await self._run_ai_series_identification(chat_id, item[0], item[1])
+                # AI remains a fallback for malformed/unparseable names, but
+                # it is still group-scoped so one bad batch cannot fan out into
+                # one AI request per episode.
+                fallback_id, fallback_caption = next(
+                    (
+                        item_by_filename.get(parsed.filename.casefold())
+                        for parsed in group.files
+                        if item_by_filename.get(parsed.filename.casefold())
+                    ),
+                    (None, ""),
+                )
+                if fallback_id is not None:
+                    if entries:
+                        await self._run_ai_series_identification(
+                            chat_id, fallback_id, fallback_caption,
+                            group_entries=entries,
+                        )
+                    else:
+                        await self._run_ai_series_identification(
+                            chat_id, fallback_id, fallback_caption,
+                        )
                 continue
             pending_id, _ = representative
             identity = MediaIdentification(
@@ -2347,6 +2364,7 @@ class BotApp:
             await self._run_imdb_search(
                 chat_id, group.candidate_title, "queue", pending_id=pending_id,
                 identity=identity, group_entries=entries,
+                resolution_cache=resolution_cache,
             )
 
         ready_items: list[dict] = []
@@ -2431,7 +2449,13 @@ class BotApp:
         return item
 
     async def _run_ai_series_identification(
-        self, chat_id: int, pending_id: int, caption: str = ""
+        self,
+        chat_id: int,
+        pending_id: int,
+        caption: str = "",
+        *,
+        group_entries: list[dict] | None = None,
+        resolution_cache: dict[tuple[str, str], tuple[list[dict], str]] | None = None,
     ) -> None:
         item = self._series_item_for_chat(pending_id, chat_id)
         if not item or item.get("status") != "awaiting_identification":
@@ -2468,13 +2492,22 @@ class BotApp:
             )
             return
 
-        await self._continue_series_identification(chat_id, pending_id, result)
+        await self._continue_series_identification(
+            chat_id,
+            pending_id,
+            result,
+            group_entries=group_entries,
+            resolution_cache=resolution_cache,
+        )
 
     async def _continue_series_identification(
         self,
         chat_id: int,
         pending_id: int,
         result: MediaIdentification,
+        *,
+        group_entries: list[dict] | None = None,
+        resolution_cache: dict[tuple[str, str], tuple[list[dict], str]] | None = None,
     ) -> None:
         item = self._series_item_for_chat(pending_id, chat_id)
         if not item or item.get("status") != "awaiting_identification":
@@ -2488,6 +2521,8 @@ class BotApp:
             "queue",
             pending_id=pending_id,
             identity=result,
+            group_entries=group_entries,
+            resolution_cache=resolution_cache,
         )
 
     async def _confirm_series_queue_choice(
@@ -5077,6 +5112,7 @@ class BotApp:
         pending_id: int | None = None,
         identity: MediaIdentification | None = None,
         group_entries: list[dict] | None = None,
+        resolution_cache: dict[tuple[str, str], tuple[list[dict], str]] | None = None,
     ) -> None:
         queue_item: dict | None = None
         if mode == "queue":
@@ -5103,7 +5139,17 @@ class BotApp:
         try:
             if mode != "queue":
                 await self.send(chat_id, f"Searching IMDb for: {_important(query)}")
-            results, source = await self.imdb.search(query, media_type="series")
+            cache_key = (
+                _normalized_title(str(identity.title_query if identity else query)),
+                "series",
+            )
+            cached = resolution_cache.get(cache_key) if resolution_cache is not None else None
+            if cached is None:
+                results, source = await self.imdb.search(query, media_type="series")
+                if resolution_cache is not None and results:
+                    resolution_cache[cache_key] = (results, source)
+            else:
+                results, source = cached
             search_completed = True
             if not results:
                 if (

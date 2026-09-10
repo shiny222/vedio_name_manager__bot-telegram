@@ -98,6 +98,23 @@ class IdentityRecoveryTests(unittest.IsolatedAsyncioTestCase):
                     "Example" if year is None else "Example 2025", media_type="series")
                 self.assertEqual(self.app.store.get_item(pending)["status"], "queued")
 
+    async def test_series_imdb_resolution_cache_avoids_duplicate_group_search(self):
+        pending = self.queue()
+        self.app.imdb = AsyncMock()
+        self.app.imdb.search.return_value = ([self.result], "test")
+        self.app._route_series_result = AsyncMock()
+        cache = {}
+        for _ in range(2):
+            await self.app._run_imdb_search(
+                self.chat,
+                "Example",
+                "queue",
+                pending_id=pending,
+                identity=self.identity,
+                resolution_cache=cache,
+            )
+        self.app.imdb.search.assert_awaited_once_with("Example", media_type="series")
+
     async def test_movie_ai_missing_year_and_low_confidence_continues(self):
         pending = self.queue("movie")
         self.app.ai_identifier = AsyncMock()

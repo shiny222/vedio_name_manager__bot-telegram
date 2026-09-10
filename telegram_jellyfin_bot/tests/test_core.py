@@ -105,6 +105,15 @@ class ConfigAndPathTests(unittest.TestCase):
         parsed = parse_series_filename("Breaking.Bad.S02E05.1080p.WEB-DL.mkv")
         self.assertEqual((parsed.candidate_title, parsed.season, parsed.episode), ("Breaking Bad", 2, 5))
 
+    def test_grouping_parser_supports_anime_trailing_episode_format(self):
+        parsed = parse_series_filename(
+            "[AWHT] SI-VIS - The Sound of Heroes - 15 [480p].mkv"
+        )
+        self.assertEqual(
+            (parsed.candidate_title, parsed.season, parsed.episode),
+            ("SI-VIS - The Sound of Heroes", 1, 15),
+        )
+
     def test_one_hundred_episodes_form_one_group(self):
         names = [f"Breaking.Bad.S{season:02d}E{episode:02d}.mkv"
                  for season in range(1, 6) for episode in range(1, 21)]

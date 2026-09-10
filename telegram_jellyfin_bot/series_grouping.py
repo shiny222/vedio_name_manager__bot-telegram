@@ -29,6 +29,7 @@ _EPISODE_RE = re.compile(
     r"(?ix)(?<![a-z0-9])(?:s\d{1,3}\s*[._ -]*e\d{1,4}|\d{1,3}\s*x\s*\d{1,4})"
     r"|\bseason\s*\d{1,3}\s*(?:episode|ep|e)\s*\d{1,4}"
 )
+_TRAILING_EPISODE_RE = re.compile(r"(?<!\d)[ ._-](\d{1,3})(?=\s*$)")
 _YEAR_RE = re.compile(r"(?<!\d)((?:18|19|20)\d{2})(?!\d)")
 _NOISE_RE = re.compile(
     r"(?ix)\b(?:2160p|1440p|1080p|720p|576p|480p|4k|8k|web[- .]?dl|web[- .]?rip|"
@@ -44,6 +45,11 @@ def normalize_group_title(value: str) -> str:
 def parse_series_filename(filename: str, episode: tuple[int, int] | None = None) -> ParsedSeriesFile:
     path = Path(filename)
     stem = path.stem
+    # Fansub/anime releases commonly put the episode number at the end and
+    # quality tags in square brackets, for example "Title - 15 [480p]".
+    # Leading release-group tags are not part of the show title.
+    stem = re.sub(r"^\s*(?:\[[^\]]+\]\s*)+", "", stem)
+    stem = re.sub(r"\s*(?:\[[^\]]+\]\s*)+$", "", stem)
     match = _EPISODE_RE.search(stem)
     season = episode[0] if episode else None
     number = episode[1] if episode else None
@@ -53,7 +59,21 @@ def parse_series_filename(filename: str, episode: tuple[int, int] | None = None)
         if parts:
             season = int(parts.group(1) or parts.group(3))
             number = int(parts.group(2) or parts.group(4))
-    title_part = stem[: match.start()] if match else stem
+    if match:
+        title_part = stem[: match.start()]
+    else:
+        trailing = _TRAILING_EPISODE_RE.search(stem)
+        trailing_title = stem[: trailing.start()].strip(" ._-") if trailing else ""
+        if (
+            trailing
+            and episode is None
+            and trailing_title.casefold() not in {"episode", "ep"}
+        ):
+            season = 1
+            number = int(trailing.group(1))
+            title_part = trailing_title
+        else:
+            title_part = stem
     year_match = _YEAR_RE.search(title_part)
     year = int(year_match.group(1)) if year_match else None
     if year_match:
